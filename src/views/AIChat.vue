@@ -1,39 +1,65 @@
 <script setup lang="ts">
+// Vue 3 Composition API
 import { ref, watch, nextTick, onMounted } from 'vue';
-import { Send, Bot, User, Sparkles, Loader2, Eraser } from 'lucide-vue-next';
-import { useChatStore } from '../stores/chat.store.ts';
-import { marked } from 'marked';
 
+// 使用 lucide-vue-next 图标库
+import { Send, Bot, User, Eraser, Sparkles, Loader2 } from 'lucide-vue-next';
+
+// 修改导入路径，移除 .ts 扩展名
+import { useChatStore } from '../stores/chat.store';
+
+// 安装 marked 或使用其他方案
+// import { marked } from 'marked';
+// 暂时不使用 marked，用纯文本或简单HTML
+
+// 状态变量
 const chatStore = useChatStore();
 const input = ref('');
-const messagesEndRef = ref<HTMLElement | null>(null);
+const messagesEndRef = ref(null);
 
-const scrollToBottom = () => {
-  nextTick(() => {
-    messagesEndRef.value?.scrollIntoView({ behavior: 'smooth' });
+// 方法
+const handleSend = async () => {
+  if (!input.value.trim() || chatStore.isLoading) return;
+  
+  const message = input.value.trim();
+  input.value = '';
+  
+  await chatStore.sendMessage(message);
+  scrollToBottom();
+};
+
+const scrollToBottom = async () => {
+  await nextTick();
+  if (messagesEndRef.value) {
+    messagesEndRef.value.scrollIntoView({ behavior: 'smooth' });
+  }
+};
+
+const parseMarkdown = (text) => {
+  // 简单的文本处理，暂时不使用 marked
+  return text;
+};
+
+const formatTime = (timestamp) => {
+  const date = new Date(timestamp);
+  return date.toLocaleTimeString('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit'
   });
 };
 
-watch(() => chatStore.messages.length, () => {
-  scrollToBottom();
-});
+// 监听消息变化，自动滚动到底部
+watch(
+  () => chatStore.messages.length,
+  () => {
+    scrollToBottom();
+  }
+);
 
+// 组件挂载后滚动到底部
 onMounted(() => {
   scrollToBottom();
 });
-
-const handleSend = () => {
-  chatStore.sendMessage(input.value);
-  input.value = '';
-};
-
-const parseMarkdown = (text: string) => {
-  return marked.parse(text);
-};
-
-const formatTime = (date: Date) => {
-  return new Date(date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-}
 </script>
 
 <template>
@@ -54,7 +80,7 @@ const formatTime = (date: Date) => {
           <h3 class="font-bold text-slate-800 dark:text-white text-sm">AI 智能助手</h3>
           <div class="flex items-center mt-0.5">
             <span class="w-1.5 h-1.5 rounded-full bg-blue-500 mr-1.5 animate-pulse"></span>
-            <span class="text-[10px] font-medium text-slate-500 dark:text-gray-400 uppercase tracking-wide">Qwen3-1.7B Online</span>
+            <span class="text-[10px] font-medium text-slate-500 dark:text-gray-400 uppercase tracking-wide">GLM-4.7-Flash Online</span>
           </div>
         </div>
       </div>

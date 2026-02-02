@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import * as chatService from '../services/chat.service';
+import * as chatService from '../services/xunfei.service';
 import { successResponse } from '../utils/response';
 
 export const chat = async (req: Request, res: Response, next: NextFunction) => {
