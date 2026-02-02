@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>武理小精灵 | WUT Elf</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              // Custom colors can be added here if needed
+            },
+            fontFamily: {
+              sans: ['Inter', 'Noto Sans SC', 'system-ui', 'sans-serif'],
+            }
+          }
+        }
+      }
+    </script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <style>
+      body {
+        font-family: 'Inter', 'Noto Sans SC', sans-serif;
+        background-color: #f8fafc; /* Slightly lighter slate */
+      }
+      
+      /* Smooth selection */
+      ::selection {
+        background-color: #3b82f6; /* Blue-500 */
+        color: white;
+      }
+
+      /* Custom Scrollbar */
+      ::-webkit-scrollbar {
+        width: 6px;
+        height: 6px;
+      }
+      ::-webkit-scrollbar-track {
+        background: transparent; 
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #cbd5e1; 
+        border-radius: 9999px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: #94a3b8; 
+      }
+      
+      .dark ::-webkit-scrollbar-thumb {
+        background: #475569;
+      }
+      .dark ::-webkit-scrollbar-thumb:hover {
+        background: #64748b;
+      }
+      
+      /* Animation Utilities */
+      @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      .animate-fade-in {
+        animation: fadeIn 0.4s ease-out forwards;
+      }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "vue": "https://esm.sh/vue@3.3.4",
+    "vue-router": "https://esm.sh/vue-router@4.2.5",
+    "pinia": "https://esm.sh/pinia@2.1.7",
+    "lucide-vue-next": "https://esm.sh/lucide-vue-next@0.344.0",
+    "marked": "https://esm.sh/marked@12.0.0",
+    "cors": "https://esm.sh/cors@^2.8.6",
+    "dotenv": "https://esm.sh/dotenv@^17.2.3",
+    "morgan": "https://esm.sh/morgan@^1.10.1",
+    "helmet": "https://esm.sh/helmet@^8.1.0",
+    "express": "https://esm.sh/express@^5.2.1",
+    "axios": "https://esm.sh/axios@^1.13.4"
+  }
+}
+</script>
+<link rel="stylesheet" href="/index.css">
+</head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.ts"></script>
+  <script type="module" src="/index.tsx"></script>
+</body>
+</html>
