@@ -292,7 +292,7 @@ const handleSaveProfile = () => {
     </div>
     
     <div class="flex justify-center pt-4 pb-8">
-      <span class="text-xs text-slate-400 dark:text-gray-500">武理小精灵 v1.0.2 Build 20231027</span>
+      <span class="text-xs text-slate-400 dark:text-gray-500">武理小精灵 v1.0.2 Build 20260127</span>
     </div>
 
     <!-- Modals Overlay -->
@@ -379,6 +379,7 @@ const handleSaveProfile = () => {
                 <option value="2022级">2022级</option>
                 <option value="2023级">2023级</option>
                 <option value="2024级">2024级</option>
+                 <option value="2025级">2025级</option>
               </select>
             </div>
           </div>

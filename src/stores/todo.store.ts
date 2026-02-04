@@ -4,10 +4,9 @@ import { TodoItem } from '../types/index.ts';
 
 export const useTodoStore = defineStore('todo', () => {
   const todos = ref<TodoItem[]>([
-    { id: '1', text: '完成 Vue 3 重构', completed: false, category: 'academic' },
+    { id: '1', text: '学习 Vue 3', completed: false, category: 'academic' },
     { id: '2', text: '预约图书馆研讨间', completed: true, category: 'personal' },
     { id: '3', text: '准备 CET-6 考试', completed: false, category: 'urgent' },
-    { id: '4', text: '向导师汇报进度', completed: false, category: 'urgent' },
   ]);
 
   const addTodo = (text: string) => {

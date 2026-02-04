@@ -2,12 +2,17 @@
 import { computed } from 'vue';
 import { useRoute } from 'vue-router';
 import { useAuthStore } from './stores/auth.store';
+import { useThemeStore } from './stores/theme.store';
 import Sidebar from './components/layout/Sidebar.vue';
 import ToastManager from './components/common/ToastManager.vue';
 import NotificationCenter from './components/common/NotificationCenter.vue';
 
 const authStore = useAuthStore();
+const themeStore = useThemeStore();
 const route = useRoute();
+
+// 初始化主题（确保 watch 被触发）
+themeStore.darkMode;
 
 const isLoginPage = computed(() => route.path === '/login');
 const user = computed(() => authStore.user);

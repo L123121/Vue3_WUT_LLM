@@ -1,9 +1,11 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 @layer base {
   body {
     font-family: theme('fontFamily.sans');
-    @apply bg-slate-50;
+    @apply bg-slate-50 dark:bg-gray-950;
   }
 }
 

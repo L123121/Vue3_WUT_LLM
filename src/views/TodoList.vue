@@ -86,7 +86,7 @@ const getCategoryColor = (cat: string) => {
         </button>
       </div>
       <div v-if="todoStore.todos.length === 0" class="text-center py-12 text-slate-400 dark:text-gray-500 transition-colors duration-300">
-        <p>没有待办事项，享受你的自由时光！🎉</p>
+        <p>没有待办事项，享受你的自由时光！</p>
       </div>
     </div>
   </div>

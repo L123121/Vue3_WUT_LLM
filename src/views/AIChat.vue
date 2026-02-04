@@ -78,8 +78,6 @@ const handleGlobalClick = (event: MouseEvent) => {
   }
 };
 
-// （已移除）重复的监听，使用基于 messages.length 的 watch 来滚动
-
 // 方法
 const handleSend = async () => {
   if (!input.value.trim() || chatStore.isLoading) return;

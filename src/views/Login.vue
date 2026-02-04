@@ -37,7 +37,7 @@ const handleSubmit = async () => {
       toast.success('登录成功，欢迎回来！');
       router.push('/');
     } else {
-      error.value = '用户名或密码错误 (提示: 密码是 123456)';
+      error.value = '用户名或密码错误';
       toast.error('登录失败，请检查账号密码');
       isLoading.value = false;
     }
