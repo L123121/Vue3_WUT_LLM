@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
-import { useAuthStore } from '../stores/auth.store.ts';
-import { useThemeStore } from '../stores/theme.store.ts';
-import { useNotificationStore } from '../stores/notification.store.ts';
-import { Bell, Moon, Globe, Shield, ChevronRight, Mail, X, Loader2, Check, AlertCircle, Lock, MessageSquare, Info } from 'lucide-vue-next';
+import { useAuthStore } from '../stores/auth.store';
+import { useThemeStore } from '../stores/theme.store';
+import { useNotificationStore } from '../stores/notification.store';
+import { Moon, Globe, Shield, ChevronRight, Mail, X, Loader2, Check, AlertCircle, Lock, MessageSquare, Info } from 'lucide-vue-next';
 
 const authStore = useAuthStore();
 const themeStore = useThemeStore();

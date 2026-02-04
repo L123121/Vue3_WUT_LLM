@@ -3,7 +3,7 @@
 import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue';
 import { useChatStore } from '../stores/chat.store';
 import { useToastStore } from '../stores/toast.store';
-import { Send, Bot, User, Eraser, Sparkles, Loader2, Copy, Check } from 'lucide-vue-next';
+import { Send, Bot, User, Eraser, Sparkles, Loader2, Copy } from 'lucide-vue-next';
 import { marked } from 'marked';
 import hljs from 'highlight.js';
 import 'highlight.js/styles/atom-one-dark.css'; // 引入代码高亮样式
@@ -13,7 +13,7 @@ const renderer = new marked.Renderer();
 
 renderer.code = (code, language) => {
   const validLang = hljs.getLanguage(language || '') ? language : 'plaintext';
-  const highlighted = hljs.highlight(code, { language: validLang || 'plaintext' }).value;
+  const highlighted = hljs.highlight(code, validLang || 'plaintext').value;
   // 对代码进行 URL 编码，以便安全地放入 data 属性中
   const encodedCode = encodeURIComponent(code);
   

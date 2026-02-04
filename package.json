@@ -18,7 +18,7 @@
     "express": "^5.2.1",
     "helmet": "^8.1.0",
     "highlight.js": "^11.11.1",
-    "lucide-vue-next": "0.344.0",
+    "lucide-vue-next": "^0.344.0",
     "marked": "12.0.0",
     "morgan": "^1.10.1",
     "pinia": "2.1.7",
@@ -28,7 +28,7 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.18",
     "@tailwindcss/typography": "^0.5.19",
-    "@types/node": "^22.14.0",
+    "@types/node": "^22.19.8",
     "@vitejs/plugin-vue": "^5.2.2",
     "@vue/compiler-sfc": "^3.5.27",
     "autoprefixer": "^10.4.24",

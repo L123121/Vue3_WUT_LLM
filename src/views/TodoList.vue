@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue';
-import { useTodoStore } from '../stores/todo.store.ts';
+import { useTodoStore } from '../stores/todo.store';
 import { Plus, Trash2, Calendar, Tag, Check } from 'lucide-vue-next';
 
 const todoStore = useTodoStore();

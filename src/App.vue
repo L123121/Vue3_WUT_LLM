@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useRoute } from 'vue-router';
-import { useAuthStore } from './stores/auth.store.ts';
+import { useAuthStore } from './stores/auth.store';
 import Sidebar from './components/layout/Sidebar.vue';
 import ToastManager from './components/common/ToastManager.vue';
 import NotificationCenter from './components/common/NotificationCenter.vue';

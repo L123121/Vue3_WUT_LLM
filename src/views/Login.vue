@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { useAuthStore } from '../stores/auth.store.ts';
+import { useAuthStore } from '../stores/auth.store';
 import { useToastStore } from '../stores/toast.store';
 import { User, Lock, ArrowRight, Loader2 } from 'lucide-vue-next';
 import wutLogoImg from '../assets/wuhan-university-logo.png';
