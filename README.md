@@ -28,11 +28,10 @@ Brief description: Wuli Little Genie is a demo AI chat application with a Vue 3 
 - 前后端分离：前端通过 `/api` 调用后端 Express 服务（`backend/src/app.ts`），后端封装了 AI 服务适配层（`backend/src/services/chat.service.ts`）。
 - 模拟与真实模式：若未配置讯飞 API Key，后端会以模拟模式返回演示文本，便于本地开发和离线测试（参见 `backend/src/config`）。
 
-**🖼️ 演示 / Demo & Screenshots**
+**🖼️ 演示 / Screenshots**
 
-- 在线演示（如有部署请贴上链接）
-- 主界面截图：请参考仓库 `assets/screenshots`（若尚未添加，请在 `public/` 或 `assets/` 中放置截图并更新此处）。
-
+- 主界面截图：
+![alt text](image.png)
 ---
 
 ## 🚀 快速开始 / Quick Start
@@ -169,9 +168,5 @@ cp backend/.env.example backend/.env
 
 ## 联系方式 / Contact
 
-- 项目链接：https://github.com/你的用户名/项目名称
-- 问题反馈：请通过 GitHub Issues 提交（模板可自定义）
-
----
-
-如果你希望，我可以把 README 翻译成纯英文版本、添加部署到 Docker 或 Vercel/Netlify 的说明，或生成更详细的开发者文档（包括 API 说明）。
+- 项目链接：https://github.com/L123121/Vue3_WUT_LLM
+- 问题反馈：请通过 GitHub Issues 提交
