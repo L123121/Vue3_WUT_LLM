@@ -11,6 +11,7 @@
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",
     "@types/highlight.js": "^9.12.4",
+    "@types/markdown-it": "^14.1.2",
     "@types/marked": "^5.0.2",
     "axios": "^1.13.4",
     "cors": "^2.8.6",
@@ -19,11 +20,13 @@
     "helmet": "^8.1.0",
     "highlight.js": "^11.11.1",
     "lucide-vue-next": "^0.344.0",
+    "markdown-it": "^14.1.0",
     "marked": "12.0.0",
     "morgan": "^1.10.1",
     "pinia": "2.1.7",
     "vue": "^3.5.27",
-    "vue-router": "^4.6.4"
+    "vue-router": "^4.6.4",
+    "vue-virtual-scroller": "^2.0.0-beta.8"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.18",

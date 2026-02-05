@@ -27,7 +27,16 @@ const user = computed(() => authStore.user);
     <div v-if="isLoginPage" class="h-screen w-full">
       <router-view v-slot="{ Component }">
         <transition name="fade" mode="out-in">
-          <component :is="Component" />
+          <Suspense>
+            <template #default>
+              <component :is="Component" />
+            </template>
+            <template #fallback>
+              <div class="flex items-center justify-center h-screen">
+                <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+              </div>
+            </template>
+          </Suspense>
         </transition>
       </router-view>
     </div>
@@ -56,7 +65,19 @@ const user = computed(() => authStore.user);
         <main class="flex-1 overflow-y-auto p-8 relative scroll-smooth bg-slate-50 dark:bg-gray-950 transition-colors duration-300 ease-in-out">
           <router-view v-slot="{ Component }">
              <transition name="fade" mode="out-in">
-                <component :is="Component" />
+                <Suspense>
+                  <template #default>
+                    <component :is="Component" />
+                  </template>
+                  <template #fallback>
+                    <div class="flex items-center justify-center h-64">
+                      <div class="flex flex-col items-center space-y-4">
+                        <div class="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-500"></div>
+                        <span class="text-sm text-slate-500 dark:text-gray-400">加载中...</span>
+                      </div>
+                    </div>
+                  </template>
+                </Suspense>
              </transition>
           </router-view>
         </main>

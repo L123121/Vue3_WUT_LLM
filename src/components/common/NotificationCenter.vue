@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue';
 import { useNotificationStore, NotificationType } from '../../stores/notification.store';
-import { Bell, Check, Trash2, Info, MessageSquare, AlertCircle, X, Clock } from 'lucide-vue-next';
+import { Bell, Check, Trash2, Info, MessageSquare, AlertCircle, X, Clock, Calendar } from 'lucide-vue-next';
 
 const store = useNotificationStore();
 const isOpen = ref(false);

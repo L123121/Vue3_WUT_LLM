@@ -5,6 +5,7 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import dotenv from 'dotenv';
 import { ChatService } from './services/chat.service';  // 确保从这里导入
+import { XunfeiService } from './services/xunfei.service';
 import config from './config';
 
 // 加载环境变量
@@ -13,6 +14,7 @@ dotenv.config();
 const app: Express = express();
 const PORT: number = parseInt(process.env.PORT || '3000', 10);
 const chatService = new ChatService();
+const xunfeiService = new XunfeiService();
 
 // 中间件
 app.use(cors({
@@ -105,6 +107,45 @@ app.post('/api', (req: Request, res: Response) => {
 // 兼容接口
 app.post('/api/chat', (req: Request, res: Response) => {
   handleChatRequest(req, res, '/api/chat');
+});
+
+// SSE 流式聊天接口
+app.post('/api/stream', async (req: Request, res: Response) => {
+  try {
+    const { message, history = [] } = req.body;
+    
+    console.log('🌊 /api/stream 收到流式请求:', message?.substring(0, 50));
+    
+    if (!message || typeof message !== 'string' || message.trim() === '') {
+      return res.status(400).json({
+        success: false,
+        error: '消息内容不能为空'
+      });
+    }
+
+    // 设置 SSE 响应头
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders();
+
+    // 流式输出
+    for await (const chunk of xunfeiService.getCompletionStream(message.trim(), history)) {
+      if (chunk.done) {
+        res.write(`data: [DONE]\n\n`);
+      } else {
+        res.write(`data: ${JSON.stringify({ content: chunk.content })}\n\n`);
+      }
+    }
+
+    console.log('✅ /api/stream 流式响应完成');
+    res.end();
+  } catch (error: any) {
+    console.error('❌ /api/stream 错误:', error);
+    res.write(`data: ${JSON.stringify({ error: 'Stream error' })}\n\n`);
+    res.end();
+  }
 });
 
 // 404 处理

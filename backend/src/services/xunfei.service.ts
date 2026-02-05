@@ -8,6 +8,11 @@ export interface CompletionResponse {
   isMock: boolean;
 }
 
+export interface StreamChunk {
+  content: string;
+  done: boolean;
+}
+
 export class XunfeiService {
   private appId: string;
   private apiKey: string;
@@ -219,5 +224,103 @@ export class XunfeiService {
   private getMockResponse(message: string): string {
     console.log('[模拟模式] 使用模拟响应');
     return `[Mock] 收到: "${message}"。 (由于连接问题，暂时使用模拟回复)\n当前配置: Model=${this.model}, Service=${this.serviceName}`;
+  }
+
+  /**
+   * 流式 HTTP 请求，返回 async generator
+   */
+  async *getCompletionStream(message: string, history: any[] = []): AsyncGenerator<StreamChunk> {
+    const messages = [
+      ...history.map(h => ({ role: h.role, content: h.content })),
+      { role: "user", content: message }
+    ];
+
+    let url = this.httpUrl;
+    if (url.endsWith('/v2')) {
+      url = `${url}/chat/completions`;
+    }
+
+    console.log(`[讯飞流式] URL: ${url}, Model: ${this.model}`);
+
+    const payload = {
+      model: this.model,
+      messages,
+      stream: true,
+      temperature: config.xunfei.temperature || 0.7,
+      max_tokens: config.xunfei.maxTokens || 1024
+    };
+
+    try {
+      console.log('[讯飞流式] 发起请求...');
+      const response = await axios.post(url, payload, {
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${config.xunfei.apiKey}`
+        },
+        timeout: config.xunfei.timeout || 60000,
+        responseType: 'stream'
+      });
+
+      let buffer = '';
+      const stream = response.data;
+
+      for await (const chunk of stream) {
+        buffer += chunk.toString();
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || !trimmed.startsWith('data:')) continue;
+          
+          const data = trimmed.slice(5).trim();
+          if (data === '[DONE]') {
+            yield { content: '', done: true };
+            return;
+          }
+
+          try {
+            const json = JSON.parse(data);
+            const content = json.choices?.[0]?.delta?.content || '';
+            if (content) {
+              yield { content, done: false };
+            }
+          } catch {
+            // skip malformed JSON
+          }
+        }
+      }
+
+      // Handle remaining buffer
+      if (buffer.trim()) {
+        const trimmed = buffer.trim();
+        if (trimmed.startsWith('data:')) {
+          const data = trimmed.slice(5).trim();
+          if (data !== '[DONE]') {
+            try {
+              const json = JSON.parse(data);
+              const content = json.choices?.[0]?.delta?.content || '';
+              if (content) {
+                yield { content, done: false };
+              }
+            } catch {
+              // skip
+            }
+          }
+        }
+      }
+
+      yield { content: '', done: true };
+    } catch (error: any) {
+      console.error('[讯飞流式HTTP] 失败:', error.message);
+      console.error('[讯飞流式HTTP] 详细:', error.response?.data || error.code);
+      // Fallback to mock for stream
+      console.log('[讯飞流式] 使用模拟模式...');
+      const mockContent = this.getMockResponse(message);
+      for (const char of mockContent) {
+        yield { content: char, done: false };
+      }
+      yield { content: '', done: true };
+    }
   }
 }
