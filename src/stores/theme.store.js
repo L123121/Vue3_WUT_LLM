@@ -6,11 +6,8 @@ export const useThemeStore = defineStore('theme', () => {
   const darkMode = ref(stored === 'true');
 
   watch(darkMode, (isDark) => {
-    if (isDark) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
+    if (isDark) document.documentElement.classList.add('dark');
+    else document.documentElement.classList.remove('dark');
     localStorage.setItem('darkMode', String(isDark));
   }, { immediate: true });
 
