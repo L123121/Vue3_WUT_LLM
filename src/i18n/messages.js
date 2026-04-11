@@ -19,6 +19,7 @@ const messages = {
       todo: '待办列表',
       about: '关于系统',
       chat: 'AI 对话',
+      skills: 'Skills 管理',
     },
     home: {
       welcome: '欢迎回来, 武理学子',
@@ -207,6 +208,7 @@ const messages = {
       todo: 'Todos',
       about: 'About',
       chat: 'AI Chat',
+      skills: 'Skills',
     },
     home: {
       welcome: 'Welcome back',

@@ -20,21 +20,15 @@ const lazyLoad = (loader) => defineAsyncComponent({
   timeout: 10000,
 });
 
-import Home from '../views/Home.vue';
 import Login from '../views/Login.vue';
 
-const TodoList = lazyLoad(() => import('../views/TodoList.vue'));
 const AIChat = lazyLoad(() => import('../views/AIChat.vue'));
-const Settings = lazyLoad(() => import('../views/Settings.vue'));
-const About = lazyLoad(() => import('../views/About.vue'));
 
 const routes = [
   { path: '/login', name: 'Login', component: Login },
-  { path: '/', name: 'Home', component: Home, meta: { requiresAuth: true } },
-  { path: '/todo', name: 'Todo', component: TodoList, meta: { requiresAuth: true } },
+  { path: '/', redirect: '/chat' },
   { path: '/chat', name: 'Chat', component: AIChat, meta: { requiresAuth: true } },
-  { path: '/settings', name: 'Settings', component: Settings, meta: { requiresAuth: true } },
-  { path: '/about', name: 'About', component: About, meta: { requiresAuth: true } },
+  { path: '/:pathMatch(.*)*', redirect: '/chat' },
 ];
 
 const router = createRouter({
@@ -47,7 +41,7 @@ router.beforeEach((to, _, next) => {
   if (to.meta.requiresAuth && !authStore.user) {
     next('/login');
   } else if (to.path === '/login' && authStore.user) {
-    next('/');
+    next('/chat');
   } else {
     next();
   }

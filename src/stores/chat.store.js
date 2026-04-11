@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import { computed, ref, watch } from 'vue';
 import { sendMessageStream } from '../api/chat.js';
+import { useSkillStore } from './skill.store.js';
 
 const STORAGE_KEY = 'chat_conversations';
 const CURRENT_CONVERSATION_KEY = 'chat_current_conversation_id';
@@ -73,6 +74,7 @@ const loadConversations = () => {
 };
 
 export const useChatStore = defineStore('chat', () => {
+  const skillStore = useSkillStore();
   const conversations = ref(loadConversations());
   const currentConversationId = ref(localStorage.getItem(CURRENT_CONVERSATION_KEY) || conversations.value[0]?.id || createConversationId());
   const isLoading = ref(false);
@@ -185,6 +187,10 @@ export const useChatStore = defineStore('chat', () => {
 
     isLoading.value = true;
     const history = buildHistory(currentConversation.value?.messages || [], userMsg.id);
+    const skillPrompt = skillStore.buildSystemPrompt();
+    const requestHistory = skillPrompt
+      ? [{ role: 'system', content: skillPrompt }, ...history]
+      : history;
     const aiMsgId = createMessageId();
     const aiMsg = { id: aiMsgId, role: 'model', text: '', timestamp: new Date() };
 
@@ -194,7 +200,7 @@ export const useChatStore = defineStore('chat', () => {
     currentStreamingId.value = aiMsgId;
 
     return new Promise((resolve) => {
-      sendMessageStream(trimmedText, history, {
+      sendMessageStream(trimmedText, requestHistory, {
         onChunk: (content) => updateConversation(conversationId, (conversation) => {
           const message = conversation.messages.find((item) => item.id === aiMsgId);
           if (message) message.text += content;

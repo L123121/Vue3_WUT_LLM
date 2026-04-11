@@ -6,7 +6,6 @@ import { useThemeStore } from './stores/theme.store.js';
 import { useLanguageStore } from './stores/language.store.js';
 import Sidebar from './components/layout/Sidebar.vue';
 import ToastManager from './components/common/ToastManager.vue';
-import NotificationCenter from './components/common/NotificationCenter.vue';
 
 const authStore = useAuthStore();
 const themeStore = useThemeStore();
@@ -55,7 +54,6 @@ const pageTitle = computed(() => {
           </h2>
 
           <div class="flex items-center space-x-4">
-            <NotificationCenter />
             <div class="flex items-center space-x-2 pl-2 border-l border-slate-100 dark:border-gray-700 transition-colors duration-300">
               <div class="w-8 h-8 rounded-full bg-slate-200 dark:bg-gray-600 overflow-hidden ring-2 ring-white dark:ring-gray-700">
                 <img :src="user?.avatar" alt="User" class="w-full h-full object-cover" />
