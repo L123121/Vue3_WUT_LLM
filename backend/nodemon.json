@@ -1,8 +1,8 @@
 {
   "watch": ["src"],
-  "ext": "ts,json",
+  "ext": "js,json",
   "ignore": ["node_modules", "dist", ".git"],
-  "exec": "npx ts-node src/app.ts",
+  "exec": "node src/app.js",
   "env": {
     "NODE_ENV": "development",
     "PORT": "3000"

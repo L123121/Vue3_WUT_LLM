@@ -4,12 +4,14 @@ import { useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth.store.js';
 import { useToastStore } from '../stores/toast.store.js';
 import { useLanguageStore } from '../stores/language.store.js';
+import { useChatStore } from '../stores/chat.store.js';
 import { User, Lock, ArrowRight, Loader2 } from 'lucide-vue-next';
 import wutLogoImg from '../assets/wuhan-university-logo.png';
 
 const wutLogo = wutLogoImg;
 const router = useRouter();
 const authStore = useAuthStore();
+const chatStore = useChatStore();
 const toast = useToastStore();
 const languageStore = useLanguageStore();
 const text = languageStore.tm('login');
@@ -20,6 +22,7 @@ const isLoading = ref(false);
 const error = ref('');
 
 const handleSubmit = async () => {
+  console.log('[Login] handleSubmit called');
   if (!username.value || !password.value) {
     error.value = text.empty;
     return;
@@ -28,21 +31,58 @@ const handleSubmit = async () => {
   isLoading.value = true;
   error.value = '';
 
-  setTimeout(() => {
-    if (password.value === '123456') {
+  try {
+    // 调用后端登录 API
+    console.log('[Login] Fetching /api/auth/login...');
+    const response = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: username.value, password: password.value }),
+    });
+
+    const data = await response.json();
+    console.log('[Login] Response:', response.status, data);
+
+    if (response.ok && data.success) {
+      // 后端返回格式: { success, message, data: { user, token } }
+      const { user, token } = data.data;
+      console.log('[Login] user:', user);
+      console.log('[Login] token:', token);
+      console.log('[Login] token type:', typeof token, 'length:', token?.length);
+      authStore.login(user, token);
+      console.log('[Login] After authStore.login:');
+      console.log('[Login] - localStorage token:', localStorage.getItem('token'));
+      console.log('[Login] - isLocalAuth:', authStore.isLocalAuth);
+      console.log('[Login] - isAuthenticated:', authStore.isAuthenticated);
+      toast.success(text.success);
+      // 加载用户的会话列表
+      await chatStore.loadConversations();
+      router.push('/');
+    } else {
+      error.value = data.error || text.wrong;
+      toast.error(text.fail);
+    }
+  } catch (err) {
+    console.error('[Login] Error:', err);
+    console.error('[Login] Error:', err);
+    // 后端不可用时，使用本地验证
+    if (authStore.verifyPassword(password.value)) {
       authStore.login({
         id: 'u1',
         name: username.value || text.fallbackName,
         avatar: 'https://api.dicebear.com/7.x/notionists/svg?seed=Felix',
-      });
+      }, null); // 本地验证没有 token
       toast.success(text.success);
+      // 初始化本地会话
+      await chatStore.loadConversations();
       router.push('/');
     } else {
       error.value = text.wrong;
       toast.error(text.fail);
-      isLoading.value = false;
     }
-  }, 1000);
+  } finally {
+    isLoading.value = false;
+  }
 };
 </script>
 

@@ -36,25 +36,25 @@ const initRecognition = () => {
     emit('statusChange', 'idle');
     const code = event.error;
     if (code === 'not-allowed' || code === 'service-not-allowed') {
-      emit('error', languageStore.isChinese ? '未授予麦克风权限' : 'Microphone permission was not granted');
+      emit('error', '未授予麦克风权限');
       return;
     }
     if (code === 'no-speech') {
-      emit('error', languageStore.isChinese ? '未检测到语音，请重试' : 'No speech detected, please try again');
+      emit('error', '未检测到语音，请重试');
       return;
     }
-    emit('error', languageStore.isChinese ? '语音识别出错' : 'Speech recognition failed');
+    emit('error', '语音识别出错');
   };
   recognition.onend = () => { recognizing.value = false; emit('statusChange', 'idle'); };
 };
 
 const startVoiceInput = () => {
   if (!recognition) {
-    emit('error', languageStore.isChinese ? '当前浏览器不支持语音识别（建议使用 Chrome）' : 'Speech recognition is not supported in this browser');
+    emit('error', '当前浏览器不支持语音识别（建议使用 Chrome）');
     return;
   }
   if (!window.isSecureContext) {
-    emit('error', languageStore.isChinese ? '语音识别需要安全环境（https 或 localhost）' : 'Speech recognition requires https or localhost');
+    emit('error', '语音识别需要安全环境（https 或 localhost）');
     return;
   }
   if (recognizing.value) {
@@ -66,7 +66,7 @@ const startVoiceInput = () => {
     recognition.start();
   } catch (error) {
     console.error('SpeechRecognition start error:', error);
-    emit('error', languageStore.isChinese ? '语音识别启动失败' : 'Failed to start speech recognition');
+    emit('error', '语音识别启动失败');
   }
 };
 

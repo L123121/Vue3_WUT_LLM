@@ -1,22 +1,14 @@
 <script setup>
-import { useAuthStore } from '../../stores/auth.store.js';
-import { useLanguageStore } from '../../stores/language.store.js';
-import { useRouter } from 'vue-router';
-import { LogOut } from 'lucide-vue-next';
+import { computed } from 'vue';
+import { useRouter, useRoute } from 'vue-router';
 import wutLogoImg from '../../assets/wuhan-university-logo.png';
 import ConversationList from '../chat/ConversationList.vue';
+import { Database, MessageSquare } from 'lucide-vue-next';
 
 const wutLogo = wutLogoImg;
-const authStore = useAuthStore();
-const languageStore = useLanguageStore();
 const router = useRouter();
-
-const labels = languageStore.tm('sidebar');
-
-const handleLogout = () => {
-  authStore.logout();
-  router.push('/login');
-};
+const route = useRoute();
+const currentPath = computed(() => route.path);
 </script>
 
 <template>
@@ -33,18 +25,38 @@ const handleLogout = () => {
       </div>
     </div>
 
-    <section class="flex-1 min-h-0 px-2 pb-2">
+    <!-- 导航标签 -->
+    <div class="px-3 mb-2">
+      <div class="flex gap-1 p-1 rounded-lg bg-slate-100 dark:bg-gray-800">
+        <button
+          @click="router.push('/chat')"
+          :class="[
+            'flex-1 h-8 rounded-md text-xs font-medium inline-flex items-center justify-center gap-1.5 transition-colors',
+            currentPath === '/chat'
+              ? 'bg-white dark:bg-gray-700 text-slate-800 dark:text-white shadow-sm'
+              : 'text-slate-500 dark:text-gray-400 hover:text-slate-700 dark:hover:text-gray-200'
+          ]"
+        >
+          <MessageSquare :size="14" />
+          <span>对话</span>
+        </button>
+        <button
+          @click="router.push('/knowledge')"
+          :class="[
+            'flex-1 h-8 rounded-md text-xs font-medium inline-flex items-center justify-center gap-1.5 transition-colors',
+            currentPath === '/knowledge'
+              ? 'bg-white dark:bg-gray-700 text-slate-800 dark:text-white shadow-sm'
+              : 'text-slate-500 dark:text-gray-400 hover:text-slate-700 dark:hover:text-gray-200'
+          ]"
+        >
+          <Database :size="14" />
+          <span>知识库</span>
+        </button>
+      </div>
+    </div>
+
+    <section class="flex-1 min-h-0 pb-2">
       <ConversationList />
     </section>
-
-    <div class="p-4 mx-4 mb-4 rounded-2xl bg-slate-50 dark:bg-gray-800/50 border border-slate-100 dark:border-gray-800">
-      <button
-        @click="handleLogout"
-        class="flex items-center w-full px-3 py-2.5 text-sm text-slate-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 transition-all duration-200 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20"
-      >
-        <LogOut :size="16" class="mr-3" />
-        <span>{{ labels.logout }}</span>
-      </button>
-    </div>
   </div>
 </template>

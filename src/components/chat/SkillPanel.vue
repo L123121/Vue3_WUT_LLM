@@ -9,26 +9,14 @@ const skillStore = useSkillStore();
 const githubUrl = ref('');
 const error = ref('');
 
-const labels = computed(() => {
-  if (languageStore.isChinese) {
-    return {
-      title: 'Skills',
-      subtitle: '支持导入 GitHub Skill.md',
-      placeholder: '粘贴 GitHub skill 链接（blob/..../SKILL.md）',
-      add: '导入',
-      enabled: '已启用',
-      empty: '暂无 skill，导入后可增强回答风格',
-    };
-  }
-  return {
-    title: 'Skills',
-    subtitle: 'Import GitHub SKILL.md',
-    placeholder: 'Paste GitHub skill URL (blob/.../SKILL.md)',
-    add: 'Import',
-    enabled: 'Enabled',
-    empty: 'No skill imported yet',
-  };
-});
+const labels = computed(() => ({
+  title: 'Skills',
+  subtitle: '支持导入 GitHub Skill.md',
+  placeholder: '粘贴 GitHub skill 链接（blob/..../SKILL.md）',
+  add: '导入',
+  enabled: '已启用',
+  empty: '暂无 skill，导入后可增强回答风格',
+}));
 
 const handleImport = async () => {
   error.value = '';

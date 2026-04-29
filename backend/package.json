@@ -1,31 +1,30 @@
 {
   "name": "wuli-elf-backend",
   "version": "1.0.0",
-  "main": "src/app.ts",
+  "main": "src/app.js",
   "scripts": {
-    "dev": "nodemon --exec \"node -r ts-node/register\" src/app.ts",
-    "start": "node dist/app.js",
-    "build": "tsc",
+    "dev": "nodemon src/app.js",
+    "start": "node src/app.js",
+    "build": "echo \"No build step required\"",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
-    "@types/jsonwebtoken": "^9.0.10",
+    "axios": "^1.15.2",
+    "chromadb": "^3.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
     "helmet": "^7.0.0",
+    "ioredis": "^5.10.1",
     "jsonwebtoken": "^9.0.3",
+    "mammoth": "^1.12.0",
     "morgan": "^1.10.0",
+    "multer": "^2.1.1",
+    "pdf-parse": "^1.1.1",
+    "uuid": "^14.0.0",
     "ws": "^8.19.0"
   },
   "devDependencies": {
-    "@types/cors": "^2.8.19",
-    "@types/express": "^4.17.25",
-    "@types/morgan": "^1.9.10",
-    "@types/node": "^22.19.7",
-    "@types/ws": "^8.18.1",
-    "nodemon": "^3.0.1",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.6.3"
+    "nodemon": "^3.0.1"
   }
 }

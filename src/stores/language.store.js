@@ -3,7 +3,6 @@ import { defineStore } from 'pinia';
 import messages from '../i18n/messages.js';
 
 const STORAGE_KEY = 'app_language';
-const SUPPORTED_LANGUAGES = ['zh-CN', 'en-US'];
 
 const languageConfig = {
   'zh-CN': {
@@ -13,16 +12,7 @@ const languageConfig = {
     englishLabel: 'Chinese (Simplified)',
     speechLocale: 'zh-CN',
   },
-  'en-US': {
-    code: 'en-US',
-    label: 'English',
-    nativeLabel: 'English',
-    englishLabel: 'English (US)',
-    speechLocale: 'en-US',
-  },
 };
-
-const isSupportedLanguage = (value) => SUPPORTED_LANGUAGES.includes(value);
 
 const resolvePath = (source, path) => {
   return path.split('.').reduce((current, key) => current?.[key], source);
@@ -34,34 +24,27 @@ const interpolate = (value, params = {}) => {
 };
 
 export const useLanguageStore = defineStore('language', () => {
-  const browserLanguage = typeof navigator !== 'undefined' ? navigator.language : 'zh-CN';
-  const initialLanguage = localStorage.getItem(STORAGE_KEY);
-  const locale = ref(
-    isSupportedLanguage(initialLanguage)
-      ? initialLanguage
-      : browserLanguage.startsWith('en')
-        ? 'en-US'
-        : 'zh-CN'
-  );
+  const locale = ref('zh-CN');
 
   const currentLanguage = computed(() => languageConfig[locale.value]);
   const languageOptions = computed(() => Object.values(languageConfig));
-  const isChinese = computed(() => locale.value === 'zh-CN');
-  const dictionary = computed(() => messages[locale.value] || messages['zh-CN']);
+  const isChinese = computed(() => true);
+  const dictionary = computed(() => messages['zh-CN']);
 
   watch(
     locale,
-    (value) => {
-      document.documentElement.lang = value;
-      localStorage.setItem(STORAGE_KEY, value);
+    () => {
+      document.documentElement.lang = 'zh-CN';
+      localStorage.setItem(STORAGE_KEY, 'zh-CN');
+      if (locale.value !== 'zh-CN') {
+        locale.value = 'zh-CN';
+      }
     },
     { immediate: true }
   );
 
-  const setLocale = (value) => {
-    if (isSupportedLanguage(value)) {
-      locale.value = value;
-    }
+  const setLocale = () => {
+    locale.value = 'zh-CN';
   };
 
   const t = (path, params) => {
