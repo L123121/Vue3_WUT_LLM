@@ -54,9 +54,9 @@ A RAG-enhanced AI copilot for WUT campus, featuring document vectorized retrieva
 
 ![主界面截图](image.png)
 
-![会话页面](D:\Vue3_武理小精灵\会话页面.png)
+![会话页面](会话页面.png)
 
-![知识库](D:\Vue3_武理小精灵\知识库.png)
+![知识库](知识库.png)
 
 ---
 
