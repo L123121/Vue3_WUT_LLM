@@ -3,7 +3,6 @@
 const path = require('path');
 const { RagService } = require('../services/rag.service');
 const { DocumentService } = require('../services/document.service');
-const { chromaService } = require('../services/chroma.service');
 const { redis } = require('../services/redis.service');
 const { successResponse, errorResponse } = require('../utils/response');
 const { upload, parseFile, cleanupFile } = require('../services/file-upload.service');
@@ -167,23 +166,16 @@ const getDocument = async (req, res, next) => {
  */
 const getStats = async (req, res, next) => {
   try {
-    const chromaStats = chromaService.isConnected
-      ? await chromaService.getStats()
-      : { isConnected: false };
-
     const docCount = await redis.scard('documents:all');
 
     successResponse(res, {
-      chroma: chromaStats,
       documents: {
         count: docCount
       }
     }, '获取成功');
   } catch (error) {
     console.error('[RAG Stats] 获取失败:', error);
-    // 返回默认值而不是错误
     successResponse(res, {
-      chroma: { isConnected: false },
       documents: { count: 0 }
     }, '获取成功');
   }
@@ -213,12 +205,18 @@ const uploadDocument = async (req, res, next) => {
       return errorResponse(res, '文件内容为空或无法解析', 400);
     }
 
+    // 读取文件 buffer 用于上传到星火知识库
+    const fs = require('fs');
+    const fileBuffer = await fs.promises.readFile(filePath);
+
     const title = req.body.title || path.basename(originalName, path.extname(originalName));
 
     const result = await documentService.addDocument({
       title,
       content: content.trim(),
       category,
+      fileBuffer,
+      fileName: originalName,
       metadata: {
         sourceFile: originalName,
         fileType: path.extname(originalName).toLowerCase()
@@ -231,7 +229,7 @@ const uploadDocument = async (req, res, next) => {
       ...result,
       sourceFile: originalName,
       contentLength: content.length
-    }, '文件上传成功');
+    }, result.message || '文件上传成功');
   } catch (error) {
     console.error('[FileUpload] 上传失败:', error);
     next(error);
@@ -244,25 +242,6 @@ const uploadDocument = async (req, res, next) => {
 
 const uploadMiddleware = upload.single('file');
 
-/**
- * 测试 Embedding 服务连接
- */
-const testEmbedding = async (req, res, next) => {
-  try {
-    const { EmbeddingService } = require('../services/embedding.service');
-    const embeddingService = new EmbeddingService();
-    const result = await embeddingService.testConnection();
-    if (result.success) {
-      successResponse(res, result, 'Embedding 服务连接正常');
-    } else {
-      errorResponse(res, result.message, 500);
-    }
-  } catch (error) {
-    console.error('[Embedding Test] 测试失败:', error);
-    successResponse(res, { success: false, message: 'Embedding 服务不可用' }, '获取成功');
-  }
-};
-
 module.exports = {
   ragChat,
   ragChatStream,
@@ -273,6 +252,5 @@ module.exports = {
   getDocument,
   getStats,
   uploadDocument,
-  uploadMiddleware,
-  testEmbedding
+  uploadMiddleware
 };

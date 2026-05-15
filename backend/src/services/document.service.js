@@ -2,8 +2,8 @@
 
 const { v4: uuidv4 } = require('uuid');
 const { TextSplitter } = require('../utils/text-splitter');
-const { chromaService } = require('./chroma.service');
 const { redis } = require('./redis.service');
+const { ChatdocService } = require('./chatdoc.service');
 
 class DocumentService {
   constructor() {
@@ -12,27 +12,14 @@ class DocumentService {
       chunkOverlap: 50
     });
     this.DOC_TTL = 30 * 24 * 60 * 60;
-    this.embeddingService = null;
-  }
-
-  // 延迟初始化 EmbeddingService
-  getEmbeddingService() {
-    if (!this.embeddingService) {
-      try {
-        const { EmbeddingService } = require('./embedding.service');
-        this.embeddingService = new EmbeddingService();
-      } catch (e) {
-        console.warn('[Document] EmbeddingService 初始化失败:', e.message);
-      }
-    }
-    return this.embeddingService;
+    this.chatdocService = new ChatdocService();
   }
 
   /**
-   * 添加文档到知识库
+   * 添加文档到知识库（同步到星火知识库）
    */
   async addDocument(doc) {
-    const { title, content, category = 'general', metadata = {} } = doc;
+    const { title, content, category = 'general', metadata = {}, fileBuffer, fileName } = doc;
 
     if (!content || content.trim().length === 0) {
       throw new Error('文档内容不能为空');
@@ -41,44 +28,32 @@ class DocumentService {
     const docId = `doc_${uuidv4()}`;
     const now = Date.now();
 
-    // 切片文档
     const chunks = this.splitter.splitByParagraph(content);
     console.log(`[Document] 文档切片完成: ${chunks.length} 段`);
 
-    // 检查 Chroma 是否连接
-    const useVector = chromaService.isConnected && this.getEmbeddingService();
-
-    if (useVector) {
+    // 上传到星火知识库
+    let chatdocFileId = null;
+    if (fileBuffer && fileName) {
       try {
-        // 批量获取向量
-        const embeddings = await this.embeddingService.getEmbeddingsBatch(chunks);
-        console.log(`[Document] 向量化完成: ${embeddings.length} 个向量`);
+        console.log(`[Document] 上传到星火知识库: ${fileName}`);
+        const uploadResult = await this.chatdocService.uploadDocument(fileBuffer, fileName);
+        if (uploadResult.code === 0 && uploadResult.data?.fileId) {
+          chatdocFileId = uploadResult.data.fileId;
+          console.log(`[Document] 星火知识库上传成功, fileId: ${chatdocFileId}`);
 
-        // 存储到 Chroma
-        const chunkDocuments = chunks.map((chunk, index) => ({
-          id: `${docId}_chunk_${index}`,
-          content: chunk,
-          embedding: embeddings[index],
-          metadata: {
-            docId,
-            title,
-            category,
-            chunkIndex: index,
-            totalChunks: chunks.length,
-            createdAt: now,
-            ...metadata
-          }
-        }));
-
-        await chromaService.addDocuments(chunkDocuments);
-      } catch (e) {
-        console.warn('[Document] 向量存储失败，仅保存元数据:', e.message);
+          // 后台异步等待向量化（不阻塞响应）
+          this.chatdocService.waitForVectoring(chatdocFileId, 30000).then(ok => {
+            if (ok) console.log(`[Document] 星火知识库向量化完成`);
+          }).catch(() => {});
+        } else {
+          console.warn(`[Document] 星火知识库上传失败: ${uploadResult.desc || uploadResult.message}`);
+        }
+      } catch (err) {
+        console.warn(`[Document] 星火知识库上传异常: ${err.message}`);
       }
-    } else {
-      console.log('[Document] Chroma 未连接，仅保存文档元数据');
     }
 
-    // 存储文档元数据到 Redis（用于管理）
+    // 存储文档元数据到 Redis
     const docMetadata = {
       id: docId,
       title,
@@ -87,6 +62,7 @@ class DocumentService {
       contentLength: content.length,
       chunkCount: chunks.length,
       createdAt: now,
+      chatdocFileId: chatdocFileId || '',
       metadata: JSON.stringify(metadata)
     };
 
@@ -98,13 +74,11 @@ class DocumentService {
       id: docId,
       title,
       chunkCount: chunks.length,
-      message: '文档添加成功'
+      chatdocFileId,
+      message: chatdocFileId ? '文档添加成功（已同步到星火知识库）' : '文档添加成功（仅本地存储）'
     };
   }
 
-  /**
-   * 批量添加文档
-   */
   async addDocuments(docs) {
     const results = [];
     for (const doc of docs) {
@@ -119,35 +93,18 @@ class DocumentService {
     return results;
   }
 
-  /**
-   * 删除文档
-   */
   async deleteDocument(docId) {
     const docMeta = await redis.hgetall(`document:${docId}`);
     if (!docMeta || !docMeta.id) {
       throw new Error('文档不存在');
     }
 
-    // 删除 Chroma 中所有相关切片
-    if (chromaService.isConnected) {
-      const chunkCount = parseInt(docMeta.chunkCount) || 0;
-      const chunkIds = [];
-      for (let i = 0; i < chunkCount; i++) {
-        chunkIds.push(`${docId}_chunk_${i}`);
-      }
-      await chromaService.deleteDocuments(chunkIds);
-    }
-
-    // 删除 Redis 元数据
     await redis.del(`document:${docId}`);
     await redis.srem('documents:all', docId);
 
     return { message: '文档删除成功', docId };
   }
 
-  /**
-   * 获取文档列表
-   */
   async listDocuments(options = {}) {
     const { category, page = 1, limit = 20 } = options;
 
@@ -166,6 +123,7 @@ class DocumentService {
         category: d.category,
         contentLength: parseInt(d.contentLength) || 0,
         chunkCount: parseInt(d.chunkCount) || 0,
+        chatdocFileId: d.chatdocFileId || '',
         createdAt: new Date(parseInt(d.createdAt))
       }));
 
@@ -182,23 +140,13 @@ class DocumentService {
 
     return {
       documents,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit)
-      }
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) }
     };
   }
 
-  /**
-   * 获取文档详情
-   */
   async getDocument(docId) {
     const docMeta = await redis.hgetall(`document:${docId}`);
-    if (!docMeta || !docMeta.id) {
-      return null;
-    }
+    if (!docMeta || !docMeta.id) return null;
 
     return {
       id: docMeta.id,
@@ -207,9 +155,23 @@ class DocumentService {
       content: docMeta.content || '',
       contentLength: parseInt(docMeta.contentLength) || 0,
       chunkCount: parseInt(docMeta.chunkCount) || 0,
+      chatdocFileId: docMeta.chatdocFileId || '',
       createdAt: new Date(parseInt(docMeta.createdAt)),
       metadata: docMeta.metadata ? JSON.parse(docMeta.metadata) : {}
     };
+  }
+
+  async getAllChatdocFileIds() {
+    const docIds = await redis.smembers('documents:all');
+    if (!docIds.length) return [];
+
+    const pipeline = redis.pipeline();
+    docIds.forEach(id => pipeline.hget(`document:${id}`, 'chatdocFileId'));
+    const results = await pipeline.exec();
+
+    return results
+      .map(([err, data]) => data)
+      .filter(id => id && id.length > 0);
   }
 }
 

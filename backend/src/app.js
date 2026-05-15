@@ -2,13 +2,14 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
+const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 
 const { ChatService } = require('./services/chat.service');
 const { XunfeiService } = require('./services/xunfei.service');
+const { AnthropicService } = require('./services/anthropic.service');
 const config = require('./config');
-const { conversationStore } = require('./services/redis.service');
-const { chromaService } = require('./services/chroma.service');
+const { conversationStore, redis } = require('./services/redis.service');
 const { RagService } = require('./services/rag.service');
 const ragRoutes = require('./routes/rag.routes');
 const authRoutes = require('./routes/auth.routes');
@@ -17,8 +18,9 @@ const conversationsRoutes = require('./routes/conversations.routes');
 const app = express();
 const PORT = parseInt(process.env.PORT || '3000', 10);
 
-const chatService = new ChatService();
+const anthropicService = new AnthropicService();
 const xunfeiService = new XunfeiService();
+const chatService = new ChatService(anthropicService);
 const ragService = new RagService();
 
 // 用量统计
@@ -114,23 +116,33 @@ app.use(helmet({
   contentSecurityPolicy: false,
 }));
 app.use(morgan('dev'));
-app.use(express.json());
+app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
+
+// 速率限制
+const chatLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000,
+  max: 30,
+  message: { success: false, error: '请求过于频繁，请稍后再试' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 // 健康检查
 app.get('/api/health', (req, res) => {
-  const hasApiConfig = !!config.xunfei.apiKey;
+  const hasApiConfig = !!config.anthropic.authToken;
+  const redisStatus = redis && redis.status === 'ready' ? 'connected' : 'disconnected';
   res.json({
     status: 'ok',
     message: '武理小精灵后端服务运行正常',
     timestamp: new Date().toISOString(),
     ai_service: {
       enabled: hasApiConfig,
-      provider: 'iFlyTek Spark',
-      model: config.xunfei.model || '未配置',
+      provider: 'Anthropic',
+      model: config.anthropic.model || '未配置',
       status: hasApiConfig ? '配置正常' : '模拟模式'
     },
-    redis: 'connected'
+    redis: redisStatus
   });
 });
 
@@ -165,16 +177,34 @@ app.get('/api/usage', (req, res) => {
 });
 
 // 聊天请求处理函数
+const MAX_MESSAGE_LENGTH = 10000;
+const MAX_HISTORY_LENGTH = 50;
+
 const handleChatRequest = async (req, res, endpoint = '/api') => {
   try {
     const { message, history = [], conversationId } = req.body;
-    console.log(`🤖 ${endpoint} 收到请求:`, message?.substring(0, 50));
 
     if (!message || typeof message !== 'string' || message.trim() === '') {
       return res.status(400).json({
         success: false,
         error: '消息内容不能为空',
         code: 'MESSAGE_EMPTY'
+      });
+    }
+
+    if (message.length > MAX_MESSAGE_LENGTH) {
+      return res.status(400).json({
+        success: false,
+        error: `消息内容过长，最多${MAX_MESSAGE_LENGTH}个字符`,
+        code: 'MESSAGE_TOO_LONG'
+      });
+    }
+
+    if (!Array.isArray(history) || history.length > MAX_HISTORY_LENGTH) {
+      return res.status(400).json({
+        success: false,
+        error: `历史消息过多，最多${MAX_HISTORY_LENGTH}条`,
+        code: 'HISTORY_TOO_LONG'
       });
     }
 
@@ -185,7 +215,7 @@ const handleChatRequest = async (req, res, endpoint = '/api') => {
       outputText: result.reply,
     });
 
-    console.log(`✅ ${endpoint} AI回复:`, result.reply.substring(0, 50));
+    console.log(`✅ ${endpoint} AI回复完成`);
     res.json({
       success: true,
       data: {
@@ -209,12 +239,16 @@ const handleChatRequest = async (req, res, endpoint = '/api') => {
 };
 
 // 主聊天接口
-app.post('/api', (req, res) => {
+app.post('/api', chatLimiter, (req, res) => {
   handleChatRequest(req, res, '/api');
 });
 
+// 生成会话标题
+const { generateTitle } = require('./controllers/chat.controller');
+app.post('/api/chat/title', chatLimiter, generateTitle);
+
 // 兼容接口
-app.post('/api/chat', (req, res) => {
+app.post('/api/chat', chatLimiter, (req, res) => {
   handleChatRequest(req, res, '/api/chat');
 });
 
@@ -228,16 +262,29 @@ app.use('/api/auth', authRoutes);
 app.use('/api/conversations', conversationsRoutes);
 
 // SSE 流式聊天接口
-app.post('/api/stream', async (req, res) => {
+app.post('/api/stream', chatLimiter, async (req, res) => {
   try {
     const { message, history = [], conversationId, enableRag = false } = req.body;
     let streamReply = '';
-    console.log('🌊 /api/stream 收到流式请求:', message?.substring(0, 50), enableRag ? '(RAG启用)' : '');
 
     if (!message || typeof message !== 'string' || message.trim() === '') {
       return res.status(400).json({
         success: false,
         error: '消息内容不能为空'
+      });
+    }
+
+    if (message.length > MAX_MESSAGE_LENGTH) {
+      return res.status(400).json({
+        success: false,
+        error: `消息内容过长，最多${MAX_MESSAGE_LENGTH}个字符`
+      });
+    }
+
+    if (!Array.isArray(history) || history.length > MAX_HISTORY_LENGTH) {
+      return res.status(400).json({
+        success: false,
+        error: `历史消息过多，最多${MAX_HISTORY_LENGTH}条`
       });
     }
 
@@ -248,38 +295,29 @@ app.post('/api/stream', async (req, res) => {
     res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders();
 
-    // RAG 增强
-    let enhancedMessage = message.trim();
-    let sources = [];
-
-    if (enableRag && chromaService.isConnected) {
-      try {
-        const relevantDocs = await ragService.retrieve(message.trim());
-        sources = relevantDocs.map(d => ({
-          id: d.id,
-          title: d.metadata?.title
-        }));
-
-        const context = ragService.buildContext(relevantDocs);
-        enhancedMessage = ragService.buildRagPrompt(message.trim(), context);
-
-        // 发送来源信息
-        if (sources.length > 0) {
-          res.write(`data: ${JSON.stringify({ sources })}\n\n`);
+    if (enableRag) {
+      // RAG 模式：通过 ragService 统一处理（星火知识库优先）
+      for await (const chunk of ragService.chatStream(message.trim(), history)) {
+        if (chunk.type === 'sources') {
+          res.write(`data: ${JSON.stringify({ sources: chunk.sources })}\n\n`);
+        } else if (chunk.type === 'content') {
+          if (chunk.done) {
+            res.write(`data: [DONE]\n\n`);
+          } else {
+            streamReply += chunk.content || '';
+            res.write(`data: ${JSON.stringify({ content: chunk.content })}\n\n`);
+          }
         }
-      } catch (ragError) {
-        console.warn('[RAG] 检索失败，使用普通模式:', ragError.message);
       }
-    }
-
-    // 流式输出
-    for await (const chunk of xunfeiService.getCompletionStream(enhancedMessage, history)) {
-      if (chunk.done) {
-        res.write(`data: [DONE]\n\n`);
-      }
-      else {
-        streamReply += chunk.content || '';
-        res.write(`data: ${JSON.stringify({ content: chunk.content })}\n\n`);
+    } else {
+      // 普通模式
+      for await (const chunk of anthropicService.getCompletionStream(message.trim(), history)) {
+        if (chunk.done) {
+          res.write(`data: [DONE]\n\n`);
+        } else {
+          streamReply += chunk.content || '';
+          res.write(`data: ${JSON.stringify({ content: chunk.content })}\n\n`);
+        }
       }
     }
 
@@ -311,7 +349,7 @@ app.post('/api/stream', async (req, res) => {
   catch (error) {
     console.error('❌ /api/stream 错误:', error);
     console.error('错误堆栈:', error.stack);
-    res.write(`data: ${JSON.stringify({ error: 'Stream error: ' + error.message })}\n\n`);
+    res.write(`data: ${JSON.stringify({ error: '流式响应出错，请重试' })}\n\n`);
     res.end();
   }
 });
@@ -336,22 +374,13 @@ app.use((err, req, res, next) => {
 
 // 启动服务器
 app.listen(PORT, '0.0.0.0', async () => {
-  const hasApi = !!config.xunfei.apiKey;
+  const hasApi = !!config.anthropic.authToken;
   console.log('='.repeat(60));
   console.log('🚀 武理小精灵后端服务启动成功！');
   console.log(`📍 地址：http://localhost:${PORT}`);
-  console.log(`🤖 AI服务：${hasApi ? '讯飞星火模型' : '模拟模式'}`);
-  console.log(`📡 模型：${config.xunfei.model || '未配置'}`);
+  console.log(`🤖 AI服务：${hasApi ? 'Anthropic' : '模拟模式'}`);
+  console.log(`📡 模型：${config.anthropic.model || '未配置'}`);
   console.log(`💾 存储：Redis`);
-
-  // 初始化 Chroma 向量数据库
-  const chromaHost = config.chroma?.host || 'http://localhost:8000';
-  const chromaConnected = await chromaService.connect(chromaHost);
-  if (chromaConnected) {
-    console.log(`📚 RAG知识库：Chroma 已连接`);
-  } else {
-    console.log(`📚 RAG知识库：Chroma 未连接（RAG功能不可用）`);
-  }
-
+  console.log(`📚 RAG知识库：星火知识库 (chatdoc.xfyun.cn)`);
   console.log('='.repeat(60));
 });

@@ -20,7 +20,4 @@ router.delete('/documents/:id', ragController.deleteDocument);
 // 统计信息
 router.get('/stats', ragController.getStats);
 
-// 测试接口
-router.get('/test/embedding', ragController.testEmbedding);
-
 module.exports = router;

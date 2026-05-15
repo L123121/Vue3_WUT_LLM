@@ -1,40 +1,21 @@
 <script setup>
-import { computed, ref, onMounted, onUnmounted } from 'vue';
+import { computed, ref } from 'vue';
 import MarkdownIt from 'markdown-it';
 import hljs from 'highlight.js/lib/core';
 import DOMPurify from 'dompurify';
 import CodeRunner from './CodeRunner.vue';
 import 'highlight.js/styles/atom-one-dark.css';
 
-// 静态导入常用语言
-import javascript from 'highlight.js/lib/languages/javascript';
-import python from 'highlight.js/lib/languages/python';
-import bash from 'highlight.js/lib/languages/bash';
-import json from 'highlight.js/lib/languages/json';
-import typescript from 'highlight.js/lib/languages/typescript';
-import xml from 'highlight.js/lib/languages/xml';
-import css from 'highlight.js/lib/languages/css';
-import yaml from 'highlight.js/lib/languages/yaml';
-import sql from 'highlight.js/lib/languages/sql';
-import java from 'highlight.js/lib/languages/java';
-import go from 'highlight.js/lib/languages/go';
-import cpp from 'highlight.js/lib/languages/cpp';
-import c from 'highlight.js/lib/languages/c';
-
-// 注册所有语言
-hljs.registerLanguage('javascript', javascript);
-hljs.registerLanguage('python', python);
-hljs.registerLanguage('bash', bash);
-hljs.registerLanguage('json', json);
-hljs.registerLanguage('typescript', typescript);
-hljs.registerLanguage('xml', xml);
-hljs.registerLanguage('css', css);
-hljs.registerLanguage('yaml', yaml);
-hljs.registerLanguage('sql', sql);
-hljs.registerLanguage('java', java);
-hljs.registerLanguage('go', go);
-hljs.registerLanguage('cpp', cpp);
-hljs.registerLanguage('c', c);
+// 按需动态加载语言
+const loadedLanguages = new Set();
+const ensureLanguage = async (lang) => {
+  if (loadedLanguages.has(lang) || hljs.getLanguage(lang)) return;
+  try {
+    const module = await import(`highlight.js/lib/languages/${lang}`);
+    hljs.registerLanguage(lang, module.default);
+    loadedLanguages.add(lang);
+  } catch {}
+};
 
 const props = defineProps({ content: { type: String, default: '' } });
 const emit = defineEmits(['copyCode']);
@@ -287,9 +268,18 @@ const highlightCode = (str, lang) => {
     } catch {}
   }
 
-  // 尝试自动检测
+  // 异步加载语言后高亮（首次遇到新语言时）
+  if (mappedLang) {
+    ensureLanguage(mappedLang).then(() => {
+      // 语言加载完成后，触发重新渲染
+      // 通过更新一个响应式标记来实现
+      highlightVersion.value++;
+    });
+  }
+
+  // 尝试自动检测已加载的语言
   try {
-    const autoResult = hljs.highlightAuto(str, COMMON_LANGUAGES);
+    const autoResult = hljs.highlightAuto(str);
     if (autoResult?.value) {
       const detectedLang = autoResult.language || mappedLang || 'text';
       return renderCodeBlock(autoResult.value, `language-${detectedLang}`, detectedLang, str);
@@ -299,6 +289,9 @@ const highlightCode = (str, lang) => {
   // 降级：纯文本
   return renderCodeBlock(escapeHtml(str), '', normalizedLang || 'text', str);
 };
+
+// 语言加载完成后触发重新渲染
+const highlightVersion = ref(0);
 
 const md = new MarkdownIt({ html: false, xhtmlOut: true, breaks: true, linkify: true, typographer: true, highlight: highlightCode });
 
@@ -347,15 +340,21 @@ const ALLOWED_ATTR = [
   'points'
 ];
 
+// 流式渲染节流：streaming 时每 150ms 才重新渲染
+let throttleTimer = null;
+let throttledContent = ref('');
+const isThrottled = ref(false);
+
 const renderedContent = computed(() => {
+  // 依赖 highlightVersion 以在语言加载后重新渲染
+  highlightVersion.value;
+
   if (!props.content || props.content.trim() === '') return '';
   try {
-    // 先补全未闭合的 Markdown 标签，再渲染
     const completed = completeMarkdown(props.content);
     const raw = md.render(completed);
     return DOMPurify.sanitize(raw, { ALLOWED_TAGS, ALLOWED_ATTR });
   } catch (error) {
-    console.error('Markdown rendering error:', error);
     return props.content;
   }
 });

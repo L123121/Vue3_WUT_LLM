@@ -66,7 +66,7 @@ const saveLocalConversationsCache = (list) => {
 const createWelcomeMessage = () => ({
   id: 'welcome',
   role: 'model',
-  text: '你好！我是武理小精灵 AI 助手 (Powered by Qwen)。有什么我可以帮你的吗？',
+  text: '你好！我是武理小精灵 AI 助手 (Powered by Mimo)。有什么我可以帮你的吗？',
   timestamp: new Date(),
 });
 
@@ -133,10 +133,8 @@ export const useChatStore = defineStore('chat', () => {
   // 加载会话列表
   const loadConversations = async () => {
     const auth = getAuthStore();
-    console.log('[loadConversations] isLocalAuth:', auth.isLocalAuth, 'isAuthenticated:', auth.isAuthenticated);
     // 如果用户未登录，或者是本地认证（无后端），初始化本地会话
     if (!auth.isAuthenticated || auth.isLocalAuth) {
-      console.log('[loadConversations] Using local conversations');
       if (conversations.value.length === 0) {
         const cached = loadLocalConversationsCache();
         if (cached.length > 0) {
@@ -226,11 +224,9 @@ export const useChatStore = defineStore('chat', () => {
   // 创建会话
   const createConversation = async (title) => {
     const auth = getAuthStore();
-    console.log('[createConversation] isLocalAuth:', auth.isLocalAuth, 'isAuthenticated:', auth.isAuthenticated);
 
     // 本地认证时直接创建本地会话
     if (auth.isLocalAuth) {
-      console.log('[createConversation] Using local conversation (isLocalAuth=true)');
       const localConv = {
         id: `local_${Date.now()}`,
         title: title || `新会话 ${conversations.value.length + 1}`,
@@ -292,10 +288,13 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     if (id !== 'local' && !id.startsWith('local_')) {
-      try {
-        await apiRenameConversation(id, trimmedTitle);
-      } catch (error) {
-        console.error('重命名会话失败:', error);
+      const auth = getAuthStore();
+      if (auth.isAuthenticated && !auth.isLocalAuth) {
+        try {
+          await apiRenameConversation(id, trimmedTitle);
+        } catch (error) {
+          console.error('重命名会话失败:', error);
+        }
       }
     }
   };
@@ -316,12 +315,15 @@ export const useChatStore = defineStore('chat', () => {
 
     conversations.value.splice(targetIndex, 1);
 
-    // 后端删除
+    // 后端删除（本地会话或未登录时跳过）
     if (id !== 'local' && !id.startsWith('local_')) {
-      try {
-        await apiDeleteConversation(id);
-      } catch (error) {
-        console.error('删除会话失败:', error);
+      const auth = getAuthStore();
+      if (auth.isAuthenticated && !auth.isLocalAuth) {
+        try {
+          await apiDeleteConversation(id);
+        } catch (error) {
+          console.error('删除会话失败:', error);
+        }
       }
     }
 
@@ -353,10 +355,13 @@ export const useChatStore = defineStore('chat', () => {
     conv.messages = [createWelcomeMessage()];
 
     if (conv.id !== 'local' && !conv.id.startsWith('local_')) {
-      try {
-        await apiClearMessages(conv.id);
-      } catch (error) {
-        console.error('清空消息失败:', error);
+      const auth = getAuthStore();
+      if (auth.isAuthenticated && !auth.isLocalAuth) {
+        try {
+          await apiClearMessages(conv.id);
+        } catch (error) {
+          console.error('清空消息失败:', error);
+        }
       }
     }
   };
@@ -424,17 +429,6 @@ export const useChatStore = defineStore('chat', () => {
       conversations.value[convIndex].messages.push(userMsg);
     }
 
-    // 更新标题（新会话且第一条用户消息时，异步生成标题）
-    if ((conversations.value[convIndex].title.startsWith('新会话') || conversations.value[convIndex].title === '默认会话') && conversations.value[convIndex].messages.filter(m => m.role === 'user').length === 1) {
-      // 先设置临时标题
-      conversations.value[convIndex].title = '正在生成标题...';
-      // 异步生成标题
-      generateTitle(trimmedText).then((title) => {
-        conversations.value[convIndex].title = title;
-        renameConversation(conversationId, title);
-      });
-    }
-
     isLoading.value = true;
     activeStreamingConversationId = conversationId;
     currentAbortController = new AbortController();
@@ -477,6 +471,22 @@ export const useChatStore = defineStore('chat', () => {
           reconnectAttempt.value = attempt;
         },
         onDone: () => {
+          // 首次回答完成后，根据用户问题和 AI 回复生成标题
+          const conv = conversations.value[convIndex];
+          if (conv && (conv.title.startsWith('新会话') || conv.title === '默认会话')) {
+            const userText = trimmedText;
+            const aiMsg = conv.messages?.find(m => m.id === aiMsgId);
+            const replyText = aiMsg?.text || '';
+            if (userText) {
+              conv.title = '正在生成标题...';
+              const titleInput = `用户问题：${userText}\nAI回答：${replyText.slice(0, 200)}`;
+              generateTitle(titleInput).then((title) => {
+                conv.title = title;
+                renameConversation(conversationId, title);
+              });
+            }
+          }
+
           currentStreamingId.value = null;
           isLoading.value = false;
           isReconnecting.value = false;
@@ -568,16 +578,27 @@ export const useChatStore = defineStore('chat', () => {
     }
   };
 
-  // 监听当前会话ID变化
-  watch(conversations, () => {
-    const auth = getAuthStore();
-    if (!auth.isAuthenticated || auth.isLocalAuth) {
-      saveLocalConversationsCache(conversations.value);
-    }
-  }, { deep: true });
+  // 保存本地会话缓存（防抖）
+  let saveTimer = null;
+  const scheduleSaveCache = () => {
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      const auth = getAuthStore();
+      if (!auth.isAuthenticated || auth.isLocalAuth) {
+        saveLocalConversationsCache(conversations.value);
+      }
+      saveTimer = null;
+    }, 500);
+  };
+
+  // 监听会话列表结构变化（数量、顺序），不监听消息内容
+  watch(() => conversations.value.map(c => c.id).join(','), () => {
+    scheduleSaveCache();
+  });
 
   watch(currentConversationId, (value) => {
     localStorage.setItem(CURRENT_CONVERSATION_KEY, value);
+    scheduleSaveCache();
   });
 
   return {
@@ -607,9 +628,6 @@ export const useChatStore = defineStore('chat', () => {
     abortCurrentRequest,
   };
 });
-
-
-
 
 
 

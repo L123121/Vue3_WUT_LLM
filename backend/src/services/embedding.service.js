@@ -1,14 +1,11 @@
 "use strict";
 
-const axios = require('axios');
 const crypto = require('crypto');
+const WebSocket = require('ws');
 
 class EmbeddingService {
   constructor() {
-    // 从环境变量获取配置
-    // 格式：apiKey:apiSecret
     const apiKeyConfig = process.env.XUNFEI_API_KEY || '';
-
     if (apiKeyConfig.includes(':')) {
       const parts = apiKeyConfig.split(':');
       this.apiKey = parts[0];
@@ -17,155 +14,149 @@ class EmbeddingService {
       this.apiKey = apiKeyConfig;
       this.apiSecret = process.env.XUNFEI_API_SECRET || '';
     }
+    this.appId = process.env.XUNFEI_APP_ID || '';
 
-    // 讯飞 Embedding API 配置
-    // 方案一：使用 MaaS 平台（与聊天 API 相同的认证方式）
-    this.maasHost = process.env.XUNFEI_EMBEDDING_HOST || 'maas-api.cn-huabei-1.xf-yun.com';
-    this.maasPath = '/v2/embeddings';
-    this.maasModel = process.env.XUNFEI_EMBEDDING_MODEL || 'emb-text-001';
-
-    // 方案二：使用独立的 Embedding 服务
-    this.standaloneHost = 'emb-cn-huabei-1.xf-yun.com';
-    this.standalonePath = '/v2/embeddings';
-
-    // 优先使用 MaaS 平台
-    this.useMaas = true;
+    this.host = 'emb-cn-huabei-1.xf-yun.com';
+    this.path = '/v2/embeddings';
   }
 
   /**
-   * 生成 MaaS 平台签名
+   * 讯飞签名认证：MD5(appId + timestamp) -> HMAC-SHA1(auth, secret)
    */
-  generateMaasSignature(date) {
-    const signatureOrigin = `host: ${this.maasHost}\ndate: ${date}\nPOST ${this.maasPath} HTTP/1.1`;
-    const signatureSha = crypto
-      .createHmac('sha256', this.apiSecret)
-      .update(Buffer.from(signatureOrigin, 'utf8'))
+  _generateSignature(timestamp) {
+    // 1. MD5(appId + timestamp)
+    const md5Input = `${this.appId}${timestamp}`;
+    const auth = crypto.createHash('md5').update(md5Input).digest('hex');
+
+    // 2. HMAC-SHA1(auth, secret)
+    const signature = crypto
+      .createHmac('sha1', this.apiSecret)
+      .update(auth)
       .digest('base64');
 
-    const authorizationOrigin = `api_key="${this.apiKey}", algorithm="hmac-sha256", headers="host date request-line", signature="${signatureSha}"`;
-    return Buffer.from(authorizationOrigin).toString('base64');
+    return signature;
   }
 
   /**
-   * 生成独立服务签名
+   * 构建带鉴权的 WebSocket URL
    */
-  generateStandaloneSignature(date) {
-    const signatureOrigin = `host: ${this.standaloneHost}\ndate: ${date}\nPOST ${this.standalonePath} HTTP/1.1`;
-    const signatureSha = crypto
-      .createHmac('sha256', this.apiSecret)
-      .update(Buffer.from(signatureOrigin, 'utf8'))
-      .digest('base64');
+  _buildAuthUrl() {
+    const timestamp = Math.floor(Date.now() / 1000);
+    const signature = this._generateSignature(timestamp);
 
-    const authorizationOrigin = `api_key="${this.apiKey}", algorithm="hmac-sha256", headers="host date request-line", signature="${signatureSha}"`;
-    return Buffer.from(authorizationOrigin).toString('base64');
+    const authUrl = `wss://${this.host}${this.path}?appId=${this.appId}&timestamp=${timestamp}&signature=${encodeURIComponent(signature)}`;
+    return authUrl;
+  }
+
+  /**
+   * 通过 WebSocket 调用讯飞 Embedding API
+   */
+  _callWebSocket(texts, domain = 'para') {
+    return new Promise((resolve, reject) => {
+      const authUrl = this._buildAuthUrl();
+      console.log(`[Embedding] 连接: ${this.host}${this.path}`);
+
+      const ws = new WebSocket(authUrl);
+      let timeout = null;
+
+      const cleanup = () => {
+        if (timeout) clearTimeout(timeout);
+        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+          ws.close();
+        }
+      };
+
+      timeout = setTimeout(() => {
+        cleanup();
+        reject(new Error('WebSocket 请求超时'));
+      }, 30000);
+
+      ws.on('open', () => {
+        const payload = {
+          header: {
+            app_id: this.appId,
+            status: 3
+          },
+          parameter: {
+            emb: {
+              domain,
+              feature: {
+                encoding: 'utf8',
+                compress: 'raw',
+                format: 'plain'
+              }
+            }
+          },
+          payload: {
+            messages: {
+              encoding: 'utf8',
+              compress: 'raw',
+              format: 'json',
+              status: 3,
+              text: JSON.stringify(texts.map(t => ({ content: t })))
+            }
+          }
+        };
+
+        console.log(`[Embedding] 发送请求，文本数: ${texts.length}, domain: ${domain}`);
+        ws.send(JSON.stringify(payload));
+      });
+
+      ws.on('message', (data) => {
+        cleanup();
+        try {
+          const result = JSON.parse(data.toString());
+          console.log(`[Embedding] 收到响应, header.code: ${result.header?.code}`);
+
+          if (result.header?.code !== 0) {
+            return reject(new Error(`API Error ${result.header?.code}: ${result.header?.message}`));
+          }
+
+          const responses = result.payload?.responses || [];
+          const embeddings = responses.map(item => {
+            return item.feature?.data || [];
+          });
+
+          resolve(embeddings);
+        } catch (e) {
+          reject(new Error(`解析响应失败: ${e.message}`));
+        }
+      });
+
+      ws.on('error', (err) => {
+        cleanup();
+        reject(new Error(`WebSocket 错误: ${err.message}`));
+      });
+
+      ws.on('close', (code, reason) => {
+        if (timeout) {
+          cleanup();
+          reject(new Error(`WebSocket 连接关闭: ${code} ${reason}`));
+        }
+      });
+    });
   }
 
   /**
    * 获取文本的向量表示
-   * @param {string|string[]} texts - 单个文本或文本数组
-   * @returns {Promise<number[][]>} 向量数组
    */
   async getEmbeddings(texts) {
     const inputArray = Array.isArray(texts) ? texts : [texts];
-
-    // 过滤空文本
     const validTexts = inputArray.filter(t => t && t.trim());
-    if (validTexts.length === 0) {
-      return [];
-    }
+    if (validTexts.length === 0) return [];
 
-    // 限制单次请求的文本数量
     if (validTexts.length > 10) {
       console.warn('[Embedding] 单次请求文本数量超过10，将分批处理');
       return this.getEmbeddingsBatch(validTexts);
     }
 
-    // 尝试 MaaS 平台
-    try {
-      const result = await this.callMaasApi(validTexts);
-      console.log(`[Embedding] MaaS API 成功，返回 ${result.length} 个向量`);
-      return result;
-    } catch (maasError) {
-      console.warn('[Embedding] MaaS API 失败:', maasError.message);
-
-      // 尝试独立服务
-      try {
-        const result = await this.callStandaloneApi(validTexts);
-        console.log(`[Embedding] 独立 API 成功，返回 ${result.length} 个向量`);
-        return result;
-      } catch (standaloneError) {
-        console.error('[Embedding] 独立 API 也失败:', standaloneError.message);
-        throw new Error(`Embedding API 调用失败: ${maasError.message}`);
-      }
-    }
-  }
-
-  /**
-   * 调用 MaaS 平台 API
-   */
-  async callMaasApi(texts) {
-    const date = new Date().toUTCString();
-    const authorization = this.generateMaasSignature(date);
-
-    const response = await axios.post(
-      `https://${this.maasHost}${this.maasPath}`,
-      {
-        model: this.maasModel,
-        input: texts
-      },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': authorization,
-          'Date': date,
-          'Host': this.maasHost
-        },
-        timeout: 30000
-      }
-    );
-
-    if (response.data?.data) {
-      return response.data.data.map(item => item.embedding);
-    }
-
-    throw new Error(response.data?.error?.message || 'Invalid MaaS response');
-  }
-
-  /**
-   * 调用独立 Embedding API
-   */
-  async callStandaloneApi(texts) {
-    const date = new Date().toUTCString();
-    const authorization = this.generateStandaloneSignature(date);
-
-    const response = await axios.post(
-      `https://${this.standaloneHost}${this.standalonePath}`,
-      {
-        model: 'emb-text-001',
-        input: texts
-      },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': authorization,
-          'Date': date,
-          'Host': this.standaloneHost
-        },
-        timeout: 30000
-      }
-    );
-
-    if (response.data?.data) {
-      return response.data.data.map(item => item.embedding);
-    }
-
-    throw new Error(response.data?.error?.message || 'Invalid standalone response');
+    const embeddings = await this._callWebSocket(validTexts, 'para');
+    console.log(`[Embedding] 成功，返回 ${embeddings.length} 个向量`);
+    return embeddings;
   }
 
   /**
    * 获取单个文本的向量
-   * @param {string} text - 文本内容
-   * @returns {Promise<number[]>} 向量
    */
   async getSingleEmbedding(text) {
     const embeddings = await this.getEmbeddings([text]);
@@ -173,25 +164,18 @@ class EmbeddingService {
   }
 
   /**
-   * 批量获取向量（分批处理，避免超时）
-   * @param {string[]} texts - 文本数组
-   * @param {number} batchSize - 每批数量（默认 5）
-   * @returns {Promise<number[][]>} 向量数组
+   * 批量获取向量（分批处理）
    */
   async getEmbeddingsBatch(texts, batchSize = 5) {
     const results = [];
-
     for (let i = 0; i < texts.length; i += batchSize) {
       const batch = texts.slice(i, i + batchSize);
       const embeddings = await this.getEmbeddings(batch);
       results.push(...embeddings);
-
-      // 添加延迟避免限流
       if (i + batchSize < texts.length) {
         await new Promise(resolve => setTimeout(resolve, 500));
       }
     }
-
     return results;
   }
 
@@ -217,4 +201,3 @@ class EmbeddingService {
 }
 
 module.exports = { EmbeddingService };
-

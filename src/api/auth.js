@@ -1,11 +1,7 @@
-const API_URL = '/api';
+import { apiPost } from './client.js';
 
 export const login = async (data) => {
-  const response = await fetch(`${API_URL}/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
-  });
+  const response = await apiPost('/auth/login', data);
 
   if (!response.ok) {
     throw new Error('Login failed');

@@ -28,6 +28,7 @@ redis.on('error', (err) => {
 
 // 会话过期时间（7天）
 const CONVERSATION_TTL = 7 * 24 * 60 * 60;
+const CONVERSATION_MAX_MESSAGES = 500;
 
 /**
  * 会话存储服务
@@ -167,7 +168,17 @@ class ConversationStore {
     // 更新会话时间
     pipeline.hset(`conversation:${convId}`, 'updatedAt', Date.now());
 
+    // 续期会话 TTL
+    pipeline.expire(`conversation:${convId}`, CONVERSATION_TTL);
+    pipeline.expire(`conversation:${convId}:messages`, CONVERSATION_TTL);
+
     await pipeline.exec();
+
+    // 限制消息数量，超出时删除最早的消息
+    const msgCount = await redis.llen(`conversation:${convId}:messages`);
+    if (msgCount > CONVERSATION_MAX_MESSAGES) {
+      await redis.ltrim(`conversation:${convId}:messages`, -CONVERSATION_MAX_MESSAGES, -1);
+    }
   }
 
   /**

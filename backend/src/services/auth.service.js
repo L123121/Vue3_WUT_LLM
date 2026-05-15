@@ -29,7 +29,7 @@ const login = async (username, password) => {
   // 生成 JWT token
   const token = jwt.sign(
     { userId: user.id, username: user.username },
-    process.env.JWT_SECRET || 'default_secret_key',
+    process.env.JWT_SECRET,
     { expiresIn: '7d' }
   );
 

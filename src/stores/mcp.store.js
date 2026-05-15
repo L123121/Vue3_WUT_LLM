@@ -38,11 +38,16 @@ export const useMcpStore = defineStore('mcp', () => {
   const serverCount = computed(() => servers.value.length);
   const enabledCount = computed(() => enabledServers.value.length);
 
-  // 持久化
+  // 持久化（防抖）
+  let saveTimer = null;
   watch(
     servers,
-    (value) => {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(value));
+    () => {
+      if (saveTimer) clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(servers.value));
+        saveTimer = null;
+      }, 300);
     },
     { deep: true }
   );

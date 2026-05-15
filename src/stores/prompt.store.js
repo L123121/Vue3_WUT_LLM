@@ -71,10 +71,15 @@ export const usePromptStore = defineStore('prompt', () => {
     return ['全部', ...Array.from(cats)];
   });
 
+  let saveTimer = null;
   watch(
     prompts,
-    (value) => {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(value));
+    () => {
+      if (saveTimer) clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(prompts.value));
+        saveTimer = null;
+      }, 300);
     },
     { deep: true }
   );

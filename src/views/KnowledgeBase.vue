@@ -10,13 +10,9 @@ import {
   FileText,
   Search,
   X,
-  Upload,
-  FolderOpen,
   FileUp,
   File,
-  Eye,
-  ChevronLeft,
-  ChevronRight
+  Eye
 } from 'lucide-vue-next';
 
 const toastStore = useToastStore();
@@ -288,7 +284,7 @@ onMounted(() => {
         </div>
         <div>
           <h1 class="text-lg font-bold text-slate-800 dark:text-white">知识库管理</h1>
-          <p class="text-xs text-slate-500 dark:text-gray-400">RAG 文档管理</p>
+          <p class="text-xs text-slate-500 dark:text-gray-400">星火知识库文档管理</p>
         </div>
       </div>
 
@@ -312,7 +308,7 @@ onMounted(() => {
     </div>
 
     <!-- 统计卡片 -->
-    <div v-if="stats" class="grid grid-cols-3 gap-3 mb-5">
+    <div v-if="stats" class="grid grid-cols-2 gap-3 mb-5">
       <div class="rounded-xl border border-slate-200 dark:border-gray-700 bg-gradient-to-br from-blue-50 to-white dark:from-blue-900/20 dark:to-gray-800 p-3">
         <div class="flex items-center gap-2">
           <div class="w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-900/40 flex items-center justify-center text-blue-600 dark:text-blue-400">
@@ -324,25 +320,14 @@ onMounted(() => {
           </div>
         </div>
       </div>
-      <div class="rounded-xl border border-slate-200 dark:border-gray-700 bg-gradient-to-br from-violet-50 to-white dark:from-violet-900/20 dark:to-gray-800 p-3">
-        <div class="flex items-center gap-2">
-          <div class="w-8 h-8 rounded-lg bg-violet-100 dark:bg-violet-900/40 flex items-center justify-center text-violet-600 dark:text-violet-400">
-            <Database :size="16" />
-          </div>
-          <div>
-            <p class="text-xl font-bold text-slate-800 dark:text-white">{{ stats.chroma?.documentCount || 0 }}</p>
-            <p class="text-[10px] text-slate-500 dark:text-gray-400">向量片段</p>
-          </div>
-        </div>
-      </div>
       <div class="rounded-xl border border-slate-200 dark:border-gray-700 bg-gradient-to-br from-emerald-50 to-white dark:from-emerald-900/20 dark:to-gray-800 p-3">
         <div class="flex items-center gap-2">
           <div class="w-8 h-8 rounded-lg bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center text-emerald-600 dark:text-emerald-400">
-            <FolderOpen :size="16" />
+            <Database :size="16" />
           </div>
           <div>
-            <p class="text-xl font-bold text-slate-800 dark:text-white">{{ stats.chroma?.isConnected ? '已连接' : '未连接' }}</p>
-            <p class="text-[10px] text-slate-500 dark:text-gray-400">Chroma 状态</p>
+            <p class="text-xl font-bold text-slate-800 dark:text-white">星火知识库</p>
+            <p class="text-[10px] text-slate-500 dark:text-gray-400">RAG 引擎</p>
           </div>
         </div>
       </div>
@@ -483,7 +468,7 @@ onMounted(() => {
           </div>
         </div>
         <p class="text-xs text-slate-600 dark:text-gray-300 mb-4">
-          确定要删除此文档吗？删除后文档内容和向量片段将无法恢复。
+          确定要删除此文档吗？删除后文档内容将无法恢复。
         </p>
         <div class="flex justify-end gap-2">
           <button

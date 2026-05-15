@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onUnmounted, watch } from 'vue';
+import { ref, onMounted, onUnmounted } from 'vue';
 import { Mic } from 'lucide-vue-next';
 import { useLanguageStore } from '../../stores/language.store.js';
 
@@ -15,16 +15,12 @@ const getSpeechRecognition = () => {
   return SR ? new SR() : null;
 };
 
-const applyRecognitionLanguage = () => {
-  if (recognition) recognition.lang = languageStore.currentLanguage.speechLocale;
-};
-
 const initRecognition = () => {
   recognition = getSpeechRecognition();
   if (!recognition) return;
+  recognition.lang = 'zh-CN';
   recognition.continuous = false;
   recognition.interimResults = false;
-  applyRecognitionLanguage();
   recognition.onstart = () => { recognizing.value = true; emit('statusChange', 'recording'); };
   recognition.onresult = (event) => {
     emit('transcript', event.results[0][0].transcript);
@@ -62,7 +58,6 @@ const startVoiceInput = () => {
     return;
   }
   try {
-    applyRecognitionLanguage();
     recognition.start();
   } catch (error) {
     console.error('SpeechRecognition start error:', error);
@@ -76,7 +71,6 @@ const stopVoiceInput = () => {
   }
 };
 
-watch(() => languageStore.locale, applyRecognitionLanguage);
 onMounted(initRecognition);
 onUnmounted(stopVoiceInput);
 defineExpose({ startVoiceInput, stopVoiceInput, isRecording: recognizing });

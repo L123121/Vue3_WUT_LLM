@@ -5,16 +5,9 @@ const MAX_RETRY_DELAY = 30000;
 const HEARTBEAT_INTERVAL = 30000;
 const HEARTBEAT_TIMEOUT = 10000;
 
-const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+import { getAuthHeaders, apiGet, apiPost } from './client.js';
 
-// 获取认证头
-const getAuthHeaders = () => {
-  const token = localStorage.getItem('token');
-  return {
-    'Content-Type': 'application/json',
-    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-  };
-};
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // 指数退避延迟
 const getExponentialDelay = (attempt) => {
@@ -162,10 +155,6 @@ export const sendMessageStream = async (message, history = [], callbacks, option
     connectionManager.addPendingMessage({ id: messageId, message, history, conversationId });
   }
 
-    // 直接按后端 chunk 渲染，避免批量合并导致体感过快
-  const flushImmediately = () => {};
-
-
   try {
     const response = await fetch(`${API_URL}/stream`, {
       method: 'POST',
@@ -187,7 +176,6 @@ export const sendMessageStream = async (message, history = [], callbacks, option
     while (true) {
       const { done, value } = await reader.read();
       if (done) {
-        flushImmediately(); // 流结束，立即刷新剩余内容
         callbacks.onDone();
         break;
       }
@@ -202,7 +190,6 @@ export const sendMessageStream = async (message, history = [], callbacks, option
 
         const data = trimmed.slice(5).trim();
         if (data === '[DONE]') {
-          flushImmediately(); // 收到结束标记，立即刷新
           callbacks.onDone();
           return;
         }
@@ -212,22 +199,18 @@ export const sendMessageStream = async (message, history = [], callbacks, option
           if (json.content) callbacks.onChunk(json.content);
           if (json.sources) callbacks.onSources?.(json.sources);
           if (json.error) {
-            flushImmediately();
             callbacks.onError(new Error(json.error));
             return;
           }
         } catch (parseError) {
-          console.warn('[SSE] Parse error for data:', data, parseError);
+          // 跳过解析错误
         }
       }
     }
   } catch (error) {
-    console.error('Stream API Error:', error);
     connectionManager.setConnected(false);
-    flushImmediately(); // 出错时也要刷新，避免内容丢失
 
     if (error.name === 'AbortError') {
-      flushImmediately();
       connectionManager.removePendingMessage(messageId);
       callbacks.onAbort?.();
       return;
@@ -236,7 +219,6 @@ export const sendMessageStream = async (message, history = [], callbacks, option
     // 指数退避重连
     if (attempt < maxRetries) {
       const retryDelay = getExponentialDelay(attempt);
-      console.log(`Stream reconnecting in ${retryDelay}ms... (attempt ${attempt + 1}/${maxRetries})`);
       callbacks.onRetry?.(attempt + 1, maxRetries, retryDelay);
       await delay(retryDelay);
       return sendMessageStream(message, history, callbacks, { ...options, attempt: attempt + 1, maxRetries });
@@ -247,65 +229,8 @@ export const sendMessageStream = async (message, history = [], callbacks, option
   }
 };
 
-export const createStreamRequest = (message, history = [], callbacks) => {
-  const abortController = new AbortController();
-
-  const execute = async () => {
-    try {
-      const response = await fetch(`${API_URL}/stream`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message, history }),
-        signal: abortController.signal,
-      });
-
-      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-      if (!response.body) throw new Error('Response body is null');
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder('utf-8');
-      let buffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-          callbacks.onDone();
-          break;
-        }
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed || !trimmed.startsWith('data:')) continue;
-          const data = trimmed.slice(5).trim();
-          if (data === '[DONE]') {
-            callbacks.onDone();
-            return;
-          }
-          try {
-            const json = JSON.parse(data);
-            if (json.content) callbacks.onChunk(json.content);
-          } catch {
-            // Ignore malformed chunks.
-          }
-        }
-      }
-    } catch (error) {
-      if (error.name !== 'AbortError') callbacks.onError(error);
-    }
-  };
-
-  return { execute, abort: () => abortController.abort() };
-};
-
 export const fetchUsageStats = async (hours = 24) => {
-  const response = await fetch(`${API_URL}/usage?hours=${hours}`, {
-    method: 'GET',
-    headers: { 'Content-Type': 'application/json' },
-  });
+  const response = await apiGet(`/usage?hours=${hours}`);
 
   if (!response.ok) {
     throw new Error(`Usage API error: ${response.status}`);
@@ -322,11 +247,7 @@ export const fetchUsageStats = async (hours = 24) => {
 // 生成会话标题
 export const generateTitle = async (message) => {
   try {
-    const response = await fetch(`${API_URL}/title`, {
-      method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify({ message }),
-    });
+    const response = await apiPost('/chat/title', { message });
 
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);

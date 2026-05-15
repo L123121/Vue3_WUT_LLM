@@ -160,6 +160,17 @@ defineExpose({ scrollToBottom, shouldAutoScroll });
       </div>
     </div>
 
+    <div v-else-if="isLoading" class="flex-1 flex flex-col p-4 space-y-4">
+      <div class="flex items-start gap-2 animate-pulse">
+        <div class="w-8 h-8 rounded-full bg-slate-200 dark:bg-gray-700 shrink-0"></div>
+        <div class="flex-1 space-y-2 bg-white dark:bg-gray-800 rounded-2xl rounded-tl-sm border border-slate-100 dark:border-gray-700 p-4">
+          <div class="h-3 bg-slate-200 dark:bg-gray-700 rounded w-3/4"></div>
+          <div class="h-3 bg-slate-200 dark:bg-gray-700 rounded w-1/2"></div>
+          <div class="h-3 bg-slate-200 dark:bg-gray-700 rounded w-5/6"></div>
+        </div>
+      </div>
+    </div>
+
     <div v-else class="flex-1 flex flex-col items-center justify-center text-slate-400 dark:text-gray-500 space-y-4 opacity-50">
       <Bot :size="48" class="stroke-1" />
       <p class="text-sm">{{ languageStore.t('chat.empty') }}</p>

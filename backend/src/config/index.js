@@ -2,27 +2,24 @@
 require('dotenv').config();
 
 module.exports = {
-  xunfei: {
-    // API Key 格式: "APIKey:APISecret"
-    apiKey: process.env.XUNFEI_API_KEY || '',
-    // 接口地址
-    baseUrl: process.env.XUNFEI_BASE_URL || 'https://maas-api.cn-huabei-1.xf-yun.com/v2',
-    // 模型名称
-    model: process.env.XUNFEI_MODEL || 'xop3qwen1b7',
-    // 服务名称
-    serviceName: process.env.XUNFEI_SERVICE_NAME || 'Chatwut',
-    temperature: 0.7,
+  // Anthropic API 配置（主模型）
+  anthropic: {
+    authToken: process.env.ANTHROPIC_AUTH_TOKEN || '',
+    baseUrl: process.env.ANTHROPIC_BASE_URL || 'https://token-plan-cn.xiaomimimo.com/anthropic',
+    model: 'mimo-v2.5',
     maxTokens: 4000,
+    temperature: 0.7,
     timeout: 60000
   },
-  // Chroma 向量数据库配置
-  chroma: {
-    host: process.env.CHROMA_HOST || 'http://localhost:8000'
+  // 讯飞配置（保留用于 Embedding 等）
+  xunfei: {
+    apiKey: process.env.XUNFEI_API_KEY || '',
+    appId: process.env.XUNFEI_APP_ID || '',
   },
   // Embedding 配置
   embedding: {
     host: process.env.XUNFEI_EMBEDDING_HOST || 'maas-api.cn-huabei-1.xf-yun.com',
-    path: process.env.XUNFEI_EMBEDDING_PATH || '/v2/embeddings',
+    path: '/v2/embeddings',
     model: process.env.XUNFEI_EMBEDDING_MODEL || 'emb-text-001'
   }
 };

@@ -1,10 +1,10 @@
-# 武理小精灵 / WUT Assistant
+# WUT RAG Copilot / 武理 RAG 助手
 
 ![状态](https://img.shields.io/badge/%E7%8A%B6%E6%80%81-%E6%B4%BB%E8%B7%83-success) ![版本](https://img.shields.io/badge/%E7%89%88%E6%9C%AC-1.0.0-blue) ![许可证](https://img.shields.io/badge/%E8%AE%B8%E5%8F%AF%E8%AF%81-MIT-green) ![Vue](https://img.shields.io/badge/Vue-3.5-brightgreen) ![Node](https://img.shields.io/badge/Node-18+-yellow)
 
-一个基于 Vue 3 + Pinia 的 AI 智能助手应用，集成 RAG 知识库、多会话管理、流式输出、GitHub Skills 导入等功能，使用讯飞星火大模型提供智能对话能力。
+基于 RAG 知识库增强的武理校园 AI 助手，支持文档向量化检索、多会话管理、流式输出、GitHub Skills 导入，使用讯飞星火大模型提供智能对话能力。
 
-An AI assistant application built with Vue 3 + Pinia, featuring RAG knowledge base, multi-conversation management, streaming output, GitHub Skills import, and powered by iFlyTek Spark LLM.
+A RAG-enhanced AI copilot for WUT campus, featuring document vectorized retrieval, multi-conversation management, streaming output, GitHub Skills import, and powered by iFlyTek Spark LLM.
 
 ## 目录 / Table of Contents
 - [功能特性 / Features](#功能特性--features)
@@ -53,6 +53,10 @@ An AI assistant application built with Vue 3 + Pinia, featuring RAG knowledge ba
 ## 🖼️ 演示 / Screenshots
 
 ![主界面截图](image.png)
+
+![会话页面](D:\Vue3_武理小精灵\会话页面.png)
+
+![知识库](D:\Vue3_武理小精灵\知识库.png)
 
 ---
 

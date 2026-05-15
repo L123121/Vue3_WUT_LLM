@@ -1,8 +1,9 @@
 <script setup>
 import { ref, watch, nextTick, computed } from 'vue';
-import { Send, Sparkles, Wifi, WifiOff, Database, Command, Search, Trash2, Download } from 'lucide-vue-next';
+import { Send, Sparkles, Wifi, WifiOff, BookOpen, Command, Search, Trash2, Download } from 'lucide-vue-next';
 import { useLanguageStore } from '../../stores/language.store.js';
 import { useChatStore } from '../../stores/chat.store.js';
+import { useToastStore } from '../../stores/toast.store.js';
 import VoiceRecorder from './VoiceRecorder.vue';
 
 const props = defineProps({
@@ -16,6 +17,7 @@ const props = defineProps({
 const emit = defineEmits(['send', 'error', 'command']);
 const languageStore = useLanguageStore();
 const chatStore = useChatStore();
+const toast = useToastStore();
 const input = ref('');
 const textareaRef = ref(null);
 const debouncedInput = ref('');
@@ -123,6 +125,11 @@ const handleTranscript = (text) => {
 
 const toggleRag = () => {
   enableRag.value = !enableRag.value;
+  if (enableRag.value) {
+    toast.success('知识库已开启，AI 将根据知识库内容回答');
+  } else {
+    toast.info('知识库已关闭，使用普通模式');
+  }
 };
 
 defineExpose({
@@ -193,33 +200,20 @@ defineExpose({
         </div>
       </Transition>
 
-      <!-- RAG 开关 -->
-      <div class="shrink-0 flex items-center gap-1.5 px-1.5 py-1 rounded-md bg-slate-200/50 dark:bg-gray-700/50">
-        <Database
-          :size="12"
-          :class="[
-            'transition-colors duration-300',
-            enableRag ? 'text-violet-500 dark:text-violet-400' : 'text-slate-400 dark:text-gray-500'
-          ]"
-        />
-        <button
-          @click="toggleRag"
-          :title="enableRag ? 'RAG 已启用：将检索知识库增强回答' : 'RAG 已关闭：使用普通模式'"
-          :class="[
-            'relative w-8 h-4.5 rounded-full transition-all duration-300 ease-in-out focus:outline-none',
-            enableRag
-              ? 'bg-violet-500 dark:bg-violet-600'
-              : 'bg-slate-300 dark:bg-gray-600 hover:bg-slate-400 dark:hover:bg-gray-500'
-          ]"
-        >
-          <span
-            :class="[
-              'absolute top-0.5 left-0.5 w-3.5 h-3.5 bg-white rounded-full shadow-sm transition-transform duration-300 ease-in-out',
-              enableRag ? 'translate-x-3.5' : 'translate-x-0'
-            ]"
-          />
-        </button>
-      </div>
+      <!-- 知识库开关 -->
+      <button
+        @click="toggleRag"
+        :title="enableRag ? '知识库已开启：AI 将根据知识库内容回答' : '知识库已关闭：使用普通模式'"
+        :class="[
+          'shrink-0 h-8 px-2.5 rounded-lg inline-flex items-center gap-1.5 text-xs font-medium transition-all duration-200 border',
+          enableRag
+            ? 'bg-violet-50 dark:bg-violet-900/30 border-violet-300 dark:border-violet-600 text-violet-700 dark:text-violet-300 hover:bg-violet-100 dark:hover:bg-violet-900/50'
+            : 'bg-white dark:bg-gray-800 border-slate-200 dark:border-gray-700 text-slate-500 dark:text-gray-400 hover:bg-slate-50 dark:hover:bg-gray-700 hover:text-slate-700 dark:hover:text-gray-200'
+        ]"
+      >
+        <BookOpen :size="13" />
+        <span>{{ enableRag ? '知识库' : '知识库' }}</span>
+      </button>
 
       <textarea
         ref="textareaRef"
@@ -250,19 +244,6 @@ defineExpose({
 </template>
 
 <style scoped>
-/* 开关尺寸 */
-.h-4\.5 {
-  height: 18px;
-}
-
-.w-3\.5 {
-  width: 14px;
-}
-
-.translate-x-3\.5 {
-  transform: translateX(14px);
-}
-
 /* 滑入动画 */
 .slide-down-enter-active,
 .slide-down-leave-active {

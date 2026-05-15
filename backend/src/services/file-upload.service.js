@@ -81,7 +81,7 @@ async function parsePDF(filePath) {
   if (!pdfParse) {
     throw new Error('PDF 解析功能不可用，请检查 pdf-parse 安装');
   }
-  const dataBuffer = fs.readFileSync(filePath);
+  const dataBuffer = await fs.promises.readFile(filePath);
   const data = await pdfParse(dataBuffer);
   return data.text;
 }
@@ -97,8 +97,8 @@ async function parseDocx(filePath) {
 /**
  * 解析文本文件
  */
-function parseText(filePath) {
-  return fs.readFileSync(filePath, 'utf-8');
+async function parseText(filePath) {
+  return fs.promises.readFile(filePath, 'utf-8');
 }
 
 /**

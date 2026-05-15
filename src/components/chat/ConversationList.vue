@@ -3,9 +3,10 @@ import { computed, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useChatStore } from '../../stores/chat.store';
 import { useLanguageStore } from '../../stores/language.store';
-import { ChevronDown, ChevronRight, Plus, Check, X, MessageSquare, Edit3, Trash2, Search, AlertTriangle } from 'lucide-vue-next';
+import { ChevronDown, ChevronRight, Plus, Check, X, MessageSquare, Edit3, Trash2, Search } from 'lucide-vue-next';
 import { RecycleScroller } from 'vue-virtual-scroller';
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css';
+import ConfirmDialog from '../common/ConfirmDialog.vue';
 
 const chatStore = useChatStore();
 const languageStore = useLanguageStore();
@@ -435,42 +436,16 @@ const isEditing = (convId) => editingId.value === convId;
     </div>
 
     <!-- 删除确认弹窗 -->
-    <div
-      v-if="showDeleteConfirm"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
-      @click.self="closeDeleteConfirm"
-    >
-      <div class="w-[90%] max-w-sm bg-white dark:bg-gray-900 rounded-xl shadow-2xl border border-slate-200 dark:border-gray-700 p-4">
-        <div class="flex items-center gap-3 mb-3">
-          <div class="w-10 h-10 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
-            <AlertTriangle :size="20" class="text-red-600 dark:text-red-400" />
-          </div>
-          <div>
-            <h3 class="text-sm font-bold text-slate-800 dark:text-white">{{ labels.confirmDeleteTitle }}</h3>
-            <p class="text-xs text-slate-500 dark:text-gray-400 truncate max-w-[200px]">{{ deletingConversationTitle }}</p>
-          </div>
-        </div>
-
-        <p class="text-xs text-slate-600 dark:text-gray-300 mb-4">
-          {{ labels.confirmDeleteWarning }}
-        </p>
-
-        <div class="flex justify-end gap-2">
-          <button
-            @click="closeDeleteConfirm"
-            class="px-3 py-1.5 rounded-lg text-xs text-slate-600 dark:text-gray-300 hover:bg-slate-100 dark:hover:bg-gray-800 transition-colors"
-          >
-            {{ labels.cancelButton }}
-          </button>
-          <button
-            @click="confirmDelete"
-            class="px-3 py-1.5 rounded-lg text-xs bg-red-500 text-white hover:bg-red-600 transition-colors"
-          >
-            {{ labels.confirmDeleteButton }}
-          </button>
-        </div>
-      </div>
-    </div>
+    <ConfirmDialog
+      :show="showDeleteConfirm"
+      :title="labels.confirmDeleteTitle"
+      :message="deletingConversationTitle"
+      :confirm-text="labels.confirmDeleteButton"
+      :cancel-text="labels.cancelButton"
+      :danger="true"
+      @confirm="confirmDelete"
+      @cancel="closeDeleteConfirm"
+    />
   </div>
 </template>
 

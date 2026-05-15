@@ -22,7 +22,6 @@ const isLoading = ref(false);
 const error = ref('');
 
 const handleSubmit = async () => {
-  console.log('[Login] handleSubmit called');
   if (!username.value || !password.value) {
     error.value = text.empty;
     return;
@@ -32,8 +31,6 @@ const handleSubmit = async () => {
   error.value = '';
 
   try {
-    // 调用后端登录 API
-    console.log('[Login] Fetching /api/auth/login...');
     const response = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -41,21 +38,11 @@ const handleSubmit = async () => {
     });
 
     const data = await response.json();
-    console.log('[Login] Response:', response.status, data);
 
     if (response.ok && data.success) {
-      // 后端返回格式: { success, message, data: { user, token } }
       const { user, token } = data.data;
-      console.log('[Login] user:', user);
-      console.log('[Login] token:', token);
-      console.log('[Login] token type:', typeof token, 'length:', token?.length);
       authStore.login(user, token);
-      console.log('[Login] After authStore.login:');
-      console.log('[Login] - localStorage token:', localStorage.getItem('token'));
-      console.log('[Login] - isLocalAuth:', authStore.isLocalAuth);
-      console.log('[Login] - isAuthenticated:', authStore.isAuthenticated);
       toast.success(text.success);
-      // 加载用户的会话列表
       await chatStore.loadConversations();
       router.push('/');
     } else {
@@ -63,8 +50,6 @@ const handleSubmit = async () => {
       toast.error(text.fail);
     }
   } catch (err) {
-    console.error('[Login] Error:', err);
-    console.error('[Login] Error:', err);
     // 后端不可用时，使用本地验证
     if (authStore.verifyPassword(password.value)) {
       authStore.login({

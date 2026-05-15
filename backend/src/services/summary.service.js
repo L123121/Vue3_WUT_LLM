@@ -2,7 +2,7 @@ const axios = require('axios');
 
 class SummaryService {
   constructor() {
-    this.apiKey = 'a8857c7cb2aa4d80c9ce33f202577974:NDk1YjUxNTA2MGYxM2E2YzY5M2Y1OTI5';
+    this.apiKey = process.env.XUNFEI_API_KEY || '';
     this.baseUrl = 'https://spark-api-open.xf-yun.com/v1/chat/completions';
     this.model = 'generalv3.5';
   }

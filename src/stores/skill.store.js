@@ -72,8 +72,13 @@ export const useSkillStore = defineStore('skill', () => {
 
   const enabledSkills = computed(() => skills.value.filter((skill) => skill.enabled));
 
-  watch(skills, (value) => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(value));
+  let saveTimer = null;
+  watch(skills, () => {
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(skills.value));
+      saveTimer = null;
+    }, 300);
   }, { deep: true });
 
   const addSkillFromGithub = async (urlText) => {
