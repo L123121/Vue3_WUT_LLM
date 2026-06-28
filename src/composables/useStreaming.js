@@ -278,7 +278,7 @@ export function useStreaming() {
           resolve();
         },
         onError: (error) => {
-          console.error('[Stream] onError callback fired:', error.message);
+          console.log('[Stream] onError callback fired:', error.message);
           cancelPendingRaf();
 
           const msgs = convStore.conversations[convIndex]?.messages;

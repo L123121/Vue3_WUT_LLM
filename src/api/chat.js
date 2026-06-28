@@ -35,7 +35,7 @@ export const connectionManager = {
   setConnected(connected) {
     const wasConnected = this.isConnected;
     this.isConnected = connected;
-    console.debug('[Connection] setConnected:', connected, 'wasConnected:', wasConnected);
+    console.log('[Connection] setConnected:', connected, 'wasConnected:', wasConnected);
     if (wasConnected !== connected) {
       this.notify(connected ? 'connected' : 'disconnected');
       if (connected) this.flushPendingMessages();
@@ -149,7 +149,7 @@ export const sendMessageToBackend = async (message, history = [], retries = MAX_
 
 // Streaming message with stall detection
 export const sendMessageStream = async (message, history = [], callbacks, options = {}) => {
-  console.debug('[Stream] sendMessageStream called, message:', message.substring(0, 30));
+  console.log('[Stream] sendMessageStream called, message:', message.substring(0, 30));
   const controller = options.signal ? { abort: () => {} } : new AbortController();
   const signal = options.signal || controller.signal;
   const maxRetries = options.maxRetries ?? MAX_RETRIES;
@@ -161,7 +161,7 @@ export const sendMessageStream = async (message, history = [], callbacks, option
     connectionManager.addPendingMessage({ id: messageId, message, history, conversationId });
   }
 
-  console.debug('[Stream] fetch:', `${API_URL}/stream`, 'attempt:', attempt);
+  console.log('[Stream] fetch:', `${API_URL}/stream`, 'attempt:', attempt);
   try {
     const response = await fetch(`${API_URL}/stream`, {
       ...fetchOpts,
@@ -172,13 +172,13 @@ export const sendMessageStream = async (message, history = [], callbacks, option
 
     if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
     if (!response.body) throw new Error('Response body is null');
-    console.debug('[Stream] response OK, body type:', response.body?.constructor?.name, 'status:', response.status);
+    console.log('[Stream] response OK, body type:', response.body?.constructor?.name, 'status:', response.status);
 
     connectionManager.setConnected(true);
     connectionManager.removePendingMessage(messageId);
 
     const reader = response.body.getReader();
-    console.debug('[Stream] reader created');
+    console.log('[Stream] reader created');
     const decoder = new TextDecoder('utf-8');
     let buffer = '';
     let lastDataTime = Date.now();
@@ -195,10 +195,10 @@ export const sendMessageStream = async (message, history = [], callbacks, option
     try {
       while (true) {
         const { done, value } = await reader.read();
-        console.debug('[Stream] reader.read() done:', done, 'value length:', value?.length);
+        console.log('[Stream] reader.read() done:', done, 'value length:', value?.length);
         if (done) {
           clearInterval(stallCheck);
-          console.debug('[Stream] stream ended (done=true), calling onDone');
+          console.log('[Stream] stream ended (done=true), calling onDone');
           callbacks.onDone();
           break;
         }
@@ -211,7 +211,7 @@ export const sendMessageStream = async (message, history = [], callbacks, option
         for (const line of lines) {
           const trimmed = line.trim();
           if (!trimmed || !trimmed.startsWith('data:')) continue;
-          console.debug('[Stream] SSE line:', trimmed.substring(0, 80));
+          console.log('[Stream] SSE line:', trimmed.substring(0, 80));
 
           const data = trimmed.slice(5).trim();
           if (data === '[DONE]') {
@@ -231,7 +231,7 @@ export const sendMessageStream = async (message, history = [], callbacks, option
               content = json.choices[0].delta.content;
             }
             if (content) {
-              console.debug('[Stream] chunk:', content.substring(0, 30));
+              console.log('[Stream] chunk:', content.substring(0, 30));
               callbacks.onChunk(content);
             }
             if (json.sources) callbacks.onSources?.(json.sources);
@@ -243,15 +243,15 @@ export const sendMessageStream = async (message, history = [], callbacks, option
 
             // Agent 模式事件（默认开启）
             if (json.thinking) {
-              console.debug('[Stream] thinking:', json.thinking.substring(0, 50));
+              console.log('[Stream] thinking:', json.thinking.substring(0, 50));
               callbacks.onThinking?.(json.thinking);
             }
             if (json.tool_call) {
-              console.debug('[Stream] tool_call:', json.tool_call.name);
+              console.log('[Stream] tool_call:', json.tool_call.name);
               callbacks.onToolCall?.(json.tool_call);
             }
             if (json.tool_result) {
-              console.debug('[Stream] tool_result:', json.tool_result.name);
+              console.log('[Stream] tool_result:', json.tool_result.name);
               callbacks.onToolResult?.(json.tool_result);
             }
           } catch (err) {
