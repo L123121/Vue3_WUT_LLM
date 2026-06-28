@@ -139,7 +139,12 @@
       "Bash(dir /b \"D:\\\\Vue3_武理小精灵\\\\src\")",
       "Bash(dir /b \"D:\\\\Vue3_武理小精灵\\\\backend\")",
       "Bash(redis-cli *)",
-      "WebFetch(domain:www.aliyun.com)"
+      "WebFetch(domain:www.aliyun.com)",
+      "Bash(git remote *)",
+      "PowerShell(cd \"D:\\\\Vue3_武理小精灵\"; if \\(-not \\(Test-Path \"node_modules\"\\)\\) { npm install } else { Write-Host \"前端依赖已存在\" })",
+      "PowerShell(cd \"D:\\\\Vue3_武理小精灵\\\\backend\"; if \\(-not \\(Test-Path \"node_modules\"\\)\\) { npm install } else { Write-Host \"后端依赖已存在\" })",
+      "PowerShell(cd \"D:\\\\Vue3_武理小精灵\\\\backend\"; if \\(-not \\(Test-Path \".env\"\\)\\) { Write-Host \"WARNING: backend/.env 不存在，需要配置环境变量\" } else { Write-Host \".env 文件存在\" })",
+      "PowerShell(npm run *)"
     ]
   }
 }

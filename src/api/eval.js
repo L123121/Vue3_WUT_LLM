@@ -1,4 +1,4 @@
-import { apiGet, apiPost } from './client.js';
+import { apiGet, apiPost, API_BASE } from './client.js';
 
 /**
  * 评测服务 API
@@ -21,7 +21,7 @@ export const evalApi = {
    * @returns {ReadableStream} SSE 流
    */
   runEvaluation: (datasetSize = 5, testCases = null) => {
-    return fetch('/api/eval/run', {
+    return fetch(`${API_BASE}/eval/run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ datasetSize, testCases, enableRag: true }),

@@ -1,4 +1,5 @@
-const API_URL = '/api';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
+const API_URL = API_BASE.endsWith('/') ? API_BASE.slice(0, -1) : API_BASE;
 const MAX_RETRIES = 3;
 const INITIAL_RETRY_DELAY = 1000;
 const MAX_RETRY_DELAY = 30000;

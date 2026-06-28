@@ -104,6 +104,7 @@
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth.store.js';
+import { API_BASE } from '../api/client.js';
 import { User, Lock, Eye, EyeOff, Loader2 } from 'lucide-vue-next';
 
 const router = useRouter();
@@ -132,7 +133,7 @@ async function handleSubmit() {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 30000);
 
-    const res = await fetch('/api/school/login', {
+    const res = await fetch(`${API_BASE}/school/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ studentId: sid, password: pwd }),

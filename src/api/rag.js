@@ -2,9 +2,9 @@
  * RAG 知识库 API
  */
 
-import { apiGet, apiPost, apiDelete } from './client.js';
+import { apiGet, apiPost, apiDelete, API_BASE } from './client.js';
 
-const API_URL = '/api/rag';
+const API_URL = `${API_BASE}/rag`;
 
 /**
  * 获取文档列表
