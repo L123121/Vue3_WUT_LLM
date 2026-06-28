@@ -263,6 +263,7 @@ export const sendMessageStream = async (message, history = [], callbacks, option
       clearInterval(stallCheck);
     }
   } catch (error) {
+    console.error('[Stream] fetch failed:', error.name, error.message);
     connectionManager.setConnected(false);
 
     if (error.name === 'AbortError') {
@@ -274,7 +275,7 @@ export const sendMessageStream = async (message, history = [], callbacks, option
     // Exponential backoff retry
     if (attempt < maxRetries) {
       const retryDelay = getExponentialDelay(attempt);
-      console.warn(`[Stream] retry attempt ${attempt + 1}/${maxRetries}, delay ${retryDelay}ms`);
+      console.warn(`[Stream] retry attempt ${attempt + 1}/${maxRetries}, delay ${Math.round(retryDelay)}ms, error: ${error.message}`);
       callbacks.onRetry?.(attempt + 1, maxRetries, retryDelay);
       await delay(retryDelay);
       return sendMessageStream(message, history, callbacks, {
