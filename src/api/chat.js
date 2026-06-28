@@ -7,7 +7,7 @@ const HEARTBEAT_INTERVAL = 30000;
 const HEARTBEAT_TIMEOUT = 10000;
 const STREAM_STALL_TIMEOUT = 60000; // 60s without data = stalled
 
-import { apiGet, apiPost } from './client.js';
+import { apiGet, apiPost, fetchOpts } from './client.js';
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
