@@ -277,7 +277,8 @@ export function useStreaming() {
           markResolved();
           resolve();
         },
-        onError: () => {
+        onError: (error) => {
+          console.error('[Stream] onError callback fired:', error.message);
           cancelPendingRaf();
 
           const msgs = convStore.conversations[convIndex]?.messages;

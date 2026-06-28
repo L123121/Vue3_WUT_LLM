@@ -35,6 +35,7 @@ export const connectionManager = {
   setConnected(connected) {
     const wasConnected = this.isConnected;
     this.isConnected = connected;
+    console.debug('[Connection] setConnected:', connected, 'wasConnected:', wasConnected);
     if (wasConnected !== connected) {
       this.notify(connected ? 'connected' : 'disconnected');
       if (connected) this.flushPendingMessages();
@@ -171,7 +172,7 @@ export const sendMessageStream = async (message, history = [], callbacks, option
 
     if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
     if (!response.body) throw new Error('Response body is null');
-    console.debug('[Stream] response OK, body type:', response.body?.constructor?.name);
+    console.debug('[Stream] response OK, body type:', response.body?.constructor?.name, 'status:', response.status);
 
     connectionManager.setConnected(true);
     connectionManager.removePendingMessage(messageId);
@@ -194,8 +195,10 @@ export const sendMessageStream = async (message, history = [], callbacks, option
     try {
       while (true) {
         const { done, value } = await reader.read();
+        console.debug('[Stream] reader.read() done:', done, 'value length:', value?.length);
         if (done) {
           clearInterval(stallCheck);
+          console.debug('[Stream] stream ended (done=true), calling onDone');
           callbacks.onDone();
           break;
         }
@@ -208,6 +211,7 @@ export const sendMessageStream = async (message, history = [], callbacks, option
         for (const line of lines) {
           const trimmed = line.trim();
           if (!trimmed || !trimmed.startsWith('data:')) continue;
+          console.debug('[Stream] SSE line:', trimmed.substring(0, 80));
 
           const data = trimmed.slice(5).trim();
           if (data === '[DONE]') {
@@ -270,6 +274,7 @@ export const sendMessageStream = async (message, history = [], callbacks, option
     // Exponential backoff retry
     if (attempt < maxRetries) {
       const retryDelay = getExponentialDelay(attempt);
+      console.warn(`[Stream] retry attempt ${attempt + 1}/${maxRetries}, delay ${retryDelay}ms`);
       callbacks.onRetry?.(attempt + 1, maxRetries, retryDelay);
       await delay(retryDelay);
       return sendMessageStream(message, history, callbacks, {
@@ -280,6 +285,7 @@ export const sendMessageStream = async (message, history = [], callbacks, option
     }
 
     connectionManager.removePendingMessage(messageId);
+    console.error('[Stream] all retries exhausted, calling onError. Error:', error.message);
     callbacks.onError(error);
   }
 };
