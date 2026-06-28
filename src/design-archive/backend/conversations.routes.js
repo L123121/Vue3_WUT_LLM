@@ -1,6 +1,6 @@
 const { Router } = require('express');
 const authMiddleware = require('../middleware/auth.middleware');
-const { conversationStore, redis } = require('../services/redis.service');
+const { conversationStore, redis } = require('../services/memory-store');
 
 const router = Router();
 

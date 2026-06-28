@@ -2,7 +2,8 @@ const createMessageId = () => `${Date.now()}-${Math.random().toString(36).slice(
 
 const getMessageText = (msg) => {
   if (!msg) return '';
-  return String(msg.text ?? msg.content ?? msg.message ?? '').trim();
+  // 优先读 content（统一后的规范字段），降级到 text（兼容旧数据）
+  return String(msg.content ?? msg.text ?? msg.message ?? '').trim();
 };
 
 const normalizeRole = (role) => {
@@ -13,17 +14,22 @@ const normalizeRole = (role) => {
 const createWelcomeMessage = () => ({
   id: 'welcome',
   role: 'model',
-  text: '你好！我是武理小精灵 AI 助手 (Powered by Qwen)。有什么我可以帮你的吗？',
+  content: '你好！我是武理小精灵 AI 助手 (Powered by Qwen)。有什么我可以帮你的吗？',
   timestamp: new Date(),
 });
 
-const normalizeMessage = (msg = {}) => ({
-  ...msg,
-  id: msg.id || createMessageId(),
-  role: normalizeRole(msg.role),
-  text: getMessageText(msg),
-  timestamp: msg.timestamp || new Date(),
-});
+const normalizeMessage = (msg = {}) => {
+  const text = getMessageText(msg);
+  return {
+    ...msg,
+    id: msg.id || createMessageId(),
+    role: normalizeRole(msg.role),
+    content: text,
+    // 保留 text 字段兼容 Vue 模板中直接引用 message.text 的写法
+    text: msg.text ?? text,
+    timestamp: msg.timestamp || new Date(),
+  };
+};
 
 const normalizeMessages = (list) =>
   Array.isArray(list) ? list.map((msg) => normalizeMessage(msg)) : [];
@@ -48,9 +54,15 @@ const createLocalConversation = (title, messageCount = 0) => ({
   updatedAt: new Date(),
 });
 
+import { loadCache } from './conversationCache.js';
+
 const LOCAL_CONVERSATIONS_KEY = 'chat_local_conversations_cache';
 
 const loadLocalConversationsCache = () => {
+  // 优先从新统一缓存读取
+  const cached = loadCache();
+  if (cached?.conversations?.length > 0) return cached.conversations;
+  // 降级读取旧 key
   try {
     const raw = localStorage.getItem(LOCAL_CONVERSATIONS_KEY);
     if (!raw) return [];

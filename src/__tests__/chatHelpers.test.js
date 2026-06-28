@@ -126,7 +126,7 @@ describe('createWelcomeMessage', () => {
     const msg = createWelcomeMessage();
     expect(msg.id).toBe('welcome');
     expect(msg.role).toBe('model');
-    expect(msg.text).toContain('武理小精灵');
+    expect(msg.content).toContain('武理小精灵');
     expect(msg.timestamp).toBeInstanceOf(Date);
   });
 });

@@ -56,7 +56,9 @@ const startVoiceInput = () => {
     return;
   }
   if (recognizing.value) {
-    try { recognition.stop(); } catch {}
+    try { recognition.stop(); } catch (err) {
+      console.warn('[VoiceRecorder] 停止录音失败:', err.message);
+    }
     return;
   }
   try {
@@ -69,7 +71,9 @@ const startVoiceInput = () => {
 
 const stopVoiceInput = () => {
   if (recognition && recognizing.value) {
-    try { recognition.stop(); } catch {}
+    try { recognition.stop(); } catch (err) {
+      console.warn('[VoiceRecorder] 停止录音失败:', err.message);
+    }
   }
 };
 

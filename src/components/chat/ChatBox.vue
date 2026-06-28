@@ -1,6 +1,6 @@
 <script setup>
 import { ref, watch, nextTick, computed } from 'vue';
-import { Send, Sparkles, Wifi, WifiOff, BookOpen, Command, Search, Trash2, Download, Paperclip, X, FileText } from 'lucide-vue-next';
+import { Send, Sparkles, Wifi, WifiOff, Command, Search, Trash2, Download, Paperclip, X, FileText } from 'lucide-vue-next';
 import { useLanguageStore } from '../../stores/language.store.js';
 import { useChatStore } from '../../stores/chat.store.js';
 import { useToastStore } from '../../stores/toast.store.js';
@@ -23,7 +23,6 @@ const input = ref('');
 const textareaRef = ref(null);
 const fileInputRef = ref(null);
 const debouncedInput = ref('');
-const enableRag = ref(false);
 
 // 文件上传
 const selectedFile = ref(null);
@@ -113,7 +112,7 @@ const handleSend = async () => {
   filePreviewUrl.value = '';
   if (fileInputRef.value) fileInputRef.value.value = '';
   showCommands.value = false;
-  emit('send', message, enableRag.value, fileData);
+  emit('send', message, fileData);
   await nextTick();
   textareaRef.value?.focus();
 };
@@ -162,15 +161,6 @@ const executeCommand = (cmd) => {
 
 const handleTranscript = (text) => {
   input.value += text;
-};
-
-const toggleRag = () => {
-  enableRag.value = !enableRag.value;
-  if (enableRag.value) {
-    toast.success('知识库已开启，AI 将根据知识库内容回答');
-  } else {
-    toast.info('知识库已关闭，使用普通模式');
-  }
 };
 
 defineExpose({
@@ -251,21 +241,6 @@ defineExpose({
           </div>
         </div>
       </Transition>
-
-      <!-- 知识库开关 -->
-      <button
-        @click="toggleRag"
-        :title="enableRag ? '知识库已开启：AI 将根据知识库内容回答' : '知识库已关闭：使用普通模式'"
-        :class="[
-          'shrink-0 h-8 px-2.5 rounded-lg inline-flex items-center gap-1.5 text-xs font-medium transition-all duration-200 border',
-          enableRag
-            ? 'bg-violet-50 dark:bg-violet-900/30 border-violet-300 dark:border-violet-600 text-violet-700 dark:text-violet-300 hover:bg-violet-100 dark:hover:bg-violet-900/50'
-            : 'bg-white dark:bg-gray-800 border-slate-200 dark:border-gray-700 text-slate-500 dark:text-gray-400 hover:bg-slate-50 dark:hover:bg-gray-700 hover:text-slate-700 dark:hover:text-gray-200'
-        ]"
-      >
-        <BookOpen :size="13" />
-        <span>{{ enableRag ? '知识库' : '知识库' }}</span>
-      </button>
 
       <textarea
         ref="textareaRef"

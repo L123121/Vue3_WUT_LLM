@@ -44,6 +44,15 @@ export const renameConversation = async (conversationId, title) => {
 };
 
 /**
+ * 保存会话消息
+ */
+export const saveConversationMessages = async (conversationId, messages) => {
+  const response = await apiPut(`/conversations/${conversationId}`, { messages });
+  if (!response.ok) return false;
+  return true;
+};
+
+/**
  * 删除会话
  */
 export const deleteConversation = async (conversationId) => {

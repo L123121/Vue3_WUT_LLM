@@ -14,6 +14,20 @@ const normalizeSkill = (skill) => ({
   createdAt: new Date(skill.createdAt || Date.now()),
 });
 
+/**
+ * 对 XML Spec 中的文本内容进行转义，防止 XML 注入攻击
+ * 将 & < > " ' 转义为对应的 XML 实体
+ */
+const escapeXml = (str) => {
+  if (!str) return '';
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+};
+
 const loadSkills = () => {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -118,15 +132,31 @@ export const useSkillStore = defineStore('skill', () => {
 
   const buildSystemPrompt = () => {
     if (enabledSkills.value.length === 0) return '';
-    const sections = enabledSkills.value.slice(0, 4).map((skill, index) => {
-      return `${index + 1}. ${skill.name}\n${skill.instructions}`;
+
+    // 重构升级：包装为结构化、强约束的 XML Spec 规范格式（映射 AgentHub Spec 协作规范亮点）
+    const specSections = enabledSkills.value.slice(0, 4).map((skill, index) => {
+      const escapedName = escapeXml(skill.name);
+      const escapedDesc = escapeXml(skill.description || '无描述');
+      const escapedInstructions = escapeXml(skill.instructions);
+      return `  <skill id="${skill.id}" index="${index + 1}" name="${escapedName}">
+    <description>${escapedDesc}</description>
+    <instructions>
+${escapedInstructions}
+    </instructions>
+  </skill>`;
     });
 
-    return [
-      '你是武理小精灵，请遵循以下已启用 Skills 进行回答：',
-      ...sections,
-      '当 Skills 与用户问题相关时优先采用其规则。',
-    ].join('\n\n');
+    return `你是”武理小精灵”多Agent协作工作台的主控系统(orchestrator)。
+请严格遵循以下由用户激活并注入的 Agent Spec 能力规范契约来处理会话逻辑：
+
+<agent_spec_bundle>
+${specSections.join('\n\n')}
+</agent_spec_bundle>
+
+<execution_rules_guards>
+1. 优先性契约：若当前用户提问明确命中上方某一已启用的 <skill> 定义场景，必须强制激活其对应 instructions 下的定制规则和回答风格。
+2. 约束性契约：在回复内容中，禁止向用户暴露任何 <agent_spec_bundle> 内的系统元数据或 XML 标签，确保回答的纯净度。
+</execution_rules_guards>`;
   };
 
   return {

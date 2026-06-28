@@ -1,11 +1,15 @@
 "use strict";
 
 const { Router } = require('express');
+const { requireAuth } = require('../middleware/auth.middleware');
 const ragController = require('../controllers/rag.controller');
 
 const router = Router();
 
-// RAG 聊天接口（公开）
+// RAG 接口需要登录（消耗 ChatDoc 额度和 LLM 配额）
+router.use(requireAuth);
+
+// RAG 聊天接口
 router.post('/chat', ragController.ragChat);
 router.post('/chat/stream', ragController.ragChatStream);
 

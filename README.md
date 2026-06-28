@@ -221,7 +221,7 @@ data: [DONE]
 │   │   │   ├── chroma.service.js   # Chroma 向量数据库
 │   │   │   ├── embedding.service.js # 向量化
 │   │   │   ├── document.service.js  # 文档处理
-│   │   │   ├── redis.service.js     # 内存存储 + JSON 文件持久化
+│   │   │   ├── memory-store.js      # 内存存储 + JSON 文件持久化
 │   │   │   ├── auth.service.js      # 认证
 │   │   │   └── file-upload.service.js # 文件上传（multer）
 │   │   ├── controllers/

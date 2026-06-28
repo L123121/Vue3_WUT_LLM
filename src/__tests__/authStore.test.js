@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { setActivePinia, createPinia } from 'pinia';
 import { useAuthStore } from '../stores/auth.store.js';
 
@@ -6,93 +6,57 @@ describe('authStore', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     localStorage.clear();
+    vi.clearAllMocks();
   });
 
   it('starts unauthenticated', () => {
     const store = useAuthStore();
     expect(store.isAuthenticated).toBe(false);
     expect(store.user).toBeNull();
-    expect(store.token).toBe('');
   });
 
-  it('logs in with server token', () => {
+  it('logs in with user data', () => {
     const store = useAuthStore();
-    store.login({ name: 'Test' }, 'jwt-token-123');
+    store.login({ name: 'Test', studentId: '123' });
 
     expect(store.isAuthenticated).toBe(true);
     expect(store.user.name).toBe('Test');
-    expect(store.token).toBe('jwt-token-123');
-    expect(store.isLocalAuth).toBe(false);
+    expect(store.user.studentId).toBe('123');
   });
 
-  it('logs in with local auth when no token', () => {
+  it('logs out and clears state', async () => {
     const store = useAuthStore();
-    store.login({ name: 'Local' }, null);
-
-    expect(store.isAuthenticated).toBe(true);
-    expect(store.token).toMatch(/^local_/);
-    expect(store.isLocalAuth).toBe(true);
-  });
-
-  it('fills default college and grade', () => {
-    const store = useAuthStore();
-    store.login({ name: 'User' }, 'token');
-
-    expect(store.user.college).toBe('计算机科学与技术学院');
-    expect(store.user.grade).toBe('2021级');
-  });
-
-  it('overrides defaults with provided values', () => {
-    const store = useAuthStore();
-    store.login({ name: 'User', college: '理学院' }, 'token');
-
-    expect(store.user.college).toBe('理学院');
-  });
-
-  it('logs out and clears state', () => {
-    const store = useAuthStore();
-    store.login({ name: 'Test' }, 'token');
-    store.logout();
+    store.login({ name: 'Test', studentId: '123' });
+    // Mock fetch for logout call
+    global.fetch = vi.fn(() => Promise.resolve({ ok: true }));
+    await store.logout();
 
     expect(store.isAuthenticated).toBe(false);
     expect(store.user).toBeNull();
-    expect(store.token).toBe('');
-    expect(store.isLocalAuth).toBe(false);
+    expect(localStorage.getItem('user')).toBeNull();
   });
 
   it('updates user profile', () => {
     const store = useAuthStore();
-    store.login({ name: 'Old' }, 'token');
+    store.login({ name: 'Old', studentId: '123' });
     store.updateUser({ name: 'New' });
 
     expect(store.user.name).toBe('New');
   });
 
-  it('verifies password correctly', async () => {
-    const store = useAuthStore();
-    // Default password is 123456 (migrated from legacy or using default hash)
-    const result = await store.verifyPassword('123456');
-    expect(result).toBe(true);
-  });
-
-  it('rejects wrong password', async () => {
-    const store = useAuthStore();
-    const result = await store.verifyPassword('wrong');
-    expect(result).toBe(false);
-  });
-
-  it('persists token to localStorage', () => {
-    const store = useAuthStore();
-    store.login({ name: 'Test' }, 'my-token');
-
-    expect(localStorage.getItem('token')).toBe('my-token');
-  });
-
   it('persists user to localStorage', () => {
     const store = useAuthStore();
-    store.login({ name: 'Test' }, 'token');
+    store.login({ name: 'Test', studentId: '123' });
 
     const stored = JSON.parse(localStorage.getItem('user'));
     expect(stored.name).toBe('Test');
+    expect(stored.studentId).toBe('123');
+  });
+
+  it('does not persist token to localStorage', () => {
+    const store = useAuthStore();
+    store.login({ name: 'Test', studentId: '123' });
+
+    expect(localStorage.getItem('token')).toBeNull();
   });
 });

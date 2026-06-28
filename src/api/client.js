@@ -1,11 +1,12 @@
-const API_URL = '/api';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
+const API_URL = API_BASE.endsWith('/') ? API_BASE.slice(0, -1) : API_BASE;
 
-const getAuthHeaders = () => {
-  const token = localStorage.getItem('token');
-  return {
+const fetchOpts = {
+  method: 'GET',
+  headers: {
     'Content-Type': 'application/json',
-    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-  };
+  },
+  credentials: 'include',
 };
 
 const handleResponse = async (response) => {
@@ -14,12 +15,12 @@ const handleResponse = async (response) => {
     try {
       const errorData = await response.json();
       errorMessage = errorData.message || errorData.error || errorMessage;
-    } catch {
-      // JSON 解析失败，使用默认错误信息
+    } catch (err) {
+      console.warn('[API] 响应 JSON 解析失败:', err.message);
     }
 
-    // 401 未授权 - 仅当本地有 token 时才清除（避免无 token 请求触发误跳转）
-    if (response.status === 401 && localStorage.getItem('token')) {
+    // 401 未授权 - 清除本地用户信息并跳转登录
+    if (response.status === 401) {
       handleAuthError();
     }
 
@@ -29,27 +30,34 @@ const handleResponse = async (response) => {
 };
 
 // 仅在需要时手动调用，用于全局认证过期处理
-export const handleAuthError = () => {
-  localStorage.removeItem('token');
+export const handleAuthError = async () => {
+  try {
+    await fetch(`${API_URL}/auth/logout`, {
+      method: 'POST',
+      credentials: 'include',
+    });
+  } catch {
+    // 登出请求失败不影响本地清理
+  }
   localStorage.removeItem('user');
-  window.location.href = '/chat';
+  window.location.href = '/login';
 };
 
 /**
- * 解构 options，将 headers 分离出来手动合并，防止 options 覆盖认证头
+ * 构建 fetch options，合并默认凭据配置
  */
 const buildFetchOptions = (method, extraHeaders = {}, body, options = {}) => {
   const { headers: _ignored, ...rest } = options;
-  const fetchOpts = {
+  return {
+    ...fetchOpts,
     method,
     headers: {
-      ...getAuthHeaders(),
+      ...fetchOpts.headers,
       ...extraHeaders,
     },
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     ...rest,
   };
-  if (body !== undefined) fetchOpts.body = JSON.stringify(body);
-  return fetchOpts;
 };
 
 export const apiGet = async (path, options = {}) => {
@@ -78,13 +86,12 @@ export const apiDelete = async (path, options = {}) => {
 
 // 无 JSON 序列化的 POST（用于流式请求等自定义场景）
 export const apiPostRaw = async (path, body, options = {}) => {
-  const token = localStorage.getItem('token');
   const { headers: _ignored, ...rest } = options;
   const fetchOpts = {
+    ...fetchOpts,
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+      ...fetchOpts.headers,
       ...(options.headers || {}),
     },
     ...rest,
@@ -94,4 +101,4 @@ export const apiPostRaw = async (path, body, options = {}) => {
   return handleResponse(response);
 };
 
-export { API_URL, getAuthHeaders };
+export { API_URL };

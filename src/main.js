@@ -15,8 +15,8 @@ app.use(pinia);
 app.use(router);
 app.use(VueVirtualScroller);
 
-// Global error handling
+app.mount('#app');
+
+// 全局错误处理（需等 app 挂载后 Pinia 才可用）
 const toastStore = useToastStore();
 setupGlobalErrorHandler(app, toastStore);
-
-app.mount('#app');

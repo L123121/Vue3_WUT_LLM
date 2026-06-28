@@ -6,7 +6,7 @@ const HEARTBEAT_INTERVAL = 30000;
 const HEARTBEAT_TIMEOUT = 10000;
 const STREAM_STALL_TIMEOUT = 60000; // 60s without data = stalled
 
-import { getAuthHeaders, apiGet, apiPost } from './client.js';
+import { apiGet, apiPost } from './client.js';
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -97,6 +97,7 @@ const startHeartbeat = () => {
       const response = await fetch(`${API_URL}/health`, {
         method: 'GET',
         signal: controller.signal,
+        credentials: 'include',
       });
 
       clearTimeout(timeoutId);
@@ -107,7 +108,8 @@ const startHeartbeat = () => {
       } else {
         connectionManager.setConnected(false);
       }
-    } catch {
+    } catch (err) {
+      console.warn('[Stream] Heartbeat failed:', err.message);
       connectionManager.setConnected(false);
     }
   }, HEARTBEAT_INTERVAL);
@@ -120,8 +122,8 @@ startHeartbeat();
 export const sendMessageToBackend = async (message, history = [], retries = MAX_RETRIES) => {
   try {
     const response = await fetch(API_URL, {
+      ...fetchOpts,
       method: 'POST',
-      headers: getAuthHeaders(),
       body: JSON.stringify({ message, history }),
     });
 
@@ -145,33 +147,36 @@ export const sendMessageToBackend = async (message, history = [], retries = MAX_
 
 // Streaming message with stall detection
 export const sendMessageStream = async (message, history = [], callbacks, options = {}) => {
+  console.debug('[Stream] sendMessageStream called, message:', message.substring(0, 30));
   const controller = options.signal ? { abort: () => {} } : new AbortController();
   const signal = options.signal || controller.signal;
   const maxRetries = options.maxRetries ?? MAX_RETRIES;
   const attempt = options.attempt ?? 0;
   const conversationId = options.conversationId;
-  const enableRag = options.enableRag ?? false;
 
   const messageId = `msg_${Date.now()}`;
   if (attempt === 0) {
     connectionManager.addPendingMessage({ id: messageId, message, history, conversationId });
   }
 
+  console.debug('[Stream] fetch:', `${API_URL}/stream`, 'attempt:', attempt);
   try {
     const response = await fetch(`${API_URL}/stream`, {
+      ...fetchOpts,
       method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify({ message, history, conversationId, enableRag, files: options.files || [] }),
+      body: JSON.stringify({ message, history, conversationId, files: options.files || [], skillPrompt: options.skillPrompt || '' }),
       signal,
     });
 
     if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
     if (!response.body) throw new Error('Response body is null');
+    console.debug('[Stream] response OK, body type:', response.body?.constructor?.name);
 
     connectionManager.setConnected(true);
     connectionManager.removePendingMessage(messageId);
 
     const reader = response.body.getReader();
+    console.debug('[Stream] reader created');
     const decoder = new TextDecoder('utf-8');
     let buffer = '';
     let lastDataTime = Date.now();
@@ -182,7 +187,6 @@ export const sendMessageStream = async (message, history = [], callbacks, option
         clearInterval(stallCheck);
         reader.cancel();
         connectionManager.setConnected(false);
-        // Will trigger reconnection via the catch block
       }
     }, 5000);
 
@@ -221,15 +225,32 @@ export const sendMessageStream = async (message, history = [], callbacks, option
             if (!content && json.choices?.[0]?.delta?.content) {
               content = json.choices[0].delta.content;
             }
-            if (content) callbacks.onChunk(content);
+            if (content) {
+              console.debug('[Stream] chunk:', content.substring(0, 30));
+              callbacks.onChunk(content);
+            }
             if (json.sources) callbacks.onSources?.(json.sources);
             if (json.error) {
               clearInterval(stallCheck);
               callbacks.onError(new Error(json.error));
               return;
             }
-          } catch {
-            // skip parse errors
+
+            // Agent 模式事件（默认开启）
+            if (json.thinking) {
+              console.debug('[Stream] thinking:', json.thinking.substring(0, 50));
+              callbacks.onThinking?.(json.thinking);
+            }
+            if (json.tool_call) {
+              console.debug('[Stream] tool_call:', json.tool_call.name);
+              callbacks.onToolCall?.(json.tool_call);
+            }
+            if (json.tool_result) {
+              console.debug('[Stream] tool_result:', json.tool_result.name);
+              callbacks.onToolResult?.(json.tool_result);
+            }
+          } catch (err) {
+            console.warn('[Stream] SSE 数据解析失败:', err.message, 'data:', data.substring(0, 100));
           }
         }
       }
@@ -277,12 +298,9 @@ export const uploadChatFile = async (file) => {
   formData.append('file', file);
 
   // 注意：不设置 Content-Type，让浏览器自动设为 multipart/form-data
-  const token = localStorage.getItem('token');
   const response = await fetch(`${API_URL}/chat/upload`, {
+    ...fetchOpts,
     method: 'POST',
-    headers: {
-      ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-    },
     body: formData,
   });
 

@@ -77,10 +77,10 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside));
     <ToastManager />
 
     <div class="flex h-screen overflow-hidden">
-      <Sidebar />
+      <Sidebar v-if="route.path !== '/login'" />
 
       <div class="flex-1 flex flex-col h-screen overflow-hidden relative">
-        <header class="h-16 bg-white/90 dark:bg-gray-900/90 backdrop-blur-sm border-b border-slate-200 dark:border-gray-800 shadow-sm flex items-center justify-between px-8 z-10 shrink-0 transition-all duration-300 ease-in-out">
+        <header v-if="route.path !== '/login'" class="h-16 bg-white/90 dark:bg-gray-900/90 backdrop-blur-sm border-b border-slate-200 dark:border-gray-800 shadow-sm flex items-center justify-between px-8 z-10 shrink-0 transition-all duration-300 ease-in-out">
           <h2 class="text-xl font-bold text-slate-800 dark:text-white tracking-tight transition-colors duration-300">
             {{ pageTitle }}
           </h2>
@@ -120,32 +120,20 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside));
         <ProfilePanel :show="showProfilePanel" @close="showProfilePanel = false" @open-avatar-picker="showAvatarPicker = true" />
 
         <main class="flex-1 min-h-0 flex flex-col relative bg-slate-50 dark:bg-gray-950 transition-colors duration-300 ease-in-out">
-          <div v-if="showSkillPanel" class="feature-panel absolute top-4 right-4 z-30 w-[420px] max-w-[calc(100%-2rem)]">
-            <div class="rounded-2xl border border-slate-200 dark:border-gray-700 bg-white/95 dark:bg-gray-900/95 backdrop-blur-md shadow-xl p-2 overflow-y-auto" style="max-height: calc(100vh - 12rem);"><SkillPanel /></div>
-          </div>
-          <div v-if="showPromptPanel" class="feature-panel absolute top-4 right-4 z-30 w-[420px] max-w-[calc(100%-2rem)]">
-            <div class="rounded-2xl border border-slate-200 dark:border-gray-700 bg-white/95 dark:bg-gray-900/95 backdrop-blur-md shadow-xl p-2 overflow-y-auto" style="max-height: calc(100vh - 12rem);"><PromptPanel /></div>
-          </div>
-          <div v-if="showMcpPanel" class="feature-panel absolute top-4 right-4 z-30 w-[420px] max-w-[calc(100%-2rem)]">
-            <div class="rounded-2xl border border-slate-200 dark:border-gray-700 bg-white/95 dark:bg-gray-900/95 backdrop-blur-md shadow-xl p-2 overflow-y-auto" style="max-height: calc(100vh - 12rem);"><McpPanel /></div>
-          </div>
-
           <ErrorBoundary>
+            <div v-if="showSkillPanel" class="feature-panel absolute top-4 right-4 z-30 w-[420px] max-w-[calc(100%-2rem)]">
+              <div class="rounded-2xl border border-slate-200 dark:border-gray-700 bg-white/95 dark:bg-gray-900/95 backdrop-blur-md shadow-xl p-2 overflow-y-auto" style="max-height: calc(100vh - 12rem);"><SkillPanel /></div>
+            </div>
+            <div v-if="showPromptPanel" class="feature-panel absolute top-4 right-4 z-30 w-[420px] max-w-[calc(100%-2rem)]">
+              <div class="rounded-2xl border border-slate-200 dark:border-gray-700 bg-white/95 dark:bg-gray-900/95 backdrop-blur-md shadow-xl p-2 overflow-y-auto" style="max-height: calc(100vh - 12rem);"><PromptPanel /></div>
+            </div>
+            <div v-if="showMcpPanel" class="feature-panel absolute top-4 right-4 z-30 w-[420px] max-w-[calc(100%-2rem)]">
+              <div class="rounded-2xl border border-slate-200 dark:border-gray-700 bg-white/95 dark:bg-gray-900/95 backdrop-blur-md shadow-xl p-2 overflow-y-auto" style="max-height: calc(100vh - 12rem);"><McpPanel /></div>
+            </div>
+
             <router-view v-slot="{ Component }">
               <transition name="fade" mode="out-in">
-                <Suspense>
-                  <template #default>
-                    <component :is="Component" />
-                  </template>
-                  <template #fallback>
-                    <div class="flex items-center justify-center h-64">
-                      <div class="flex flex-col items-center space-y-4">
-                        <div class="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-500"></div>
-                        <span class="text-sm text-slate-500 dark:text-gray-400">{{ languageStore.t('app.loading') }}</span>
-                      </div>
-                    </div>
-                  </template>
-                </Suspense>
+                <component :is="Component" />
               </transition>
             </router-view>
           </ErrorBoundary>

@@ -43,8 +43,8 @@ describe('setupGlobalErrorHandler', () => {
 
     mockApp.config.errorHandler(error, instance, info);
 
-    expect(consoleErrorSpy).toHaveBeenCalledWith('[Vue Error]', error);
-    expect(mockToastStore.error).toHaveBeenCalledWith('应用发生错误，请刷新页面重试');
+    expect(consoleErrorSpy).toHaveBeenCalledWith('[Vue Error]', error, 'render');
+    expect(mockToastStore.error).toHaveBeenCalledWith('操作失败，请稍后重试');
   });
 
   it('handles missing toastStore gracefully', () => {
@@ -70,7 +70,7 @@ describe('setupGlobalErrorHandler', () => {
     window.dispatchEvent(rejectionEvent);
 
     expect(consoleErrorSpy).toHaveBeenCalledWith('[Unhandled Rejection]', rejectionEvent.reason);
-    expect(mockToastStore.error).toHaveBeenCalledWith('网络请求失败，请检查网络连接');
+    expect(mockToastStore.error).toHaveBeenCalledWith('网络连接失败，请确认后端服务已启动');
     expect(rejectionEvent.preventDefault).toHaveBeenCalled();
   });
 
@@ -111,7 +111,7 @@ describe('setupGlobalErrorHandler', () => {
     window.dispatchEvent(errorEvent);
 
     expect(consoleErrorSpy).toHaveBeenCalledWith('[Global Error]', errorEvent.error);
-    expect(mockToastStore.error).toHaveBeenCalledWith('应用发生错误，请刷新页面重试');
+    expect(mockToastStore.error).toHaveBeenCalledWith('操作失败，请稍后重试');
   });
 
   it('ignores resource loading errors', () => {

@@ -3,6 +3,7 @@ import MarkdownIt from 'markdown-it';
 import DOMPurify from 'dompurify';
 import { useCodeHighlighter } from './useCodeHighlighter.js';
 import { useMarkdownWorker } from './useMarkdownWorker.js';
+import { ALLOWED_TAGS, ALLOWED_ATTR, completeMarkdown, escapeHtml, createLinkSecurityRule } from '../utils/markdownConfig.js';
 
 /**
  * Markdown 渲染 composable
@@ -24,17 +25,6 @@ export function useMarkdownRenderer() {
   // Markdown 补全逻辑 — 使用 md.parse() Token 流检测未闭合语法
   // 注意：只补全代码围栏（```），因为不闭合会影响后续内容渲染。
   // 加粗/斜体等内联语法即使不闭合，markdown-it 也能正常渲染，追加关闭标记反而产生多余符号。
-  const completeMarkdown = (str) => {
-    if (!str) return str;
-
-    // 代码围栏是单独的 fence token（nesting: 0），通过统计 ``` 出现次数检测
-    const fenceCount = (str.match(/^```/gm) || []).length;
-    const hasUnclosedFence = fenceCount > 0 && fenceCount % 2 === 1;
-
-    if (!hasUnclosedFence) return str;
-
-    return str + '\n```';
-  };
 
   // 创建代码高亮函数
   const highlightCodeBlock = (str, lang) => {
@@ -71,35 +61,7 @@ export function useMarkdownRenderer() {
     },
   });
 
-  // 链接安全处理
-  const defaultLinkRender = md.renderer.rules.link_open || ((tokens, idx, options, env, self) =>
-    self.renderToken(tokens, idx, options));
-
-  md.renderer.rules.link_open = (tokens, idx, options, env, self) => {
-    const tIdx = tokens[idx].attrIndex('target');
-    if (tIdx < 0) tokens[idx].attrPush(['target', '_blank']);
-    const rIdx = tokens[idx].attrIndex('rel');
-    if (rIdx < 0) tokens[idx].attrPush(['rel', 'noopener noreferrer']);
-    const hIdx = tokens[idx].attrIndex('href');
-    if (hIdx >= 0 && /^(javascript|data|vbscript):/i.test(tokens[idx].attrs[hIdx][1])) {
-      tokens[idx].attrs[hIdx][1] = '#';
-    }
-    return defaultLinkRender(tokens, idx, options, env, self);
-  };
-
-  // DOMPurify 配置
-  const ALLOWED_TAGS = [
-    'div', 'span', 'pre', 'code', 'p', 'a', 'strong', 'em', 'b', 'i',
-    'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
-    'table', 'thead', 'tbody', 'tr', 'th', 'td',
-    'button', 'svg', 'path', 'rect', 'polygon', 'br', 'hr', 'blockquote',
-  ];
-  const ALLOWED_ATTR = [
-    'class', 'style', 'data-code', 'data-lang',
-    'xmlns', 'width', 'height', 'viewBox', 'fill', 'stroke',
-    'stroke-width', 'stroke-linecap', 'stroke-linejoin', 'd', 'x', 'y', 'rx', 'ry',
-    'href', 'target', 'rel', 'points',
-  ];
+  createLinkSecurityRule(md);
 
   // 渲染结果缓存，避免重复解析相同内容
   const renderCache = new Map();

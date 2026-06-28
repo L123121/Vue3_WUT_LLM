@@ -2,7 +2,7 @@
 
 const { v4: uuidv4 } = require('uuid');
 const { TextSplitter } = require('../utils/text-splitter');
-const { redis } = require('./redis.service');
+const { redis: store } = require('./memory-store');
 const { ChatdocService } = require('./chatdoc.service');
 
 class DocumentService {
@@ -66,9 +66,9 @@ class DocumentService {
       metadata: JSON.stringify(metadata)
     };
 
-    await redis.hset(`document:${docId}`, docMetadata);
-    await redis.sadd('documents:all', docId);
-    await redis.expire(`document:${docId}`, this.DOC_TTL);
+    await store.hset(`document:${docId}`, docMetadata);
+    await store.sadd('documents:all', docId);
+    await store.expire(`document:${docId}`, this.DOC_TTL);
 
     return {
       id: docId,
@@ -94,13 +94,13 @@ class DocumentService {
   }
 
   async deleteDocument(docId) {
-    const docMeta = await redis.hgetall(`document:${docId}`);
+    const docMeta = await store.hgetall(`document:${docId}`);
     if (!docMeta || !docMeta.id) {
       throw new Error('文档不存在');
     }
 
-    await redis.del(`document:${docId}`);
-    await redis.srem('documents:all', docId);
+    await store.del(`document:${docId}`);
+    await store.srem('documents:all', docId);
 
     return { message: '文档删除成功', docId };
   }
@@ -108,9 +108,9 @@ class DocumentService {
   async listDocuments(options = {}) {
     const { category, page = 1, limit = 20 } = options;
 
-    let docIds = await redis.smembers('documents:all');
+    let docIds = await store.smembers('documents:all');
 
-    const pipeline = redis.pipeline();
+    const pipeline = store.pipeline();
     docIds.forEach(id => pipeline.hgetall(`document:${id}`));
     const results = await pipeline.exec();
 
@@ -145,7 +145,7 @@ class DocumentService {
   }
 
   async getDocument(docId) {
-    const docMeta = await redis.hgetall(`document:${docId}`);
+    const docMeta = await store.hgetall(`document:${docId}`);
     if (!docMeta || !docMeta.id) return null;
 
     return {
@@ -162,16 +162,42 @@ class DocumentService {
   }
 
   async getAllChatdocFileIds() {
-    const docIds = await redis.smembers('documents:all');
+    const docIds = await this._getAllDocIds();
     if (!docIds.length) return [];
 
-    const pipeline = redis.pipeline();
+    const pipeline = store.pipeline();
     docIds.forEach(id => pipeline.hget(`document:${id}`, 'chatdocFileId'));
     const results = await pipeline.exec();
 
     return results
       .map(([err, data]) => data)
       .filter(id => id && id.length > 0);
+  }
+
+  /**
+   * 获取所有文档 ID（内部辅助方法）
+   */
+  async _getAllDocIds() {
+    return await store.smembers('documents:all');
+  }
+
+  /**
+   * 获取单个文档的原始元数据哈希（内部辅助方法）
+   */
+  async _getDocMeta(docId) {
+    return await store.hgetall(`document:${docId}`);
+  }
+
+  /**
+   * 根据 chatdocFileId 查找本地文档 ID
+   */
+  async findDocByChatdocFileId(chatdocFileId) {
+    const docIds = await this._getAllDocIds();
+    for (const docId of docIds) {
+      const meta = await store.hget(`document:${docId}`, 'chatdocFileId');
+      if (meta === chatdocFileId) return docId;
+    }
+    return null;
   }
 }
 

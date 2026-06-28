@@ -6,6 +6,7 @@
 import MarkdownIt from 'markdown-it';
 import DOMPurify from 'dompurify';
 import hljs from 'highlight.js/lib/core';
+import { ALLOWED_TAGS, ALLOWED_ATTR, completeMarkdown, escapeHtml } from '../utils/markdownConfig.js';
 
 // Register common languages in the worker
 import javascript from 'highlight.js/lib/languages/javascript';
@@ -40,22 +41,6 @@ const LANGUAGE_ALIASES = {
   'c++': 'cpp', golang: 'go', yml: 'yaml',
   text: 'plaintext', plaintext: 'plaintext',
 };
-
-const ALLOWED_TAGS = [
-  'div', 'span', 'pre', 'code', 'p', 'a', 'strong', 'em', 'b', 'i',
-  'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
-  'table', 'thead', 'tbody', 'tr', 'th', 'td',
-  'button', 'svg', 'path', 'rect', 'polygon', 'br', 'hr', 'blockquote',
-];
-const ALLOWED_ATTR = [
-  'class', 'style', 'data-code', 'data-lang',
-  'xmlns', 'width', 'height', 'viewBox', 'fill', 'stroke',
-  'stroke-width', 'stroke-linecap', 'stroke-linejoin', 'd', 'x', 'y', 'rx', 'ry',
-  'href', 'target', 'rel', 'points',
-];
-
-const escapeHtml = (str) =>
-  str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
 const renderCodeBlock = (code, language, label, rawCode) => {
   const encodedCode = encodeURIComponent(code);
@@ -101,35 +86,7 @@ const md = new MarkdownIt({
   highlight: highlightCode,
 });
 
-// Link security
-const defaultLinkOpenRender = md.renderer.rules.link_open || ((tokens, idx, options, env, self) =>
-  self.renderToken(tokens, idx, options));
-
-md.renderer.rules.link_open = (tokens, idx, options, env, self) => {
-  const targetIdx = tokens[idx].attrIndex('target');
-  if (targetIdx < 0) tokens[idx].attrPush(['target', '_blank']);
-  const relIdx = tokens[idx].attrIndex('rel');
-  if (relIdx < 0) tokens[idx].attrPush(['rel', 'noopener noreferrer']);
-  const hrefIdx = tokens[idx].attrIndex('href');
-  if (hrefIdx >= 0 && /^(javascript|data|vbscript):/i.test(tokens[idx].attrs[hrefIdx][1])) {
-    tokens[idx].attrs[hrefIdx][1] = '#';
-  }
-  return defaultLinkOpenRender(tokens, idx, options, env, self);
-};
-
-/**
- * 补全未闭合的 Markdown 语法
- * 注意：只补全代码围栏（```），因为不闭合会影响后续内容渲染。
- * 加粗/斜体等内联语法即使不闭合，markdown-it 也能正常渲染，追加关闭标记反而产生多余符号。
- */
-const completeMarkdown = (str) => {
-  if (!str) return str;
-  // 代码围栏是单独的 fence token（nesting: 0），通过统计 ``` 出现次数检测
-  const fenceCount = (str.match(/^```/gm) || []).length;
-  const hasUnclosedFence = fenceCount > 0 && fenceCount % 2 === 1;
-  if (!hasUnclosedFence) return str;
-  return str + '\n```';
-};
+createLinkSecurityRule(md);
 
 self.onmessage = (e) => {
   const { id, content } = e.data;

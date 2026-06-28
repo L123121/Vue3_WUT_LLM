@@ -12,13 +12,36 @@ import {
   normalizeMessages,
   createWelcomeMessage,
   createLocalConversation,
-  loadLocalConversationsCache,
-  saveLocalConversationsCache,
-  ensureLocalFallback,
+  getMessageText,
 } from '../utils/chatHelpers.js';
+import {
+  loadCache,
+  saveCache,
+  saveIncremental,
+  restoreFromLegacyBackups,
+  cleanupLegacyKeys,
+} from '../utils/conversationCache.js';
 
 const CURRENT_CONVERSATION_KEY = 'chat_current_conversation_id';
-const MESSAGES_BACKUP_KEY = 'chat_messages_backup';
+
+// ==================== 统一缓存管理 ====================
+// 使用 conversationCache.js 统一管理 localStorage 持久化
+// 增量保存：300ms 防抖，只写发生变更的会话
+
+let saveTimer = null;
+
+const scheduleSave = (conversations, currentId, dirtyConvId) => {
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    saveIncremental(conversations, currentId, dirtyConvId);
+    saveTimer = null;
+  }, 300);
+};
+
+const flushSave = (conversations, currentId) => {
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+  saveCache(conversations, currentId);
+};
 
 export const useConversationStore = defineStore('conversation', () => {
   let authStore = null;
@@ -44,7 +67,7 @@ export const useConversationStore = defineStore('conversation', () => {
 
   const isBackendAvailable = () => {
     const auth = getAuthStore();
-    return auth.isAuthenticated && !auth.isLocalAuth;
+    return auth.isAuthenticated;
   };
 
   const loadConversations = async () => {
@@ -53,19 +76,25 @@ export const useConversationStore = defineStore('conversation', () => {
         ensureLocalFallback(conversations, currentConversationId);
       }
       isLoaded.value = true;
-      tryRestoreFromBackup();
+      // 离线状态下也尝试迁移旧数据
+      if (conversations.value.length > 0) {
+        const restored = restoreFromLegacyBackups(conversations.value);
+        if (restored !== conversations.value) {
+          conversations.value = restored;
+        }
+      }
+      cleanupLegacyKeys();
       return;
     }
 
     try {
       const data = await fetchConversations();
       if (data.length === 0) {
-        // 后端返回空（可能 Redis 未启动），先尝试从 localStorage 恢复
-        const cached = loadLocalConversationsCache();
-        if (cached.length > 0) {
-          conversations.value = cached;
-          const hasCurrent = cached.some((c) => c.id === currentConversationId.value);
-          currentConversationId.value = hasCurrent ? currentConversationId.value : cached[0].id;
+        // 后端返回空（可能 Redis 未启动），从统一缓存恢复
+        const cached = loadCache();
+        if (cached?.conversations?.length > 0) {
+          conversations.value = cached.conversations;
+          currentConversationId.value = cached.currentId || cached.conversations[0].id;
         } else {
           const localConv = createLocalConversation('新会话');
           conversations.value = [localConv];
@@ -81,7 +110,8 @@ export const useConversationStore = defineStore('conversation', () => {
         }
       }
       isLoaded.value = true;
-      tryRestoreFromBackup();
+      // 首次加载成功后清理旧版备份
+      cleanupLegacyKeys();
     } catch (error) {
       console.error('Failed to load conversations:', error);
       if (conversations.value.length === 0) {
@@ -91,57 +121,29 @@ export const useConversationStore = defineStore('conversation', () => {
     }
   };
 
-  // 从独立消息备份恢复当前会话的消息
+  // 从统一缓存恢复消息（兼容旧版备份迁移）
   const tryRestoreFromBackup = () => {
     const conv = currentConversation.value;
     if (!conv) return;
-    const hasRealMessages = (conv.messages || []).some((m) => m.id !== 'welcome' && m.text?.trim());
+    const hasRealMessages = (conv.messages || []).some((m) => m.id !== 'welcome' && getMessageText(m));
     if (hasRealMessages) return;
 
-    // 先试 conversationStore 的备份 (chat_messages_backup)
-    const backup = restoreMessagesBackup();
-    if (backup && Array.isArray(backup.messages) && backup.messages.length > 0) {
-      if (restoreFromBackupData(conv, backup)) return;
-    }
-
-    // 再试 messageStore 的直接备份 (chat_msgs_direct)
-    try {
-      const raw = localStorage.getItem('chat_msgs_direct');
-      if (raw) {
-        const direct = JSON.parse(raw);
-        if (direct && Array.isArray(direct.messages) && direct.messages.length > 0) {
-          restoreFromBackupData(conv, direct);
-        }
-      }
-    } catch {}
-  };
-
-  const restoreFromBackupData = (conv, backup) => {
-    if (backup.conversationId === conv.id || (!isLocalSession(conv.id) && !isLocalSession(backup.conversationId))) {
-      const normalized = normalizeMessages(backup.messages);
-      if (normalized.length > 0) {
-        conversations.value = conversations.value.map((c) =>
-          c.id === conv.id ? { ...c, messages: normalized, title: backup.title || c.title } : c
+    // 检查是否已迁移到新缓存
+    const cached = loadCache();
+    if (cached?.conversations) {
+      const cachedConv = cached.conversations.find(c => c.id === conv.id);
+      if (cachedConv?.messages?.length > 1) {
+        conversations.value = conversations.value.map(c =>
+          c.id === conv.id ? { ...c, messages: cachedConv.messages } : c
         );
-        return true;
+        return;
       }
     }
-    return false;
-  };
 
-  const loadConversationMessages = async (conversationId) => {
-    if (isLocalSession(conversationId) || !isBackendAvailable()) return;
-
-    try {
-      const conv = await fetchConversation(conversationId);
-      const index = conversations.value.findIndex((c) => c.id === conversationId);
-      if (index !== -1 && conv) {
-        const normalized = normalizeMessages(conv.messages);
-        conversations.value[index].messages = normalized.length > 0 ? normalized : [createWelcomeMessage()];
-        conversations.value[index].title = conv.title;
-      }
-    } catch (error) {
-      console.error('加载会话消息失败:', error);
+    // 从旧版备份恢复（一次性迁移）
+    const restored = restoreFromLegacyBackups(conversations.value);
+    if (restored.length > 0 && restored !== conversations.value) {
+      conversations.value = restored;
     }
   };
 
@@ -159,6 +161,7 @@ export const useConversationStore = defineStore('conversation', () => {
       conversations.value.unshift({ ...conv, messages: [createWelcomeMessage()] });
       currentConversationId.value = conv.id;
       localStorage.setItem(CURRENT_CONVERSATION_KEY, conv.id);
+      flushSave(conversations.value, conv.id);
       return conv.id;
     } catch (error) {
       console.error('创建会话失败:', error);
@@ -179,6 +182,25 @@ export const useConversationStore = defineStore('conversation', () => {
     if (conv && (!conv.messages || conv.messages.length === 0)) {
       await loadConversationMessages(id);
     }
+    flushSave(conversations.value, id);
+  };
+
+  const loadConversationMessages = async (conversationId) => {
+    if (isLocalSession(conversationId) || !isBackendAvailable()) return;
+
+    try {
+      const conv = await fetchConversation(conversationId);
+      // 竞态条件防护：加载完成后验证当前会话是否已切换
+      if (currentConversationId.value !== conversationId) return;
+      const index = conversations.value.findIndex((c) => c.id === conversationId);
+      if (index !== -1 && conv) {
+        const normalized = normalizeMessages(conv.messages);
+        conversations.value[index].messages = normalized.length > 0 ? normalized : [createWelcomeMessage()];
+        conversations.value[index].title = conv.title;
+      }
+    } catch (error) {
+      console.error('加载会话消息失败:', error);
+    }
   };
 
   const renameConversation = async (id, title) => {
@@ -195,6 +217,7 @@ export const useConversationStore = defineStore('conversation', () => {
         console.error('重命名会话失败:', error);
       }
     }
+    scheduleSave(conversations.value, currentConversationId.value, id);
   };
 
   const deleteConversation = async (id) => {
@@ -220,10 +243,7 @@ export const useConversationStore = defineStore('conversation', () => {
     }
 
     // 同步删除 localStorage 中的缓存，防止刷新后恢复已删除会话
-    scheduleSaveCache(true);
-    // 显式清理两个备份键，避免 saveMessagesBackup/saveDirectBackup 因 msgs.length===0 跳过而残留旧数据
-    try { localStorage.removeItem(MESSAGES_BACKUP_KEY); } catch {}
-    try { localStorage.removeItem('chat_msgs_direct'); } catch {}
+    flushSave(conversations.value, currentConversationId.value);
   };
 
   // 去除 markdown 标记符号，用于预览文本显示
@@ -259,88 +279,30 @@ export const useConversationStore = defineStore('conversation', () => {
     return text.length > 22 ? `${text.slice(0, 22)}...` : text;
   };
 
-  // Import getMessageText for getLastMessagePreview
-  const getMessageText = (msg) => {
-    if (!msg) return '';
-    return String(msg.text ?? msg.content ?? msg.message ?? '').trim();
-  };
+  // 统一消息文本读取（优先 content，降级 text）— 已从 chatHelpers 导入
 
-  // ========== localStorage 持久化 ==========
-
-  // 独立的消息备份：不依赖会话缓存，单独存当前会话的消息
-  const saveMessagesBackup = () => {
-    const conv = currentConversation.value;
-    if (!conv) return;
-    const msgs = (conv.messages || []).filter((m) => m.id !== 'welcome' && m.text?.trim());
-    if (msgs.length === 0) {
-      // 没有真实消息时清除旧备份，防止孤立的过期数据残留
-      try { localStorage.removeItem(MESSAGES_BACKUP_KEY); } catch {}
-      return;
-    }
-    try {
-      localStorage.setItem(MESSAGES_BACKUP_KEY, JSON.stringify({
-        conversationId: conv.id,
-        title: conv.title,
-        messages: msgs,
-        savedAt: Date.now(),
-      }));
-    } catch (e) {
-      console.warn('[Conversation] 消息备份保存失败:', e);
-    }
-  };
-
-  const restoreMessagesBackup = () => {
-    try {
-      const raw = localStorage.getItem(MESSAGES_BACKUP_KEY);
-      if (!raw) return null;
-      const backup = JSON.parse(raw);
-      if (!backup || !Array.isArray(backup.messages)) return null;
-      return backup;
-    } catch {
-      return null;
-    }
-  };
-
-  let saveTimer = null;
+  // ========== 统一 localStorage 持久化 ==========
 
   const flushSaveCache = () => {
-    // 无论是否登录、后端是否可用，始终备份到 localStorage
-    // （因为 Redis 可能断开，仅依赖后端保存不可靠）
-    try {
-      saveLocalConversationsCache(conversations.value);
-      saveMessagesBackup(); // 同时写独立备份
-    } catch (e) {
-      console.error('[Conversation] 缓存保存失败:', e);
-    }
-    saveTimer = null;
+    flushSave(conversations.value, currentConversationId.value);
   };
 
   const scheduleSaveCache = (immediate = false) => {
-    if (saveTimer) clearTimeout(saveTimer);
+    const conv = currentConversation.value;
     if (immediate) {
-      flushSaveCache();
+      flushSave(conversations.value, currentConversationId.value);
     } else {
-      saveTimer = setTimeout(flushSaveCache, 500);
+      scheduleSave(conversations.value, currentConversationId.value, conv?.id);
     }
   };
 
   // 页面刷新/关闭前将未保存的数据刷入 localStorage
   const setupBeforeUnload = () => {
     window.addEventListener('beforeunload', () => {
-      if (saveTimer) {
-        clearTimeout(saveTimer);
-        saveTimer = null;
-      }
+      flushSave(conversations.value, currentConversationId.value);
       // 确保当前会话 ID 也持久化
       if (currentConversationId.value) {
         localStorage.setItem(CURRENT_CONVERSATION_KEY, currentConversationId.value);
-      }
-      // 无论 auth 模式，始终备份到 localStorage
-      try {
-        saveLocalConversationsCache(conversations.value);
-        saveMessagesBackup();
-      } catch (e) {
-        console.error('[Conversation] beforeunload 保存失败:', e);
       }
     });
   };

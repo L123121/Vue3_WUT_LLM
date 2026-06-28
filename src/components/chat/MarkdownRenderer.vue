@@ -5,21 +5,16 @@ import hljs from 'highlight.js/lib/core';
 import DOMPurify from 'dompurify';
 import { useMarkdownWorker } from '../../composables/useMarkdownWorker.js';
 import { useCodeHighlighter } from '../../composables/useCodeHighlighter.js';
+import { ALLOWED_TAGS, ALLOWED_ATTR, completeMarkdown, escapeHtml, createLinkSecurityRule } from '../../utils/markdownConfig.js';
 import CodeRunner from './CodeRunner.vue';
 import 'highlight.js/styles/atom-one-dark.css';
 
 // 仅当代码围栏 (```) 未闭合时补全，内联语法不处理（markdown-it 自能处理）
-const completeMarkdown = (str) => {
-  if (!str) return str;
-  const fenceCount = (str.match(/^```/gm) || []).length;
-  if (fenceCount > 0 && fenceCount % 2 === 1) return str + '\n```';
-  return str;
-};
 
 // Worker for large content (>2000 chars)
 const WORKER_THRESHOLD = 2000;
 const { renderInWorker } = useMarkdownWorker();
-const { highlightCode, getLanguageLabel, isExecutableLanguage, escapeHtml, highlightVersion, ensureLanguage } = useCodeHighlighter();
+const { highlightCode, getLanguageLabel, isExecutableLanguage, highlightVersion, ensureLanguage } = useCodeHighlighter();
 
 const props = defineProps({ content: { type: String, default: '' } });
 const emit = defineEmits(['copyCode']);
@@ -71,34 +66,7 @@ const md = new MarkdownIt({
   html: false, xhtmlOut: true, breaks: true, linkify: true, typographer: true, highlight: highlightCodeBlock,
 });
 
-// Link security
-const defaultLinkRender = md.renderer.rules.link_open || ((tokens, idx, options, env, self) =>
-  self.renderToken(tokens, idx, options));
-
-md.renderer.rules.link_open = (tokens, idx, options, env, self) => {
-  const tIdx = tokens[idx].attrIndex('target');
-  if (tIdx < 0) tokens[idx].attrPush(['target', '_blank']);
-  const rIdx = tokens[idx].attrIndex('rel');
-  if (rIdx < 0) tokens[idx].attrPush(['rel', 'noopener noreferrer']);
-  const hIdx = tokens[idx].attrIndex('href');
-  if (hIdx >= 0 && /^(javascript|data|vbscript):/i.test(tokens[idx].attrs[hIdx][1])) {
-    tokens[idx].attrs[hIdx][1] = '#';
-  }
-  return defaultLinkRender(tokens, idx, options, env, self);
-};
-
-const ALLOWED_TAGS = [
-  'div', 'span', 'pre', 'code', 'p', 'a', 'strong', 'em', 'b', 'i',
-  'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
-  'table', 'thead', 'tbody', 'tr', 'th', 'td',
-  'button', 'svg', 'path', 'rect', 'polygon', 'br', 'hr', 'blockquote',
-];
-const ALLOWED_ATTR = [
-  'class', 'style', 'data-code', 'data-lang',
-  'xmlns', 'width', 'height', 'viewBox', 'fill', 'stroke',
-  'stroke-width', 'stroke-linecap', 'stroke-linejoin', 'd', 'x', 'y', 'rx', 'ry',
-  'href', 'target', 'rel', 'points',
-];
+createLinkSecurityRule(md);
 
 // --- Rendering logic with Worker offloading ---
 

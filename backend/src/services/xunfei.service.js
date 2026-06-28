@@ -1,6 +1,6 @@
 const crypto = require('crypto');
-const https = require('https');
 const config = require('../config');
+const { request, requestStream } = require('../utils/httpClient');
 
 class XunfeiService {
   constructor() {
@@ -74,89 +74,42 @@ class XunfeiService {
 
     // 判断使用哪种认证方式
     const isMaasCodingApi = this.baseUrl.includes('maas-coding-api');
+    const host = isMaasCodingApi ? 'maas-coding-api.cn-huabei-1.xf-yun.com' : 'maas-api.cn-huabei-1.xf-yun.com';
 
-    return new Promise((resolve) => {
-      let options;
-      const host = isMaasCodingApi ? 'maas-coding-api.cn-huabei-1.xf-yun.com' : 'maas-api.cn-huabei-1.xf-yun.com';
+    const headers = isMaasCodingApi
+      ? { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.apiKey}:${this.apiSecret}` }
+      : this._generateHmacAuthHeaders();
 
-      if (isMaasCodingApi) {
-        // maas-coding-api 使用 Bearer token
-        options = {
-          hostname: host,
-          port: 443,
-          path: '/v2/chat/completions',
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${this.apiKey}:${this.apiSecret}`
-          },
-          timeout: this.timeout
-        };
-        console.log(`[讯飞HTTP] 使用 Bearer Token 认证`);
+    console.log(`[讯飞HTTP] 请求: ${host}/v2/chat/completions, Model: ${this.model}`);
+
+    try {
+      const result = await request({
+        hostname: host,
+        port: 443,
+        path: '/v2/chat/completions',
+        method: 'POST',
+        headers,
+        timeout: this.timeout,
+      }, JSON.stringify(payload));
+
+      const json = result.data;
+      const content = json?.choices?.[0]?.message?.content;
+
+      if (content) {
+        console.log(`[讯飞HTTP] 成功, 响应长度: ${content.length}`);
+        return { content, isMock: false };
       } else {
-        // maas-api 使用 HMAC 签名
-        options = {
-          hostname: host,
-          port: 443,
-          path: '/v2/chat/completions',
-          method: 'POST',
-          headers: this._generateHmacAuthHeaders(),
-          timeout: this.timeout
-        };
-        console.log(`[讯飞HTTP] 使用 HMAC 签名认证`);
+        console.warn('[讯飞HTTP] 响应格式异常:', JSON.stringify(json).substring(0, 200));
+        return { content: this.getMockResponse(message), isMock: true };
       }
-
-      console.log(`[讯飞HTTP] 请求: ${host}/v2/chat/completions, Model: ${this.model}`);
-
-      const req = https.request(options, (res) => {
-        let data = '';
-
-        res.on('data', chunk => { data += chunk; });
-        res.on('end', () => {
-          try {
-            console.log(`[讯飞HTTP] 状态码: ${res.statusCode}`);
-
-            if (res.statusCode !== 200) {
-              console.error(`[讯飞HTTP] 错误响应: ${data}`);
-              try {
-                const errorJson = JSON.parse(data);
-                const errorMsg = errorJson.error?.message || errorJson.message || '未知错误';
-                return resolve({ content: `AI服务错误: ${errorMsg}`, isMock: true });
-              } catch {}
-              return resolve({ content: this.getMockResponse(message), isMock: true });
-            }
-
-            const json = JSON.parse(data);
-            const content = json.choices?.[0]?.message?.content;
-
-            if (content) {
-              console.log(`[讯飞HTTP] 成功, 响应长度: ${content.length}`);
-              resolve({ content, isMock: false });
-            } else {
-              console.warn('[讯飞HTTP] 响应格式异常:', json);
-              resolve({ content: this.getMockResponse(message), isMock: true });
-            }
-          } catch (e) {
-            console.error('[讯飞HTTP] 解析错误:', e.message);
-            resolve({ content: this.getMockResponse(message), isMock: true });
-          }
-        });
-      });
-
-      req.on('error', (err) => {
-        console.error('[讯飞HTTP] 请求错误:', err.message);
-        resolve({ content: this.getMockResponse(message), isMock: true });
-      });
-
-      req.on('timeout', () => {
-        console.error('[讯飞HTTP] 请求超时');
-        req.destroy();
-        resolve({ content: this.getMockResponse(message), isMock: true });
-      });
-
-      req.write(JSON.stringify(payload));
-      req.end();
-    });
+    } catch (err) {
+      if (err.statusCode && err.statusCode !== 200) {
+        console.error(`[讯飞HTTP] 错误 ${err.statusCode}: ${err.message}`);
+        return { content: this.getMockResponse(message), isMock: true };
+      }
+      console.error('[讯飞HTTP] 请求错误:', err.message);
+      return { content: this.getMockResponse(message), isMock: true };
+    }
   }
 
   /**
@@ -215,31 +168,22 @@ class XunfeiService {
 
     console.log(`[讯飞流式] Model: ${this.model}`);
 
-    // 使用 Promise 包装请求，然后 yield 结果
-    const streamPromise = new Promise((resolve, reject) => {
-      const req = https.request(options, (res) => {
-        resolve(res);
-      });
-
-      req.on('error', (err) => {
-        console.error('[讯飞流式] 请求错误:', err.message);
-        reject(err);
-      });
-
-      req.on('timeout', () => {
-        console.error('[讯飞流式] 请求超时');
-        req.destroy();
-        reject(new Error('请求超时'));
-      });
-
-      req.write(JSON.stringify(payload));
-      req.end();
-    });
+    const headers = isMaasCodingApi
+      ? { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.apiKey}:${this.apiSecret}` }
+      : this._generateHmacAuthHeaders();
 
     let res;
     try {
-      res = await streamPromise;
+      res = await requestStream({
+        hostname: host,
+        port: 443,
+        path: '/v2/chat/completions',
+        method: 'POST',
+        headers,
+        timeout: this.timeout,
+      }, JSON.stringify(payload));
     } catch (err) {
+      console.error('[讯飞流式] 请求错误:', err.message);
       yield { content: `[请求错误: ${err.message}]`, done: false };
       yield { content: '', done: true };
       return;
@@ -279,8 +223,8 @@ class XunfeiService {
           if (content) {
             yield { content, done: false };
           }
-        } catch {
-          // 跳过解析错误
+        } catch (err) {
+          console.warn('[讯飞流式] SSE 数据解析失败:', err.message);
         }
       }
     }
@@ -297,7 +241,9 @@ class XunfeiService {
             if (content) {
               yield { content, done: false };
             }
-          } catch {}
+          } catch (err) {
+            console.warn('[讯飞流式] 缓冲区 JSON 解析失败:', err.message);
+          }
         }
       }
     }

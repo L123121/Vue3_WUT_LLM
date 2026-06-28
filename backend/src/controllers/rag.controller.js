@@ -2,12 +2,13 @@
 
 const path = require('path');
 const { RagService } = require('../services/rag.service');
+const { aiService } = require('../services/ai.service');
 const { DocumentService } = require('../services/document.service');
-const { redis } = require('../services/redis.service');
+const { redis: store } = require('../services/memory-store');
 const { successResponse, errorResponse } = require('../utils/response');
 const { upload, parseFile, cleanupFile } = require('../services/file-upload.service');
 
-const ragService = new RagService();
+const ragService = new RagService(aiService);
 const documentService = new DocumentService();
 
 /**
@@ -166,7 +167,7 @@ const getDocument = async (req, res, next) => {
  */
 const getStats = async (req, res, next) => {
   try {
-    const docCount = await redis.scard('documents:all');
+    const docCount = await store.scard('documents:all');
 
     successResponse(res, {
       documents: {

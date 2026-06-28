@@ -4,7 +4,7 @@ const messages = {
       titles: {
         Home: '首页概览',
         Todo: '任务管理',
-        Chat: 'AI 对话助手',
+        Chat: 'AI Agent',
         Settings: '系统设置',
         About: '系统信息',
         Dashboard: '控制台',
@@ -22,22 +22,6 @@ const messages = {
       skills: 'Skills 管理',
     },
    
-    login: {
-      empty: '请输入用户名和密码',
-      wrong: '用户名或密码错误',
-      success: '登录成功，欢迎回来！',
-      fail: '登录失败，请检查账号密码',
-      fallbackName: '武理学子',
-      welcome: '欢迎回来',
-      subtitle: '武理小精灵 · 您的智慧校园助手',
-      account: '学号 / 账号',
-      accountPlaceholder: '请输入您的学号',
-      password: '密码',
-      passwordPlaceholder: '请输入密码',
-      loggingIn: '登录中...',
-      submit: '立即登录',
-      help: '遇到问题? 联系管理员获得帮助',
-    },
     aiChat: {
       sessionTitle: '会话管理',
       sessionCount: '共 {count} 个会话',

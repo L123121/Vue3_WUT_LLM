@@ -1,7 +1,7 @@
 "use strict";
 
 const crypto = require('crypto');
-const https = require('https');
+const { request } = require('../utils/httpClient');
 const WebSocket = require('ws');
 
 class ChatdocService {
@@ -52,42 +52,22 @@ class ChatdocService {
   }
 
   /**
-   * HTTP POST 请求
+   * HTTP POST 请求（使用共享客户端）
    */
-  _httpPost(url, body, headers = {}) {
-    return new Promise((resolve, reject) => {
-      const urlObj = new URL(url);
-      const options = {
-        hostname: urlObj.hostname,
-        port: 443,
-        path: urlObj.pathname,
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...headers
-        },
-        timeout: 60000
-      };
-
-      const req = https.request(options, (res) => {
-        let data = '';
-        res.on('data', chunk => { data += chunk; });
-        res.on('end', () => {
-          try {
-            const json = JSON.parse(data);
-            resolve(json);
-          } catch (e) {
-            reject(new Error(`解析响应失败: ${data.substring(0, 200)}`));
-          }
-        });
-      });
-
-      req.on('error', reject);
-      req.on('timeout', () => { req.destroy(); reject(new Error('请求超时')); });
-
-      if (body) req.write(JSON.stringify(body));
-      req.end();
-    });
+  async _httpPost(url, body, headers = {}) {
+    const urlObj = new URL(url);
+    const result = await request({
+      hostname: urlObj.hostname,
+      port: 443,
+      path: urlObj.pathname,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...headers,
+      },
+      timeout: 60000,
+    }, body ? JSON.stringify(body) : undefined);
+    return result.data;
   }
 
   /**
@@ -130,42 +110,22 @@ class ChatdocService {
     const bodyEnd = Buffer.from(`\r\n--${boundary}--\r\n`, 'utf-8');
     const fullBody = Buffer.concat([bodyStart, fileBuffer, bodyEnd]);
 
-    return new Promise((resolve, reject) => {
-      const urlObj = new URL(this.uploadUrl);
-      const options = {
-        hostname: urlObj.hostname,
-        port: 443,
-        path: urlObj.pathname,
-        method: 'POST',
-        headers: {
-          'Content-Type': `multipart/form-data; boundary=${boundary}`,
-          'Content-Length': fullBody.length,
-          'appId': authHeaders.appId,
-          'timestamp': authHeaders.timestamp,
-          'signature': authHeaders.signature
-        },
-        timeout: 60000
-      };
-
-      const req = https.request(options, (res) => {
-        let data = '';
-        res.on('data', chunk => { data += chunk; });
-        res.on('end', () => {
-          try {
-            const json = JSON.parse(data);
-            resolve(json);
-          } catch (e) {
-            reject(new Error(`解析响应失败: ${data.substring(0, 200)}`));
-          }
-        });
-      });
-
-      req.on('error', reject);
-      req.on('timeout', () => { req.destroy(); reject(new Error('请求超时')); });
-
-      req.write(fullBody);
-      req.end();
-    });
+    const urlObj = new URL(this.uploadUrl);
+    const result = await request({
+      hostname: urlObj.hostname,
+      port: 443,
+      path: urlObj.pathname,
+      method: 'POST',
+      headers: {
+        'Content-Type': `multipart/form-data; boundary=${boundary}`,
+        'Content-Length': fullBody.length,
+        'appId': authHeaders.appId,
+        'timestamp': authHeaders.timestamp,
+        'signature': authHeaders.signature,
+      },
+      timeout: 60000,
+    }, fullBody);
+    return result.data;
   }
 
   /**
@@ -178,40 +138,21 @@ class ChatdocService {
     // 使用 form-data 格式
     const body = `fileIds=${encodeURIComponent(fileIdsStr)}`;
 
-    return new Promise((resolve, reject) => {
-      const urlObj = new URL(this.statusUrl);
-      const options = {
-        hostname: urlObj.hostname,
-        port: 443,
-        path: urlObj.pathname,
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'appId': authHeaders.appId,
-          'timestamp': authHeaders.timestamp,
-          'signature': authHeaders.signature
-        },
-        timeout: 15000
-      };
-
-      const req = https.request(options, (res) => {
-        let data = '';
-        res.on('data', chunk => { data += chunk; });
-        res.on('end', () => {
-          try {
-            resolve(JSON.parse(data));
-          } catch (e) {
-            reject(new Error(`解析响应失败: ${data.substring(0, 200)}`));
-          }
-        });
-      });
-
-      req.on('error', reject);
-      req.on('timeout', () => { req.destroy(); reject(new Error('请求超时')); });
-
-      req.write(body);
-      req.end();
-    });
+    const urlObj = new URL(this.statusUrl);
+    const result = await request({
+      hostname: urlObj.hostname,
+      port: 443,
+      path: urlObj.pathname,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'appId': authHeaders.appId,
+        'timestamp': authHeaders.timestamp,
+        'signature': authHeaders.signature,
+      },
+      timeout: 15000,
+    }, body);
+    return result.data;
   }
 
   /**
@@ -305,7 +246,9 @@ class ChatdocService {
             if (result.fileRefer) {
               try {
                 fileRefer = JSON.parse(result.fileRefer);
-              } catch {}
+              } catch (err) {
+                console.warn('[ChatDoc] fileRefer JSON 解析失败:', err.message);
+              }
             }
           }
 
@@ -314,8 +257,8 @@ class ChatdocService {
             cleanup();
             resolve({ content: fullContent, fileRefer });
           }
-        } catch (e) {
-          // 跳过解析错误
+        } catch (err) {
+          console.warn('[ChatDoc] WebSocket 消息解析失败:', err.message);
         }
       });
 
@@ -398,14 +341,20 @@ class ChatdocService {
 
           if (result.status === 99 && result.fileRefer) {
             let fileRefer;
-            try { fileRefer = JSON.parse(result.fileRefer); } catch {}
+            try {
+              fileRefer = JSON.parse(result.fileRefer);
+            } catch (err) {
+              console.warn('[ChatDoc Stream] fileRefer JSON 解析失败:', err.message);
+            }
             yield { type: 'sources', fileRefer };
           } else if (result.content) {
             yield { type: 'content', content: result.content };
           }
 
           if (result.status === 2) break;
-        } catch {}
+        } catch (err) {
+          console.warn('[ChatDoc Stream] 消息解析失败:', err.message);
+        }
       }
     } finally {
       cleanup();

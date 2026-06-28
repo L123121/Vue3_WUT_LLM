@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue';
+import { computed, ref, onUnmounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useChatStore } from '../../stores/chat.store';
 import { useLanguageStore } from '../../stores/language.store';
@@ -17,6 +17,14 @@ const isExpanded = ref(true);
 const editingId = ref(null);
 const editingTitle = ref('');
 const searchQuery = ref('');
+
+// 每秒更新一次当前时间，驱动相对时间（如"刚刚"、"X分钟前"）自动刷新
+const now = ref(Date.now());
+let timer = null;
+if (typeof window !== 'undefined') {
+  timer = setInterval(() => { now.value = Date.now(); }, 60000);
+}
+onUnmounted(() => { if (timer) clearInterval(timer); });
 
 // 删除确认弹窗状态
 const showDeleteConfirm = ref(false);
@@ -94,8 +102,8 @@ const getMatchMeta = (conv) => {
 const visibleConversations = computed(() => chatStore.sortedConversations.filter((conv) => getMatchMeta(conv).matched));
 
 const formatTime = (date) => {
-  const now = new Date();
-  const diff = now.getTime() - new Date(date).getTime();
+  const current = now.value;
+  const diff = current - new Date(date).getTime();
   const minutes = Math.floor(diff / 60000);
   const hours = Math.floor(diff / 3600000);
   const days = Math.floor(diff / 86400000);

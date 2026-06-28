@@ -1,0 +1,282 @@
+[
+  {
+    "id": "q001",
+    "question": "武汉理工大学的校训是什么？",
+    "ground_truth": "武汉理工大学的校训是厚德博学、追求卓越。",
+    "category": "学校概况",
+    "relevant_doc_ids": ["TODO_FILL_DOC_ID"],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q002",
+    "question": "武汉理工大学有哪些校区？",
+    "ground_truth": "武汉理工大学有马房山校区、余家头校区和南湖校区三个校区。",
+    "category": "学校概况",
+    "relevant_doc_ids": ["TODO_FILL_DOC_ID"],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q003",
+    "question": "武汉理工大学是什么时候合并组建的？",
+    "ground_truth": "武汉理工大学于2000年5月27日由原武汉工业大学、武汉交通科技大学、武汉汽车工业大学合并组建。",
+    "category": "学校概况",
+    "relevant_doc_ids": ["TODO_FILL_DOC_ID"],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q004",
+    "question": "武汉理工大学的办学理念是什么？",
+    "ground_truth": "武汉理工大学坚持育人为本、学术至上的办学理念，致力于建成特色鲜明的世界一流大学。",
+    "category": "学校概况",
+    "relevant_doc_ids": ["TODO_FILL_DOC_ID"],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q005",
+    "question": "计算机科学与技术学院有哪些本科专业？",
+    "ground_truth": "计算机科学与技术学院设有计算机科学与技术、软件工程、物联网工程、数据科学与大数据技术等本科专业。",
+    "category": "计算机学院",
+    "relevant_doc_ids": ["TODO_FILL_DOC_ID"],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q006",
+    "question": "计算机学院的研究生有哪些方向？",
+    "ground_truth": "计算机学院研究生方向包括人工智能、大数据与云计算、网络与信息安全、软件工程理论与方法、计算机视觉与图像处理等。",
+    "category": "计算机学院",
+    "relevant_doc_ids": ["TODO_FILL_DOC_ID"],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q007",
+    "question": "计算机学院有哪些实验室？",
+    "ground_truth": "计算机学院设有智能与分布计算实验室、计算机视觉实验室、网络安全实验室、大数据与人工智能实验室等。",
+    "category": "计算机学院",
+    "relevant_doc_ids": ["TODO_FILL_DOC_ID"],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q008",
+    "question": "计算机学院的师资力量如何？",
+    "ground_truth": "计算机学院拥有一支高水平师资队伍，包括多名教授、副教授和博士生导师，在人工智能、大数据等领域有深厚的研究积累。",
+    "category": "计算机学院",
+    "relevant_doc_ids": ["TODO_FILL_DOC_ID"],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q009",
+    "question": "图书馆的开馆时间是什么？",
+    "ground_truth": "图书馆的开馆时间为周一至周日 7:00-22:30，考试周可能延长至23:00。",
+    "category": "图书馆",
+    "relevant_doc_ids": ["TODO_FILL_DOC_ID"],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q010",
+    "question": "图书馆借书最多能借多少本？借期多久？",
+    "ground_truth": "本科生最多可借20本，研究生最多可借30本。借期一般为30天，可续借一次，续借期30天。",
+    "category": "图书馆",
+    "relevant_doc_ids": ["TODO_FILL_DOC_ID"],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q011",
+    "question": "图书馆有哪些电子数据库资源？",
+    "ground_truth": "图书馆提供中国知网(CNKI)、万方数据、维普期刊、Web of Science、Elsevier ScienceDirect、IEEE Xplore等电子数据库资源。",
+    "category": "图书馆",
+    "relevant_doc_ids": ["TODO_FILL_DOC_ID"],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q012",
+    "question": "图书馆的自习室怎么预约？",
+    "ground_truth": "图书馆自习室可通过武汉理工大学图书馆微信公众号或校园APP进行预约，选择日期和时段后确认即可。",
+    "category": "图书馆",
+    "relevant_doc_ids": ["TODO_FILL_DOC_ID"],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q013",
+    "question": "逾期还书会有什么处罚？",
+    "ground_truth": "逾期还书会产生逾期罚款，一般为每册每天0.1元。严重逾期可能影响借阅权限。",
+    "category": "图书馆",
+    "relevant_doc_ids": ["TODO_FILL_DOC_ID"],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q014",
+    "question": "选课系统什么时候开放？",
+    "ground_truth": "选课系统一般在每学期第15-16周开放预选，开学第1-2周开放补退选。具体时间以教务处通知为准。",
+    "category": "教务相关",
+    "relevant_doc_ids": ["TODO_FILL_DOC_ID"],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q015",
+    "question": "如何申请缓考？",
+    "ground_truth": "申请缓考需在考试前提交缓考申请表，附相关证明材料（如医院证明），经学院审批后报教务处备案。",
+    "category": "教务相关",
+    "relevant_doc_ids": ["TODO_FILL_DOC_ID"],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q016",
+    "question": "毕业需要修满多少学分？",
+    "ground_truth": "不同专业的毕业学分要求不同，一般本科专业要求修满160-180学分，具体以各专业培养方案为准。",
+    "category": "教务相关",
+    "relevant_doc_ids": ["TODO_FILL_DOC_ID"],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q017",
+    "question": "GPA是怎么计算的？",
+    "ground_truth": "武汉理工大学采用4.0制GPA，计算公式为：GPA = Σ(课程绩点×课程学分) / Σ课程学分。90-100分对应4.0绩点。",
+    "category": "教务相关",
+    "relevant_doc_ids": ["TODO_FILL_DOC_ID"],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q018",
+    "question": "转专业的条件是什么？",
+    "ground_truth": "转专业一般要求大一第一学期成绩排名在本专业前30%，无挂科记录，通过接收学院的考核。具体条件以当年教务处通知为准。",
+    "category": "教务相关",
+    "relevant_doc_ids": ["TODO_FILL_DOC_ID"],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q019",
+    "question": "如何申请奖学金？",
+    "ground_truth": "奖学金申请一般在每学年9-10月进行，学生通过学工系统在线申请，经班级评议、学院审核、学校审批后公示发放。",
+    "category": "教务相关",
+    "relevant_doc_ids": ["TODO_FILL_DOC_ID"],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q020",
+    "question": "学校的国家级重点实验室有哪些？",
+    "ground_truth": "武汉理工大学拥有材料复合新技术国家重点实验室、硅酸盐建筑材料国家重点实验室等国家级科研平台。",
+    "category": "学校概况",
+    "relevant_doc_ids": ["TODO_FILL_DOC_ID"],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q021",
+    "question": "武汉理工大学的优势学科是什么？",
+    "ground_truth": "武汉理工大学的优势学科包括材料科学与工程、船舶与海洋工程、机械工程等，其中材料科学与工程是国家双一流建设学科。",
+    "category": "学校概况",
+    "relevant_doc_ids": ["TODO_FILL_DOC_ID"],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q022",
+    "question": "校园网络怎么连接？",
+    "ground_truth": "校园网络可通过有线或无线方式连接。无线网络名称为 WUT，使用学号和统一身份认证密码登录。有线网络需要在宿舍网口连接后认证。",
+    "category": "学校概况",
+    "relevant_doc_ids": ["TODO_FILL_DOC_ID"],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q023",
+    "question": "学校的创新创业政策有哪些？",
+    "ground_truth": "学校设有大学生创新创业训练计划(大创)、创新创业学院、孵化基地等平台，支持学生参加互联网+、挑战杯等竞赛，并提供创业指导和资金支持。",
+    "category": "学校概况",
+    "relevant_doc_ids": ["TODO_FILL_DOC_ID"],
+    "difficulty": "hard"
+  },
+  {
+    "id": "q024",
+    "question": "计算机学院的课程体系是怎样的？",
+    "ground_truth": "计算机学院课程体系包括公共基础课(高数、线代、概率论)、专业基础课(数据结构、操作系统、计算机网络)、专业课(人工智能、数据库、编译原理)和实践环节(课程设计、实习、毕业设计)。",
+    "category": "计算机学院",
+    "relevant_doc_ids": ["TODO_FILL_DOC_ID"],
+    "difficulty": "hard"
+  },
+  {
+    "id": "q025",
+    "question": "如何查找图书馆的电子期刊？",
+    "ground_truth": "可通过图书馆主页的数据库导航进入中国知网、万方等数据库搜索期刊，也可使用图书馆的统一检索平台一站式搜索。",
+    "category": "图书馆",
+    "relevant_doc_ids": ["TODO_FILL_DOC_ID"],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q026",
+    "question": "考试成绩在哪里查询？",
+    "ground_truth": "考试成绩可通过武汉理工大学教务管理系统查询，登录后在成绩查询页面选择学期查看。也可通过校园APP查询。",
+    "category": "教务相关",
+    "relevant_doc_ids": ["TODO_FILL_DOC_ID"],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q027",
+    "question": "辅修和双学位有什么区别？",
+    "ground_truth": "辅修是在主修专业之外修读另一个专业的核心课程，获得辅修证书；双学位要求修读另一个专业的全部课程并完成毕业论文，获得第二学士学位证书。双学位要求更高、学分更多。",
+    "category": "教务相关",
+    "relevant_doc_ids": ["TODO_FILL_DOC_ID"],
+    "difficulty": "hard"
+  },
+  {
+    "id": "q028",
+    "question": "学校的国际交流项目有哪些？",
+    "ground_truth": "学校与多个国家的高校有合作交流项目，包括2+2联合培养、学期交换、暑期项目、短期访学等。具体项目信息可关注国际交流与合作处网站。",
+    "category": "学校概况",
+    "relevant_doc_ids": ["TODO_FILL_DOC_ID"],
+    "difficulty": "hard"
+  },
+  {
+    "id": "q029",
+    "question": "计算机学院的学生可以参加哪些竞赛？",
+    "ground_truth": "计算机学院学生可参加ACM程序设计竞赛、蓝桥杯、数学建模竞赛、互联网+创新创业大赛、CTF网络安全竞赛、黑客马拉松等。",
+    "category": "计算机学院",
+    "relevant_doc_ids": ["TODO_FILL_DOC_ID"],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q030",
+    "question": "图书馆的馆际互借怎么办理？",
+    "ground_truth": "馆际互借可通过图书馆主页的馆际互借平台申请，填写所需文献信息，图书馆会通过CALIS等渠道从其他高校图书馆借阅。一般需要3-7个工作日。",
+    "category": "图书馆",
+    "relevant_doc_ids": ["TODO_FILL_DOC_ID"],
+    "difficulty": "hard"
+  },
+  {
+    "id": "q031",
+    "question": "新生入学需要办理哪些手续？",
+    "ground_truth": "新生入学需要办理报到注册、领取校园卡、办理住宿、缴纳学费、参加入学教育、体检、领取教材等手续。具体流程以录取通知书附带的入学指南为准。",
+    "category": "学校概况",
+    "relevant_doc_ids": ["TODO_FILL_DOC_ID"],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q032",
+    "question": "如何申请休学？",
+    "ground_truth": "申请休学需填写休学申请表，附相关证明材料（如医院诊断证明），经家长签字、学院审批后报教务处批准。休学一般以一年为期。",
+    "category": "教务相关",
+    "relevant_doc_ids": ["TODO_FILL_DOC_ID"],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q033",
+    "question": "计算机学院的就业情况如何？",
+    "ground_truth": "计算机学院就业率保持在95%以上，毕业生主要去向包括互联网大厂(华为、腾讯、阿里等)、考研深造、国企和公务员等。",
+    "category": "计算机学院",
+    "relevant_doc_ids": ["TODO_FILL_DOC_ID"],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q034",
+    "question": "学校食堂的营业时间是什么？",
+    "ground_truth": "学校食堂一般早餐6:30-9:00，午餐11:00-13:00，晚餐17:00-19:30。部分食堂提供夜宵至21:00。具体时间以各食堂公告为准。",
+    "category": "学校概况",
+    "relevant_doc_ids": ["TODO_FILL_DOC_ID"],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q035",
+    "question": "材料科学与工程专业和计算机科学与技术专业的培养方案有什么区别？",
+    "ground_truth": "材料科学与工程专业侧重物理、化学基础和材料制备加工技术，核心课程包括材料科学基础、材料力学等；计算机科学与技术专业侧重数学基础和编程能力，核心课程包括数据结构、算法设计等。两个专业的毕业学分要求和实践环节也有所不同。",
+    "category": "综合",
+    "relevant_doc_ids": ["TODO_FILL_DOC_ID", "TODO_FILL_DOC_ID_2"],
+    "difficulty": "hard"
+  }
+]

@@ -1,7 +1,8 @@
 "use strict";
 
-const https = require('https');
 const config = require('../config');
+const { request, requestStream } = require('../utils/httpClient');
+const { metrics } = require('./metrics.service');
 
 /**
  * AI 服务
@@ -38,7 +39,15 @@ class AiService {
   }
 
   _buildOptions(path, method = 'POST') {
-    const fullUrl = this.baseUrl + path;
+    // 如果 baseUrl 已包含版本前缀（如 /v1），从请求路径中剥离版本号
+    // StepFun: baseUrl=https://api.stepfun.com/v1, path=/v2/chat/completions → /chat/completions
+    // iFlytek: baseUrl=https://maas-api...com, path=/v2/chat/completions → /v2/chat/completions
+    let finalPath = path;
+    const baseHasVersion = this.baseUrl.match(/\/v\d+$/);
+    if (baseHasVersion) {
+      finalPath = path.replace(/^\/v\d+/, '');
+    }
+    const fullUrl = this.baseUrl + finalPath;
     const urlObj = new URL(fullUrl);
     return {
       hostname: urlObj.hostname,
@@ -86,48 +95,30 @@ class AiService {
 
     console.log(`[AI] ${options.hostname}${options.path} model=${this.model} bodyLen=${body.length}`);
 
-    return new Promise((resolve) => {
-      const req = https.request(options, (res) => {
-        let data = '';
-        res.on('data', chunk => { data += chunk; });
-        res.on('end', () => {
-          if (res.statusCode !== 200) {
-            console.error(`[AI] ${res.statusCode}: ${data.substring(0, 200)}`);
-            return resolve({ content: this.getMockResponse(message), isMock: true });
-          }
-          try {
-            const json = JSON.parse(data);
-            let content = '';
-            if (this.anthropicMode) {
-              content = json.content?.[0]?.text || '';
-            } else {
-              content = json.choices?.[0]?.message?.content || '';
-            }
-            if (content) {
-              console.log(`[AI] 响应 ${content.length} 字符`);
-              resolve({ content, isMock: false });
-            } else {
-              console.warn('[AI] 空响应:', JSON.stringify(json).substring(0, 200));
-              resolve({ content: this.getMockResponse(message), isMock: true });
-            }
-          } catch (e) {
-            console.error('[AI] 解析失败:', e.message);
-            resolve({ content: this.getMockResponse(message), isMock: true });
-          }
-        });
-      });
-      req.on('error', (err) => {
-        console.error('[AI] 请求错误:', err.message);
-        resolve({ content: this.getMockResponse(message), isMock: true });
-      });
-      req.on('timeout', () => {
-        console.error('[AI] 请求超时');
-        req.destroy();
-        resolve({ content: this.getMockResponse(message), isMock: true });
-      });
-      req.write(body);
-      req.end();
-    });
+    try {
+      const startTime = Date.now();
+      const result = await request(options, body);
+      const latency = Date.now() - startTime;
+      metrics.recordLatency('ai', latency);
+
+      let content = '';
+      if (this.anthropicMode) {
+        content = result.data?.content?.[0]?.text || '';
+      } else {
+        content = result.data?.choices?.[0]?.message?.content || '';
+      }
+
+      if (content) {
+        console.log(`[AI] 响应 ${content.length} 字符`);
+        return { content, isMock: false };
+      } else {
+        console.warn('[AI] 空响应:', JSON.stringify(result.data).substring(0, 200));
+        return { content: this.getMockResponse(message), isMock: true };
+      }
+    } catch (err) {
+      console.error(`[AI] 请求失败: ${err.message}`);
+      return { content: this.getMockResponse(message), isMock: true };
+    }
   }
 
   // ========== 流式 ==========
@@ -146,20 +137,15 @@ class AiService {
     const options = this._buildOptions(path);
     options.headers['Content-Length'] = Buffer.byteLength(body, 'utf8');
 
+    const streamStart = Date.now();
     console.log(`[AI 流式] ${options.hostname}${options.path} model=${this.model} bodyLen=${body.length}`);
 
     let res;
     try {
-      res = await new Promise((resolve, reject) => {
-        const req = https.request(options, r => resolve(r));
-        req.on('error', reject);
-        req.on('timeout', () => { req.destroy(); reject(new Error('Timeout')); });
-        req.write(body);
-        req.end();
-      });
+      res = await requestStream(options, body);
     } catch (err) {
-      console.error('[AI 流式] 失败:', err.message);
-      yield { content: `[${err.message}]`, done: false };
+      console.error('[AI 流式] 连接失败:', err.message);
+      yield { content: `[连接失败: ${err.message}]`, done: false };
       yield { content: '', done: true };
       return;
     }
@@ -174,6 +160,9 @@ class AiService {
     }
 
     yield* this._parseStream(res);
+
+    // 流式结束后记录总延迟
+    metrics.recordLatency('ai', Date.now() - streamStart);
   }
 
   async *_parseStream(res) {
@@ -200,7 +189,9 @@ class AiService {
           }
           if (content) yield { content, done: false };
           if (done) { yield { content: '', done: true }; return; }
-        } catch { /* skip */ }
+        } catch (err) {
+          console.warn('[AI 流式] SSE 解析失败:', err.message);
+        }
       }
     }
     yield { content: '', done: true };
@@ -211,4 +202,7 @@ class AiService {
   }
 }
 
-module.exports = { AiService };
+// 单例实例：全项目共享一个 AiService，复用配置和连接
+const aiService = new AiService();
+
+module.exports = { AiService, aiService, metrics };

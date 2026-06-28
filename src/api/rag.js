@@ -2,7 +2,7 @@
  * RAG 知识库 API
  */
 
-import { apiGet, apiPost, apiDelete, getAuthHeaders } from './client.js';
+import { apiGet, apiPost, apiDelete } from './client.js';
 
 const API_URL = '/api/rag';
 
@@ -36,12 +36,9 @@ export const uploadFile = async (file, category = 'general', title = '') => {
   formData.append('category', category);
   if (title) formData.append('title', title);
 
-  const token = localStorage.getItem('token');
   const response = await fetch(`${API_URL}/documents/upload`, {
     method: 'POST',
-    headers: {
-      ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-    },
+    headers: {},
     body: formData
   });
   return response.json();

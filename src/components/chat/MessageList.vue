@@ -100,9 +100,14 @@ watch(() => props.messages.length, () => {
 watch(() => {
   if (props.currentStreamingId) {
     const msg = props.messages.find((item) => item.id === props.currentStreamingId);
-    return msg?.text.length || 0;
+    return [
+      msg?.text?.length || 0,
+      msg?.toolCalls?.length || 0,
+      msg?.thinkingSteps?.length || 0,
+      msg?.sources?.length || 0,
+    ];
   }
-  return 0;
+  return [0, 0, 0, 0];
 }, () => {
   scrollToBottom();
 });
@@ -123,7 +128,8 @@ defineExpose({ scrollToBottom, shouldAutoScroll });
     <div
       v-if="messages.length > 0"
       ref="scrollerRef"
-      class="flex-1 min-h-0 overflow-y-auto p-4 scroll-smooth"
+      class="flex-1 min-h-0 overflow-y-auto p-4"
+      style="scroll-behavior: auto;"
       @scroll="handleScroll"
       @wheel="handleScrollStart"
       @touchmove="handleScrollStart"
@@ -132,7 +138,7 @@ defineExpose({ scrollToBottom, shouldAutoScroll });
     >
       <TransitionGroup name="msg" tag="div">
         <div v-for="(msg, index) in messages" :key="msg.id"
-          v-memo="[msg.text, msg.isError, msg.sources, msg.canRetry, msg.id === currentStreamingId]"
+          v-memo="[msg.text, msg.isError, msg.sources, msg.canRetry, msg.toolCalls?.length, msg.thinkingSteps?.length, msg.id === currentStreamingId]"
           class="mb-4">
           <LazyMessage v-if="shouldLazyLoad(index)" root-margin="400px">
             <MessageBubble :message="msg" @copy="handleCopy" />
@@ -177,15 +183,15 @@ defineExpose({ scrollToBottom, shouldAutoScroll });
       <p class="text-sm">{{ languageStore.t('chat.empty') }}</p>
     </div>
 
-    <!-- Thinking indicator -->
-    <div v-if="isLoading && !currentStreamingId" class="flex justify-start px-4 pb-4">
+    <!-- Sending / Thinking indicator -->
+    <div v-if="isLoading && messages.length > 0" class="flex justify-start px-4 pb-4">
       <div class="flex items-center ml-10 bg-white dark:bg-gray-800 px-4 py-3 rounded-2xl rounded-tl-none border border-slate-100 dark:border-gray-700 shadow-sm">
         <div class="flex items-center gap-1 mr-2">
           <span class="w-1.5 h-1.5 rounded-full bg-blue-500 animate-bounce" style="animation-delay: 0s"></span>
           <span class="w-1.5 h-1.5 rounded-full bg-blue-500 animate-bounce" style="animation-delay: 0.15s"></span>
           <span class="w-1.5 h-1.5 rounded-full bg-blue-500 animate-bounce" style="animation-delay: 0.3s"></span>
         </div>
-        <span class="text-xs text-slate-500 dark:text-gray-400">{{ languageStore.t('chat.thinking') }}</span>
+        <span class="text-xs text-slate-500 dark:text-gray-400">{{ currentStreamingId ? '正在输入...' : '思考中...' }}</span>
       </div>
     </div>
 
