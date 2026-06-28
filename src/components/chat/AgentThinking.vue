@@ -5,16 +5,24 @@ import { Brain, Loader2, Check } from 'lucide-vue-next';
 const props = defineProps({
   step: { type: Object, default: null },
   hasReply: { type: Boolean, default: false },
+  timeline: { type: Array, default: () => [] },
+});
+
+// 动态判断是否是 timeline 中最后一条（而非依赖静态 isLast）
+const isLast = computed(() => {
+  if (!props.timeline.length) return props.step?.isLast ?? true;
+  return props.timeline[props.timeline.length - 1] === props.step ||
+    props.timeline[props.timeline.length - 1]?.id === props.step?.id;
 });
 
 // 加载中：是最后一个事件、是"整理结果/分析"类步骤、且 AI 还没回复
 const isLoading = computed(() =>
-  props.step?.isLast && !props.hasReply
+  isLast.value && !props.hasReply
   && (props.step?.content?.includes('整理结果') || props.step?.content?.includes('分析'))
 );
 
 const isCompleted = computed(() =>
-  !props.step?.isLast || props.hasReply
+  !isLast.value || props.hasReply
 );
 </script>
 
@@ -38,7 +46,7 @@ const isCompleted = computed(() =>
       />
     </span>
 
-    <!-- 内容（与 AgentToolCall 保持相同结构确保对齐） -->
+    <!-- 内容 -->
     <span
       class="flex items-center gap-1.5 text-[11px] leading-relaxed flex-1 min-w-0 border rounded-lg px-2.5 py-1.5"
       :class="isCompleted
@@ -64,6 +72,6 @@ const isCompleted = computed(() =>
 }
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
+  to { opacity: 1; transform: translateY(4px); }
 }
 </style>

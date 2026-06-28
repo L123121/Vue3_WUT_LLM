@@ -156,7 +156,7 @@ const timeClasses = computed(() => {
         <!-- Agent 时间线（思考 + 工具调用按顺序混排，放在回答上方） -->
         <div v-if="hasAgentData && isModel" class="mb-3 space-y-1.5">
           <template v-for="event in timeline" :key="event.id">
-            <AgentThinking v-if="event.type === 'thinking'" :step="event" :has-reply="!!messageText" />
+            <AgentThinking v-if="event.type === 'thinking'" :step="event" :has-reply="!!messageText" :timeline="timeline" />
             <AgentToolCall v-if="event.type === 'tool'" :tool-call="event" />
           </template>
         </div>
