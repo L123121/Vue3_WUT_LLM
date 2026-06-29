@@ -42,7 +42,7 @@ const ROUTE_MAP = {
   [INTENT_TYPES.COURSE_FEASIBILITY]: { route: 'react', tool: null },
   [INTENT_TYPES.GRADE_ANALYSIS]:   { route: 'analysis', tool: null },
   [INTENT_TYPES.KNOWLEDGE_QUERY]:  { route: 'knowledge', tool: 'search_knowledge_base' },
-  [INTENT_TYPES.GENERAL_CHAT]:     { route: 'chat', tool: null },
+  [INTENT_TYPES.GENERAL_CHAT]:     { route: 'agent', tool: null },
 };
 
 /**

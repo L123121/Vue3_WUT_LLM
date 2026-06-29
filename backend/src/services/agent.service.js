@@ -3,21 +3,21 @@
 const { AiService } = require('./ai.service');
 const { IntentRouter } = require('./intent-router.service');
 const { ReactPlanner, REACT_STEPS } = require('./react-planner.service');
+const { ReactAgent } = require('./react-agent.service');
 const { analysisService } = require('./analysis.service');
 const { request } = require('../utils/httpClient');
 const { handleSimple, handleKnowledge, handleChat } = require('./agent-handlers');
+const { toolRegistry } = require('./agent-tools');
 
 /**
  * AgentService — 意图路由 + 多路径处理引擎
  *
- * 对应架构图中的核心枢纽：
- *   "用户提问 → NLU意图识别 → 任务路由 → 不同处理路径 → LLM润色 → 回复用户"
- *
  * 处理路径：
- *   simple      → 单轮工具调用（查成绩、查课表、查考试）
+ *   simple      → 单轮工具调用（查成绩、查课表、查考试）— 快速路径
  *   react       → ReAct 多步循环（选课可行性分析 + 提前短路）
  *   analysis    → 取数 + LLM 分析（成绩趋势分析）
  *   knowledge   → 知识库检索（校园百科）
+ *   agent       → 通用 ReAct Agent 循环（LLM 自主选择工具 + 多步推理）
  *   chat        → 普通对话
  */
 
@@ -26,6 +26,7 @@ class AgentService {
     this.aiService = aiService || new AiService();
     this.intentRouter = new IntentRouter(aiService);
     this.reactPlanner = new ReactPlanner(aiService);
+    this.reactAgent = new ReactAgent(aiService, toolRegistry);
     this.analysisService = analysisService;
     this.memoryService = null; // 由 app.js 注入
   }
@@ -54,7 +55,7 @@ class AgentService {
    */
   async *chatStream(message, history = [], options = {}) {
     const startTime = Date.now();
-    const TOTAL_TIMEOUT = 60000;
+    const TOTAL_TIMEOUT = 120000; // 延长到 2 分钟（ReAct 可能多步调用）
     const userId = options.userId || null;
     const skillPrompt = options.skillPrompt || '';
     const files = options.files || [];
@@ -95,9 +96,12 @@ class AgentService {
     try {
       switch (routing.route) {
         case 'simple':
+          // 已知的单工具查询 → 快速执行
           yield* handleSimple(message, history, routing, userId, skillPrompt, ctx);
           break;
+
         case 'react':
+          // 选课可行性（现有硬编码 ReAct）
           try {
             yield* this.reactPlanner.analyzeCourseFeasibility(message, userId);
           } catch (err) {
@@ -106,7 +110,9 @@ class AgentService {
             yield* handleSimple(message, history, fallbackRouting, userId, skillPrompt, ctx);
           }
           break;
+
         case 'analysis':
+          // 成绩趋势分析（现有）
           try {
             yield* this.analysisService.analyzeGradeTrend(userId);
           } catch (err) {
@@ -115,12 +121,37 @@ class AgentService {
             yield* handleSimple(message, history, fallbackRouting, userId, skillPrompt, ctx);
           }
           break;
+
         case 'knowledge':
+          // 知识库检索（现有）
           yield* handleKnowledge(message, history, routing, userId, skillPrompt, ctx);
           break;
+
+        case 'agent':
+          // 通用 ReAct Agent — LLM 自主规划工具调用
+          console.log('[Agent] 使用 ReAct Agent 路径');
+          yield* this.reactAgent.execute(message, history, {
+            userId,
+            memoryContext,
+            skillPrompt,
+          });
+          break;
+
         case 'chat':
         default:
-          yield* handleChat(message, history, userId, skillPrompt, memoryContext, ctx, files);
+          // 普通对话 — 接入 ReAct Agent，让 LLM 决定是否需要工具
+          // 如果 AI 服务可用且有工具，用 Agent，否则用纯聊天
+          if (this.aiService.apiKey && toolRegistry.getToolSchemas().length > 0) {
+            console.log('[Agent] chat 路径 → ReAct Agent（带工具能力）');
+            yield* this.reactAgent.execute(message, history, {
+              userId,
+              memoryContext,
+              skillPrompt,
+            });
+          } else {
+            console.log('[Agent] 使用纯对话路径');
+            yield* handleChat(message, history, userId, skillPrompt, memoryContext, ctx, files);
+          }
           break;
       }
     } catch (err) {
@@ -130,7 +161,10 @@ class AgentService {
     }
 
     if (Date.now() - startTime > TOTAL_TIMEOUT) {
-      console.warn('[Agent] 总处理超时(60s)');
+      console.warn('[Agent] 总处理超时');
+    } else {
+      // 提取对话摘要保存到记忆
+      // 注意：实际保存由各 handler 内部完成
     }
   }
 
