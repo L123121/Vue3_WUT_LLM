@@ -4,6 +4,7 @@ const { AiService } = require('./ai.service');
 const { IntentRouter } = require('./intent-router.service');
 const { ReactPlanner, REACT_STEPS } = require('./react-planner.service');
 const { ReactAgent } = require('./react-agent.service');
+const { WorkingMemory } = require('./working-memory.service');
 const { analysisService } = require('./analysis.service');
 const { request } = require('../utils/httpClient');
 const { handleSimple, handleKnowledge, handleChat } = require('./agent-handlers');
@@ -29,6 +30,8 @@ class AgentService {
     this.reactAgent = new ReactAgent(aiService, toolRegistry);
     this.analysisService = analysisService;
     this.memoryService = null; // 由 app.js 注入
+    /** @type {Map<string, WorkingMemory>} */
+    this.workingMemories = new Map(); // conversationId → WorkingMemory
   }
 
   /**
@@ -57,6 +60,7 @@ class AgentService {
     const startTime = Date.now();
     const TOTAL_TIMEOUT = 120000; // 延长到 2 分钟（ReAct 可能多步调用）
     const userId = options.userId || null;
+    const conversationId = options.conversationId || null;
     const skillPrompt = options.skillPrompt || '';
     const files = options.files || [];
     const ctx = this._buildHandlerCtx();
@@ -134,6 +138,8 @@ class AgentService {
             userId,
             memoryContext,
             skillPrompt,
+            conversationId,
+            workingMemory: this._getWorkingMemory(conversationId),
           });
           break;
 
@@ -147,6 +153,8 @@ class AgentService {
               userId,
               memoryContext,
               skillPrompt,
+              conversationId,
+              workingMemory: this._getWorkingMemory(conversationId),
             });
           } else {
             console.log('[Agent] 使用纯对话路径');
@@ -324,6 +332,18 @@ class AgentService {
 
   _genId() {
     return `tc_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+  }
+
+  /**
+   * 获取或创建会话的工作记忆
+   * 同一个 conversationId 共享 WorkingMemory，实现跨轮引用
+   */
+  _getWorkingMemory(conversationId) {
+    if (!conversationId) return null;
+    if (!this.workingMemories.has(conversationId)) {
+      this.workingMemories.set(conversationId, new WorkingMemory({ conversationId }));
+    }
+    return this.workingMemories.get(conversationId);
   }
 }
 

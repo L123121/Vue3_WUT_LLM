@@ -1,5 +1,7 @@
 "use strict";
 
+const { WorkingMemory } = require('./working-memory.service');
+
 /**
  * ReactAgent — 通用 ReAct 循环执行器
  *
@@ -10,6 +12,10 @@
  * 2. LLM 自主决定何时调用工具、调用哪个工具、传入什么参数
  * 3. 工具执行结果返回给 LLM，LLM 再决定下一步
  * 4. 直到 LLM 直接给出文本回答（不再调用工具）为止
+ *
+ * 工作记忆（WorkingMemory）：
+ *   所有工具调用结果以结构化 JSON 记录，在后续步骤中 LLM 可通过
+ *   _write_note 工具写入中间结论，buildContext() 自动摘要旧记录。
  *
  * 能力：
  * - 动态工具选择（不依赖硬编码的 intent→tool 映射）
@@ -42,21 +48,46 @@ class ReactAgent {
    * @param {Object} context - 上下文 { userId, memoryContext, skillPrompt }
    */
   async *execute(message, history = [], context = {}) {
-    const { userId, memoryContext, skillPrompt } = context;
+    const { userId, memoryContext, skillPrompt, workingMemory, conversationId } = context;
     const startTime = Date.now();
     const TOTAL_TIMEOUT = 120000; // 整个 ReAct 循环最多 2 分钟
 
-    // 1. 获取可用的工具 schema（OpenAI function calling 格式）
-    const tools = this.toolRegistry.getToolSchemas();
+    // 初始化/获取工作记忆
+    /** @type {WorkingMemory} */
+    const wm = workingMemory || new WorkingMemory({ userId, conversationId });
+    wm.startTurn();
+    // 记录用户消息
+    wm.writeNote(message, '用户问题');
 
-    if (!tools || tools.length === 0) {
-      console.warn('[ReactAgent] 没有可用的工具，跳过 ReAct 循环');
-      yield* this._streamContent('抱歉，当前没有可用工具来处理您的请求。');
-      return;
-    }
+    // 1. 获取可用的工具 schema 并注入工作记忆工具
+    const tools = this.toolRegistry.getToolSchemas() || [];
+    // 注入 _write_note 元工具（让 LLM 可以写中间笔记到工作记忆）
+    tools.push({
+      type: 'function',
+      function: {
+        name: '_write_note',
+        description: '将推理过程中的中间结论、分析、或重要发现写入工作记忆，供后续步骤引用。当你需要记录阶段性分析结果时使用。',
+        parameters: {
+          type: 'object',
+          properties: {
+            note: {
+              type: 'string',
+              description: '笔记内容：你的中间分析结论、观察到的重要信息、或下一步计划'
+            },
+            label: {
+              type: 'string',
+              description: '笔记标签，如"初步分析"、"中间结论"、"待验证"',
+              enum: ['初步分析', '中间结论', '待验证', '最终结论', '观察']
+            }
+          },
+          required: ['note']
+        }
+      }
+    });
 
-    // 2. 构建系统提示词
-    const systemPrompt = this._buildSystemPrompt(memoryContext, skillPrompt);
+    // 2. 构建系统提示词（含工作记忆）
+    const wmContext = wm.buildContext();
+    const systemPrompt = this._buildSystemPrompt(memoryContext, skillPrompt, wmContext);
 
     console.log(`[ReactAgent] 系统提示词 ${systemPrompt.length} 字符，${tools.length} 个工具可用`);
 
@@ -76,6 +107,8 @@ class ReactAgent {
 
       // 总超时检查
       if (Date.now() - startTime > TOTAL_TIMEOUT) {
+        wm.writeNote('处理超时');
+        wm.endTurn();
         yield* this._streamContent('处理超时，请简化您的问题或分步提问。');
         return;
       }
@@ -91,6 +124,8 @@ class ReactAgent {
         const response = await this._callLLMWithTools(messages, tools);
 
         if (!response) {
+          wm.writeNote('LLM 无响应', '待验证');
+          wm.endTurn();
           yield* this._streamContent('AI 服务暂时无响应，请稍后重试。');
           return;
         }
@@ -112,14 +147,40 @@ class ReactAgent {
             }
 
             // 产出 tool_call 事件（前端展示）
+            const toolCallId = tc.id || this._genId();
             const toolCallEvent = {
-              id: tc.id || this._genId(),
+              id: toolCallId,
               name,
               arguments: fn.arguments || '{}',
             };
             yield { type: 'tool_call', tool_call: toolCallEvent };
 
-            // 执行工具
+            // ---- 特殊工具：_write_note（LLM 写工作笔记） ----
+            if (name === '_write_note') {
+              const noteContent = args.content || args.note || JSON.stringify(args);
+              wm.writeNote(noteContent, args.label || '');
+              const toolResultEvent = {
+                id: toolCallId,
+                name,
+                content: '笔记已保存',
+                status: 'done',
+              };
+              yield { type: 'tool_result', tool_result: toolResultEvent };
+
+              messages.push({
+                role: 'assistant',
+                content: null,
+                tool_calls: [this._formatToolCall(tc)],
+              });
+              messages.push({
+                role: 'tool',
+                tool_call_id: toolCallId,
+                content: '笔记已保存（工作记忆）',
+              });
+              continue; // 不计数为工具调用
+            }
+
+            // ---- 正常工具执行 ----
             console.log(`[ReactAgent] 执行工具: ${name}, 参数: ${JSON.stringify(args)}`);
             let result = '';
             try {
@@ -130,9 +191,12 @@ class ReactAgent {
               result = `工具执行出错: ${err.message}`;
             }
 
+            // 记录到工作记忆
+            wm.recordStep(name, args, result);
+
             // 产出 tool_result 事件（前端展示）
             const toolResultEvent = {
-              id: toolCallEvent.id,
+              id: toolCallId,
               name,
               content: result,
               status: 'done',
@@ -149,35 +213,35 @@ class ReactAgent {
             // 将工具结果加入历史（tool 角色）
             messages.push({
               role: 'tool',
-              tool_call_id: tc.id || toolCallEvent.id,
+              tool_call_id: toolCallId,
               content: typeof result === 'string' ? result : JSON.stringify(result),
             });
           }
         } else {
           // LLM 直接回复文本 → 这是最终答案，分块流式输出
           const content = response.content || '抱歉，我没有理解您的问题。';
+          wm.writeNote(content.substring(0, 500), '最终回答');
           yield* this._streamContent(content);
 
-          // 记录工具使用情况（用于未来路由优化）
-          if (hasUsedTool) {
-            console.log(`[ReactAgent] 完成，共 ${iteration} 步推理`);
-          }
-
+          wm.endTurn();
+          console.log(`[ReactAgent] 完成，共 ${iteration} 步推理，${wm.currentTurn?.steps.length || 0} 步工具调用`);
           return;
         }
       } catch (err) {
         console.error(`[ReactAgent] 第 ${iteration} 步出错:`, err.message);
-        // 如果已经成功使用过工具，提供部分结果
         if (hasUsedTool) {
           yield* this._streamContent(`分析过程中遇到问题：${err.message}。以上是已获取到的信息。`);
         } else {
           yield* this._streamContent(`处理您的请求时出错：${err.message}，请稍后重试。`);
         }
+        wm.endTurn();
         return;
       }
     }
 
     // 达到最大迭代次数
+    wm.writeNote('已达到最大推理步数限制', '待验证');
+    wm.endTurn();
     yield* this._streamContent('您的问题涉及较多步骤，无法在当前限制内完成。请尝试将问题拆解后分步提问，或简化您的问题。');
   }
 
@@ -252,7 +316,7 @@ class ReactAgent {
 
   // ==================== 系统提示词 ====================
 
-  _buildSystemPrompt(memoryContext, skillPrompt) {
+  _buildSystemPrompt(memoryContext, skillPrompt, wmContext) {
     const now = new Date();
     const dateStr = now.toLocaleDateString('zh-CN', {
       year: 'numeric', month: 'long', day: 'numeric', weekday: 'long',
@@ -280,11 +344,17 @@ class ReactAgent {
       '- 一次调用一个工具，等结果回来后决定下一步',
       '- 同时调用多个相互独立的工具（并行执行）',
       '- 根据工具返回的结果，调整策略或调用其他工具',
+      '- 使用 _write_note 工具记录中间分析结论到工作记忆',
       '',
       '工具执行完成后：',
       '- 如果信息足够回答用户问题，直接给出最终答案（不要继续调用工具）',
       '- 如果还需要更多数据，继续调用合适的工具',
       '- 如果工具返回了错误，尝试换个方式或告知用户',
+      '',
+      '## 工作记忆',
+      '你有工作记忆（Working Memory），可以记录和引用之前的工具调用结果。',
+      '_write_note 工具可用来记录中间分析结论，这些笔记会在后续步骤中保留。',
+      '你可以引用之前步骤的结果，如"上一步查到的成绩数据显示..."。',
       '',
       '## 回答格式',
       '- 好的回答应该结构清晰、信息完整',
@@ -296,6 +366,10 @@ class ReactAgent {
     if (memoryContext) {
       parts.push(`\n## 对话上下文与记忆\n以下是关于这个用户我记住的信息：\n${memoryContext}\n`);
       parts.push('注意：这些记忆来源于历史对话，可能不准确。以用户当前的问题为准。');
+    }
+
+    if (wmContext) {
+      parts.push(`\n## 当前对话的工作记忆\n${wmContext}\n`);
     }
 
     if (skillPrompt) {
