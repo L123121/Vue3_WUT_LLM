@@ -26,12 +26,25 @@ const { WorkingMemory } = require('./working-memory.service');
 
 const { request } = require('../utils/httpClient');
 
+// 工具结果截断常量（防止上下文窗口溢出）
+const MAX_TOOL_RESULT_LENGTH = 3000;
+const HISTORY_WINDOW = 20;
+
 class ReactAgent {
   constructor(aiService, toolRegistry) {
     this.aiService = aiService;
     this.toolRegistry = toolRegistry;
     this.maxIterations = 10;
     this.conversationIdCounter = 0;
+  }
+
+  /**
+   * 截断工具结果，保留关键信息但防止 context window 溢出
+   */
+  _truncateResult(content, maxLen = MAX_TOOL_RESULT_LENGTH) {
+    if (!content || typeof content !== 'string') return content;
+    if (content.length <= maxLen) return content;
+    return content.substring(0, maxLen) + `\n\n...（结果过长，已截断至 ${maxLen} 字符，完整数据已保存在工作记忆中）`;
   }
 
   /**
@@ -45,12 +58,21 @@ class ReactAgent {
    *
    * @param {string} message - 用户消息
    * @param {Array} history - 对话历史 [{role, content}]
-   * @param {Object} context - 上下文 { userId, memoryContext, skillPrompt }
+   * @param {Object} context - 上下文 { userId, memoryContext, skillPrompt, signal }
    */
   async *execute(message, history = [], context = {}) {
-    const { userId, memoryContext, skillPrompt, workingMemory, conversationId } = context;
+    const { userId, memoryContext, skillPrompt, workingMemory, conversationId, signal } = context;
     const startTime = Date.now();
     const TOTAL_TIMEOUT = 120000; // 整个 ReAct 循环最多 2 分钟
+
+    // 快速检查是否已断开
+    const checkAborted = () => {
+      if (signal && signal.aborted) {
+        console.log('[ReactAgent] 客户端已断开，终止 ReAct 循环');
+        return true;
+      }
+      return false;
+    };
 
     // 初始化/获取工作记忆
     /** @type {WorkingMemory} */
@@ -105,6 +127,13 @@ class ReactAgent {
     while (iteration < this.maxIterations) {
       iteration++;
 
+      // 客户端断开检查
+      if (checkAborted()) {
+        wm.writeNote('客户端已断开');
+        wm.endTurn();
+        return;
+      }
+
       // 总超时检查
       if (Date.now() - startTime > TOTAL_TIMEOUT) {
         wm.writeNote('处理超时');
@@ -123,6 +152,12 @@ class ReactAgent {
         // 调用 LLM（携带工具描述）
         const response = await this._callLLMWithTools(messages, tools);
 
+        // LLM 返回后检查断开信号（调用可能花了较长时间）
+        if (checkAborted()) {
+          wm.endTurn();
+          return;
+        }
+
         if (!response) {
           wm.writeNote('LLM 无响应', '待验证');
           wm.endTurn();
@@ -134,87 +169,88 @@ class ReactAgent {
         if (response.tool_calls && response.tool_calls.length > 0) {
           hasUsedTool = true;
 
-          for (const tc of response.tool_calls) {
+          // Step 1: 解析所有工具调用
+          const parsedCalls = response.tool_calls.map(tc => {
             const fn = tc.function || {};
             const name = fn.name || '';
             let args = {};
-
             try {
               args = fn.arguments ? JSON.parse(fn.arguments) : {};
             } catch (e) {
               console.warn(`[ReactAgent] 工具参数解析失败: ${fn.arguments}`);
               args = {};
             }
+            return { tc, name, args, id: tc.id || this._genId() };
+          });
 
-            // 产出 tool_call 事件（前端展示）
-            const toolCallId = tc.id || this._genId();
-            const toolCallEvent = {
-              id: toolCallId,
-              name,
-              arguments: fn.arguments || '{}',
-            };
-            yield { type: 'tool_call', tool_call: toolCallEvent };
+          // Step 2: 分离 _write_note（元工具）与普通工具
+          const notes = parsedCalls.filter(c => c.name === '_write_note');
+          const tools_calls = parsedCalls.filter(c => c.name !== '_write_note');
 
-            // ---- 特殊工具：_write_note（LLM 写工作笔记） ----
-            if (name === '_write_note') {
-              const noteContent = args.content || args.note || JSON.stringify(args);
-              wm.writeNote(noteContent, args.label || '');
-              const toolResultEvent = {
-                id: toolCallId,
-                name,
-                content: '笔记已保存',
-                status: 'done',
-              };
-              yield { type: 'tool_result', tool_result: toolResultEvent };
+          // Step 3: _write_note 轻量元工具同步执行
+          for (const c of notes) {
+            yield { type: 'tool_call', tool_call: { id: c.id, name: c.name, arguments: c.tc.function?.arguments || '{}' } };
+            const noteContent = c.args.content || c.args.note || JSON.stringify(c.args);
+            wm.writeNote(noteContent, c.args.label || '');
+            yield { type: 'tool_result', tool_result: { id: c.id, name: c.name, content: '笔记已保存', status: 'done' } };
+            messages.push({
+              role: 'assistant', content: null,
+              tool_calls: [this._formatToolCall(c.tc)],
+            });
+            messages.push({
+              role: 'tool', tool_call_id: c.id,
+              content: '笔记已保存（工作记忆）',
+            });
+          }
 
-              messages.push({
-                role: 'assistant',
-                content: null,
-                tool_calls: [this._formatToolCall(tc)],
-              });
-              messages.push({
-                role: 'tool',
-                tool_call_id: toolCallId,
-                content: '笔记已保存（工作记忆）',
-              });
-              continue; // 不计数为工具调用
-            }
+          // Step 4: 先 yield 所有普通工具的 tool_call 事件（前端可立即展示）
+          for (const c of tools_calls) {
+            yield { type: 'tool_call', tool_call: { id: c.id, name: c.name, arguments: c.tc.function?.arguments || '{}' } };
+            console.log(`[ReactAgent] 发起工具: ${c.name}, 参数: ${JSON.stringify(c.args)}`);
+          }
 
-            // ---- 正常工具执行 ----
-            console.log(`[ReactAgent] 执行工具: ${name}, 参数: ${JSON.stringify(args)}`);
+          // 工具执行前检查断开（前端展示 tool_call 后用户可能关闭页面）
+          if (checkAborted()) {
+            wm.endTurn();
+            return;
+          }
+
+          // Step 5: 并行执行所有普通工具
+          const startExec = Date.now();
+          const settledResults = await Promise.allSettled(
+            tools_calls.map(c => this.toolRegistry.executeTool(c.name, c.args, { userId }))
+          );
+          console.log(`[ReactAgent] ${tools_calls.length} 个工具并行执行完毕，耗时 ${Date.now() - startExec}ms`);
+
+          // Step 6: 统一处理各工具结果
+          for (let i = 0; i < tools_calls.length; i++) {
+            const c = tools_calls[i];
+            const settled = settledResults[i];
             let result = '';
-            try {
-              result = await this.toolRegistry.executeTool(name, args, { userId });
-              console.log(`[ReactAgent] 工具 ${name} 结果: ${result.substring(0, 200)}`);
-            } catch (err) {
-              console.error(`[ReactAgent] 工具 ${name} 异常:`, err.message);
-              result = `工具执行出错: ${err.message}`;
+            if (settled.status === 'fulfilled') {
+              result = settled.value;
+              console.log(`[ReactAgent] 工具 ${c.name} 结果: ${String(result).substring(0, 200)}`);
+            } else {
+              const errMsg = settled.reason?.message || '未知错误';
+              console.error(`[ReactAgent] 工具 ${c.name} 异常:`, errMsg);
+              result = `工具执行出错: ${errMsg}`;
             }
 
             // 记录到工作记忆
-            wm.recordStep(name, args, result);
+            wm.recordStep(c.name, c.args, result);
 
             // 产出 tool_result 事件（前端展示）
-            const toolResultEvent = {
-              id: toolCallId,
-              name,
-              content: result,
-              status: 'done',
-            };
-            yield { type: 'tool_result', tool_result: toolResultEvent };
+            yield { type: 'tool_result', tool_result: { id: c.id, name: c.name, content: result, status: 'done' } };
 
             // 将 assistant 消息（含 tool_calls）加入历史
             messages.push({
-              role: 'assistant',
-              content: null,
-              tool_calls: [this._formatToolCall(tc)],
+              role: 'assistant', content: null,
+              tool_calls: [this._formatToolCall(c.tc)],
             });
-
-            // 将工具结果加入历史（tool 角色）
+            // 将工具结果截断后加入历史（tool 角色），避免上下文窗口溢出
             messages.push({
-              role: 'tool',
-              tool_call_id: toolCallId,
-              content: typeof result === 'string' ? result : JSON.stringify(result),
+              role: 'tool', tool_call_id: c.id,
+              content: this._truncateResult(typeof result === 'string' ? result : JSON.stringify(result)),
             });
           }
         } else {
@@ -258,8 +294,8 @@ class ReactAgent {
     const payload = {
       model: this.aiService.model,
       messages,
-      max_tokens: 4096, // ReAct 需要更多 token
-      temperature: 0.7,
+      max_tokens: this.aiService.maxTokens || 4096,
+      temperature: this.aiService.temperature ?? 0.7,
       stream: false,
     };
 
@@ -396,7 +432,7 @@ class ReactAgent {
   _formatHistory(history) {
     if (!history || !Array.isArray(history)) return [];
     // 取最近 30 条消息，避免超出上下文窗口
-    const recent = history.slice(-30);
+    const recent = history.slice(-HISTORY_WINDOW);
     return recent.map(h => ({
       role: h.role === 'model' ? 'assistant' : h.role,
       content: h.content || '',

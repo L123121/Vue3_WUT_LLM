@@ -29,6 +29,7 @@ LABEL description="武理小精灵 - 武理校园 AI 助手 / WUT Campus AI Assi
 # 安装 Chromium（Puppeteer 依赖）及系统运行库
 # PUPPETEER_SKIP_DOWNLOAD=true 表示不重复下载，使用系统已安装的 chromium
 ENV PUPPETEER_SKIP_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 RUN apt-get update && apt-get install -y \
     chromium \
     --no-install-recommends \

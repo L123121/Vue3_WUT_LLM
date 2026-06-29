@@ -85,12 +85,14 @@ const chatHandler = async (req, res) => {
 
 // ==================== SSE 流式聊天 ====================
 
-/**
- * POST /api/stream — SSE 流式聊天（默认 Agent 意图路由）
- */
 const streamHandler = async (req, res) => {
-  let streamAborted = false;
-  req.on('close', () => { streamAborted = true; });
+  const abortController = new AbortController();
+  req.on("close", () => {
+    if (!abortController.signal.aborted) {
+      abortController.abort();
+      console.log("[Stream] 客户端断开连接，已发出 abort 信号");
+    }
+  });
 
   try {
     const { message, history = [], conversationId, files = [], skillPrompt = '' } = req.body;
@@ -123,8 +125,8 @@ const streamHandler = async (req, res) => {
     const userId = req.userId || null;
     console.log(`[Stream] Agent 模式(默认), userId: ${userId || 'anonymous'}`);
 
-    for await (const chunk of getAgentService().chatStream(message.trim(), history, { userId, skillPrompt })) {
-      if (streamAborted) break;
+    for await (const chunk of getAgentService().chatStream(message.trim(), history, { userId, skillPrompt, files, signal: abortController.signal })) {
+      if (abortController.signal.aborted) break;
 
       switch (chunk.type) {
         case 'thinking':
@@ -146,12 +148,14 @@ const streamHandler = async (req, res) => {
       }
     }
 
-    if (!streamAborted) {
+    if (!abortController.signal.aborted) {
       console.log('[Chat] /api/stream completed.');
       res.end();
+    } else {
+      console.log('[Chat] /api/stream 被客户端断开');
     }
   } catch (error) {
-    if (!streamAborted) {
+    if (!abortController.signal.aborted) {
       console.error('[Chat] /api/stream failed:', error);
       res.write(`data: ${JSON.stringify({ error: '流式响应出错，请重试' })}\n\n`);
       res.end();
@@ -174,12 +178,6 @@ const generateTitle = async (req, res) => {
     const firstLine = message.split('\n')[0].trim();
     const greetingPattern = /^(你好|您好|hi|hello|嗨|hey|在吗|在不在|早上好|晚上好|下午好)[!！.。]?\s*$/i;
     if (greetingPattern.test(firstLine)) {
-      return res.json({ title: '新对话' });
-    }
-
-    // 旧的问候检测（兼容旧格式）
-    const oldGreetingPattern = /^(用户问题[：:]\s*)(你好|您好|hi|hello|嗨|hey|在吗|在不在|早上好|晚上好|下午好)[!！.。]?\s*(AI回答|$)/i;
-    if (greetingPattern.test(message)) {
       return res.json({ title: '新对话' });
     }
 

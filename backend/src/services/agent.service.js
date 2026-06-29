@@ -22,6 +22,10 @@ const { toolRegistry } = require('./agent-tools');
  *   chat        → 普通对话
  */
 
+// WorkingMemory TTL 常量
+const WM_TTL = 30 * 60 * 1000; // 30 分钟无访问则淘汰
+const WM_CLEANUP_INTERVAL = 5 * 60 * 1000; // 每 5 分钟清理一次
+
 class AgentService {
   constructor(aiService = null) {
     this.aiService = aiService || new AiService();
@@ -32,6 +36,10 @@ class AgentService {
     this.memoryService = null; // 由 app.js 注入
     /** @type {Map<string, WorkingMemory>} */
     this.workingMemories = new Map(); // conversationId → WorkingMemory
+    /** @type {Map<string, number>} lastAccess 时间戳 */
+    this._wmLastAccess = new Map();
+    /** @type {number|null} 清理定时器 */
+    this._wmCleanupTimer = null;
   }
 
   /**
@@ -63,6 +71,7 @@ class AgentService {
     const conversationId = options.conversationId || null;
     const skillPrompt = options.skillPrompt || '';
     const files = options.files || [];
+    const signal = options.signal || null; // 客户端断开的 abort 信号
     const ctx = this._buildHandlerCtx();
 
     console.log(`[Agent] 用户消息: "${message.substring(0, 50)}", userId: ${userId || 'anonymous'}`);
@@ -132,28 +141,20 @@ class AgentService {
           break;
 
         case 'agent':
-          // 通用 ReAct Agent — LLM 自主规划工具调用
-          console.log('[Agent] 使用 ReAct Agent 路径');
-          yield* this.reactAgent.execute(message, history, {
-            userId,
-            memoryContext,
-            skillPrompt,
-            conversationId,
-            workingMemory: this._getWorkingMemory(conversationId),
-          });
-          break;
-
         case 'chat':
         default:
-          // 普通对话 — 接入 ReAct Agent，让 LLM 决定是否需要工具
-          // 如果 AI 服务可用且有工具，用 Agent，否则用纯聊天
+          // agent 和 chat 走统一路径：
+          // - 有 API Key + 工具 → ReAct Agent（LLM 自主决定是否调用工具）
+          // - 无 API Key/工具 → 纯 LLM 对话
+          if (signal?.aborted) { console.log('[Agent] 客户端已断开'); return; }
           if (this.aiService.apiKey && toolRegistry.getToolSchemas().length > 0) {
-            console.log('[Agent] chat 路径 → ReAct Agent（带工具能力）');
+            console.log(`[Agent] ${routing.route} 路径 → ReAct Agent`);
             yield* this.reactAgent.execute(message, history, {
               userId,
               memoryContext,
               skillPrompt,
               conversationId,
+              signal,
               workingMemory: this._getWorkingMemory(conversationId),
             });
           } else {
@@ -234,14 +235,9 @@ class AgentService {
 数据：${rawResult.substring(0, 4000)}`;
 
     try {
-      const response = await Promise.race([
-        this.aiService.getCompletion(prompt, []),
-        new Promise((resolve) =>
-          setTimeout(() => resolve({ content: '', isMock: true, _timeout: true }), 15000)
-        ),
-      ]);
-      if (response._timeout) {
-        console.warn('[Agent] 润色超时(15s)，返回原始结果');
+      const response = await this.aiService.getCompletion(prompt, [], { timeout: 15000 });
+      if (!response || !response.content) {
+        console.warn('[Agent] 润色超时(15s)或返回空，返回原始结果');
         return rawResult;
       }
       return response.content || rawResult;
@@ -337,13 +333,48 @@ class AgentService {
   /**
    * 获取或创建会话的工作记忆
    * 同一个 conversationId 共享 WorkingMemory，实现跨轮引用
+   * 带 TTL 淘汰：30 分钟无访问自动回收
    */
   _getWorkingMemory(conversationId) {
     if (!conversationId) return null;
+    // 记录/更新访问时间
+    this._wmLastAccess.set(conversationId, Date.now());
     if (!this.workingMemories.has(conversationId)) {
       this.workingMemories.set(conversationId, new WorkingMemory({ conversationId }));
     }
+    // 启动定期清理（仅首次调用时启动）
+    this._startWmCleanup();
     return this.workingMemories.get(conversationId);
+  }
+
+  /**
+   * 启动 WorkingMemory 定期清理定时器
+   */
+  _startWmCleanup() {
+    if (this._wmCleanupTimer) return;
+    this._wmCleanupTimer = setInterval(() => {
+      const now = Date.now();
+      let expiredCount = 0;
+      for (const [convId, lastAccess] of this._wmLastAccess.entries()) {
+        if (now - lastAccess > WM_TTL) {
+          this.workingMemories.delete(convId);
+          this._wmLastAccess.delete(convId);
+          expiredCount++;
+        }
+      }
+      if (expiredCount > 0) {
+        console.log(`[Agent] 清理了 ${expiredCount} 个过期的工作记忆`);
+      }
+      // 如果已经没有工作记忆，停止定时器
+      if (this.workingMemories.size === 0) {
+        clearInterval(this._wmCleanupTimer);
+        this._wmCleanupTimer = null;
+      }
+    }, WM_CLEANUP_INTERVAL);
+    // 定时器不阻止进程退出
+    if (this._wmCleanupTimer && this._wmCleanupTimer.unref) {
+      this._wmCleanupTimer.unref();
+    }
   }
 }
 

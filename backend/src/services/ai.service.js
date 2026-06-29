@@ -81,7 +81,7 @@ class AiService {
 
   // ========== 非流式 ==========
 
-  async getCompletion(message, history = []) {
+  async getCompletion(message, history = [], opts = {}) {
     if (!this.apiKey) {
       console.warn('[AI] API Key 缺失，使用模拟模式');
       return { content: this.getMockResponse(message), isMock: true };
@@ -92,6 +92,8 @@ class AiService {
     const body = JSON.stringify(payload);
     const options = this._buildOptions(path);
     options.headers['Content-Length'] = Buffer.byteLength(body, 'utf8');
+    // 支持调用方覆盖超时时间
+    if (opts.timeout) options.timeout = opts.timeout;
 
     console.log(`[AI] ${options.hostname}${options.path} model=${this.model} bodyLen=${body.length}`);
 
@@ -112,11 +114,20 @@ class AiService {
         console.log(`[AI] 响应 ${content.length} 字符`);
         return { content, isMock: false };
       } else {
-        console.warn('[AI] 空响应:', JSON.stringify(result.data).substring(0, 200));
+        const msg = `AI 服务返回空响应: ${JSON.stringify(result.data).substring(0, 200)}`;
+        console.warn('[AI]', msg);
+        if (process.env.NODE_ENV === 'production') {
+          throw new Error(msg);
+        }
         return { content: this.getMockResponse(message), isMock: true };
       }
     } catch (err) {
       console.error(`[AI] 请求失败: ${err.message}`);
+      // 生产环境：抛出错误让上游触发告警，不静默降级
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error(`AI 服务请求失败: ${err.message}`);
+      }
+      // 开发环境：返回 mock 响应以便调试
       return { content: this.getMockResponse(message), isMock: true };
     }
   }

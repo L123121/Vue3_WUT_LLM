@@ -13,6 +13,9 @@
 
 const { toolRegistry } = require('./agent-tools');
 
+// 对话历史窗口长度（与前端 useStreaming.buildHistory 的 -20 对齐）
+const HISTORY_WINDOW = 20;
+
 /**
  * Simple 路径：单轮工具调用
  * 适用于意图明确、工具调用路径固定的查询（成绩、课表、考试）
@@ -73,9 +76,11 @@ async function* handleKnowledge(message, history, routing, userId, skillPrompt, 
     args.query = `${routing.params.topic}：${message}`;
   }
 
+  // tool_call 和 tool_result 必须共享同一 ID，前端依赖此匹配
+  const toolCallId = ctx.genId();
   yield {
     type: 'tool_call',
-    tool_call: { id: ctx.genId(), name: 'search_knowledge_base', arguments: JSON.stringify(args) }
+    tool_call: { id: toolCallId, name: 'search_knowledge_base', arguments: JSON.stringify(args) }
   };
 
   const result = await toolRegistry.executeTool('search_knowledge_base', args, { userId });
@@ -83,7 +88,7 @@ async function* handleKnowledge(message, history, routing, userId, skillPrompt, 
 
   yield {
     type: 'tool_result',
-    tool_result: { id: ctx.genId(), name: 'search_knowledge_base', content: fullResult }
+    tool_result: { id: toolCallId, name: 'search_knowledge_base', content: fullResult }
   };
 
   const polished = await ctx.polishResult('search_knowledge_base', fullResult, message, skillPrompt);
@@ -99,7 +104,7 @@ async function* handleChat(message, history, userId, skillPrompt, memoryContext,
 
   const messages = [
     { role: 'system', content: systemPrompt },
-    ...history.slice(-10).map(h => ({
+    ...history.slice(-HISTORY_WINDOW).map(h => ({
       role: h.role === 'assistant' ? 'assistant' : 'user',
       content: h.content,
     })),
