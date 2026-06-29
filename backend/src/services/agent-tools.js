@@ -263,6 +263,247 @@ const builtinTools = [
   },
 
   {
+    name: 'query_ungraded_scores',
+    description: '查询未评教课程的隐藏成绩。教务系统中未完成评教的课程在成绩查询时不显示分数，但学业监测接口已有真实成绩。此工具从学业监测数据中提取这些被隐藏的真实成绩并回填显示。',
+    category: '教务',
+    source: TOOL_SOURCES.SCHOOL,
+    parameters: {
+      type: 'object',
+      properties: {
+        semester: {
+          type: 'string',
+          description: '学年学期，如 "2025-2026-1"。不填则查全部学期。'
+        }
+      },
+      required: []
+    },
+    handler: async (args, context) => {
+      if (!context?.userId) {
+        return '查询未评教成绩需要先登录系统。请在设置中绑定学校账号后再试。';
+      }
+
+      try {
+        const info = await store.hgetall(`school:user:${context.userId}`);
+        console.log(`[Tool:query_ungraded_scores] userId=${context.userId}, found=${!!info?.studentId}`);
+        if (!info || !info.studentId) {
+          return '您还未绑定学校账号。请在设置页面绑定教务系统账号后再查询。';
+        }
+
+        const result = await schoolApi.getMonitorScores(context.userId);
+
+        let monitorCourses = result.allMonitorCourses || [];
+        if (args.semester) {
+          monitorCourses = monitorCourses.filter(c => c.semester === args.semester);
+        }
+
+        const { ungraded } = result;
+        let reply = '';
+
+        if (ungraded && ungraded.length > 0) {
+          const bySemester = {};
+          for (const u of ungraded) {
+            const sem = u.semester || '未知学期';
+            if (!bySemester[sem]) bySemester[sem] = [];
+            bySemester[sem].push(u);
+          }
+
+          reply = `📋 **未评教成绩回填**\n\n`;
+          reply += `共发现 ${result.totalUngraded} 门未评教课程，成功回填 ${result.matchedCount} 门：\n\n`;
+
+          for (const [sem, courses] of Object.entries(bySemester)) {
+            reply += `📅 ${sem}\n`;
+            reply += '─'.repeat(50) + '\n';
+            for (const c of courses) {
+              reply += `  **${c.courseName}**\n`;
+              reply += `    原显示: ${c.hiddenGrade} → 真实成绩: **${c.realScore}**`;
+              if (c.realScoreText) reply += ` (${c.realScoreText})`;
+              if (c.realGpa) reply += ` | 绩点: ${c.realGpa.toFixed(2)}`;
+              if (c.credits) reply += ` | 学分: ${c.credits}`;
+              reply += `\n    (匹配方式: ${c.matchedBy})\n\n`;
+            }
+          }
+
+          if (result.matchedCount < result.totalUngraded) {
+            reply += `\n⚠️ 有 ${result.totalUngraded - result.matchedCount} 门课程未能从学业监测数据中找到对应成绩。`;
+            reply += '这可能是因为这些课程非常新，学业监测系统尚未同步。\n';
+          }
+
+          reply += '\n💡 **提示**：回填的成绩来自学业监测系统，成绩发布后会在成绩查询中正式显示。';
+          return reply;
+        }
+
+        if (monitorCourses.length > 0) {
+          const bySemester = {};
+          for (const c of monitorCourses) {
+            const sem = c.semester || '未知学期';
+            if (!bySemester[sem]) bySemester[sem] = [];
+            bySemester[sem].push(c);
+          }
+
+          reply = `📊 **学业监测数据概览**\n\n`;
+          reply += `暂无被隐藏的未评教成绩。以下是${args.semester ? '当前' : '全部'}已登记的课程成绩：\n\n`;
+
+          for (const [sem, courses] of Object.entries(bySemester)) {
+            reply += `📅 ${sem}（${courses.length} 门）\n`;
+            const passed = courses.filter(c => c.score && !isNaN(c.score) && parseFloat(c.score) >= 60).length;
+            const failed = courses.filter(c => c.score && !isNaN(c.score) && parseFloat(c.score) < 60).length;
+            if (passed || failed) reply += `   通过: ${passed} 门 | 未通过: ${failed} 门\n`;
+
+            courses.slice(0, 5).forEach(c => {
+              const scoreStr = c.scoreText || c.score || '-';
+              reply += `  • ${c.courseName} — ${scoreStr}${c.credit ? ' | ' + c.credit + '学分' : ''}\n`;
+            });
+            if (courses.length > 5) {
+              reply += `  ...及其他 ${courses.length - 5} 门\n`;
+            }
+            reply += '\n';
+          }
+        } else {
+          reply = '未查询到学业监测数据。确认您已绑定学校账号并且学期尚未开始。';
+        }
+
+        return reply;
+      } catch (err) {
+        console.error('[Tool:query_ungraded_scores] error:', err.message);
+        if (err.message && err.message.includes('请先绑定学校账号')) {
+          return '您还未绑定学校账号。请在设置页面绑定教务系统账号后再查询。';
+        }
+        return `查询未评教成绩失败: ${err.message}`;
+      }
+    }
+  },
+
+  {
+    name: 'calculate_gpa',
+    description: '计算学生的加权平均绩点（GPA）。需要用户已绑定学校账号。返回总GPA、每学期GPA、学分统计等。',
+    category: '教务',
+    source: TOOL_SOURCES.SCHOOL,
+    parameters: {
+      type: 'object',
+      properties: {
+        semester: {
+          type: 'string',
+          description: '学年学期，如 "2025-2026-1"。不填则计算全部学期。'
+        }
+      },
+      required: []
+    },
+    handler: async (args, context) => {
+      if (!context?.userId) {
+        return '计算 GPA 需要先登录系统。请在设置中绑定学校账号后再试。';
+      }
+
+      try {
+        const info = await store.hgetall(`school:user:${context.userId}`);
+        if (!info || !info.studentId) {
+          return '您还未绑定学校账号。请在设置页面绑定教务系统账号后再查询。';
+        }
+
+        const grades = await schoolApi.getGrades(
+          context.userId,
+          args.semester
+        );
+
+        if (!grades || grades.length === 0) {
+          return '未查询到成绩数据，无法计算 GPA。';
+        }
+
+        // 只计入有数值型成绩且通过了的数据（排除选修退课等）
+        const validGrades = grades.filter(g => g.gradeNumeric !== null && g.gradeNumeric > 0 && g.credits > 0);
+
+        if (validGrades.length === 0) {
+          return '没有找到可用于计算 GPA 的有效成绩数据。';
+        }
+
+        // 按学期分组
+        const bySemester = {};
+        for (const g of validGrades) {
+          const sem = g.semester || '未知学期';
+          if (!bySemester[sem]) bySemester[sem] = [];
+          bySemester[sem].push(g);
+        }
+
+        // 计算单学期 GPA
+        const calcSemester = (courses) => {
+          let totalPoints = 0, totalCredits = 0;
+          let scoreSum = 0, scoreCount = 0;
+          let passed = 0, failed = 0;
+
+          for (const c of courses) {
+            totalPoints += c.credits * (c.gpa || 0);
+            totalCredits += c.credits;
+            if (c.gradeNumeric) {
+              scoreSum += c.gradeNumeric;
+              scoreCount++;
+            }
+            if (c.isPassed === '是' || (c.gradeNumeric && c.gradeNumeric >= 60)) {
+              passed++;
+            } else {
+              failed++;
+            }
+          }
+
+          return {
+            gpa: totalCredits > 0 ? (totalPoints / totalCredits) : 0,
+            totalCredits,
+            avgScore: scoreCount > 0 ? (scoreSum / scoreCount) : 0,
+            passed,
+            failed,
+            courseCount: courses.length,
+          };
+        };
+
+        // 总计
+        const allCourses = Object.values(bySemester).flat();
+        const total = calcSemester(allCourses);
+
+        let result = `📊 **GPA 成绩报告**\n\n`;
+
+        // 总览
+        result += `**总览**\n`;
+        result += `• 加权平均绩点：**${total.gpa.toFixed(2)}**\n`;
+        result += `• 平均分：**${total.avgScore.toFixed(1)}**\n`;
+        result += `• 总学分：**${total.totalCredits}**\n`;
+        result += `• 课程数：**${total.courseCount}** 门（通过 ${total.passed} 门，未通过 ${total.failed} 门）\n`;
+
+        // 按学期明细
+        if (Object.keys(bySemester).length > 1) {
+          result += `\n**按学期明细**\n`;
+          for (const [sem, courses] of Object.entries(bySemester)) {
+            const s = calcSemester(courses);
+            result += `📅 ${sem} — GPA: **${s.gpa.toFixed(2)}** | 平均分: ${s.avgScore.toFixed(1)} | 学分: ${s.totalCredits}\n`;
+          }
+        }
+
+        // 优秀课程（GPA >= 3.7）
+        const excellent = validGrades.filter(g => (g.gpa || 0) >= 3.7);
+        if (excellent.length > 0) {
+          result += `\n**优秀课程 (GPA≥3.7)**\n`;
+          for (const c of excellent.slice(0, 10)) {
+            result += `• ${c.courseName} — ${c.grade}分 (${c.gpa})\n`;
+          }
+          if (excellent.length > 10) {
+            result += `  ...及其他 ${excellent.length - 10} 门\n`;
+          }
+        }
+
+        // 需要努力的课程（GPA < 2.0）
+        const weak = validGrades.filter(g => (g.gpa || 0) < 2.0 && (g.gpa || 0) > 0);
+        if (weak.length > 0) {
+          result += `\n**需提升课程 (GPA<2.0)**\n`;
+          for (const c of weak) {
+            result += `• ${c.courseName} — ${c.grade}分 (${c.gpa || 'N/A'})\n`;
+          }
+        }
+
+        return result;
+      } catch (err) {
+        return `计算 GPA 失败: ${err.message}`;
+      }
+    }
+  },
+
+  {
     name: 'campus_info',
     description: '查询武汉理工大学校园基本信息，包括校区地址、联系电话、校车时刻、校历等。',
     category: '校园',

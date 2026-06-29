@@ -325,6 +325,190 @@ class SchoolApiService {
     }
   }
 
+  // ==================== 学业监测（未评教成绩回填） ====================
+
+  /**
+   * 递归遍历树形结构，提取所有课程行
+   * 教务系统的学业监测数据是嵌套树结构，需要通过多级 child 字段递归提取
+   */
+  _extractMonitorCourseRows(node, depth = 0) {
+    if (!node || typeof node !== 'object') return [];
+    if (depth > 20) return []; // 防止无限递归
+
+    const rows = [];
+
+    // 判断当前节点是否是课程行（同时有课程代码/名称 和 成绩/学分字段）
+    const hasCourseCode = !!(node.KCH || node.KCM || node.kcm || node.courseName);
+    const hasScore = !!(node.ZCJ || node.CJ || node.XF || node.KCXF || node.score);
+    if (hasCourseCode && hasScore) {
+      rows.push(node);
+    }
+
+    // 递归搜索所有可能的子节点字段
+    const childKeys = [
+      'children', 'CHILDREN', 'childList', 'childNodes',
+      'nodes', 'items', 'data', 'rows', 'list',
+      'checkCourseVOS', 'courseList', 'courses', 'courseVOS',
+    ];
+    for (const key of childKeys) {
+      const child = node[key];
+      if (Array.isArray(child)) {
+        for (const c of child) {
+          rows.push(...this._extractMonitorCourseRows(c, depth + 1));
+        }
+      } else if (child && typeof child === 'object') {
+        rows.push(...this._extractMonitorCourseRows(child, depth + 1));
+      }
+    }
+
+    return rows;
+  }
+
+  /**
+   * 标准化学业监测中的课程行
+   */
+  _normalizeMonitorCourse(row) {
+    return {
+      courseName: this._cleanString(row.KCM || row.KCMC || row.kcm || row.courseName || ''),
+      courseId: this._cleanString(row.KCH || row.kch || row.courseId || row.KCBH || row.kcbh || ''),
+      credit: parseFloat(row.XF || row.KCXF || row.xf || row.credit) || 0,
+      score: row.ZCJ || row.CJ || row.cj || row.score || '',
+      scoreText: this._cleanString(row.XSZCJMC || row.DJCJ_DISPLAY || row.cjText || ''),
+      semester: row.XNXQDM || row.xnxqdm || row.semester || '',
+      gpa: row.JD ? parseFloat(row.JD) : (row.jd ? parseFloat(row.jd) : null),
+      isPassed: this._cleanString(row.SFYX || row.sfyx || ''),
+    };
+  }
+
+  /**
+   * 获取学业监测数据，用于回填未评教课程的隐藏成绩
+   *
+   * 教务系统中，未完成评教的课程在成绩查询时显示"未评教"，
+   * 但学业监测接口已经包含了这些课程的真实成绩。
+   * 此方法调用学业监测 API，提取所有课程成绩，并与成绩数据比对，
+   * 找出被隐藏的真实成绩。
+   *
+   * @param {string} userId - 系统用户 ID
+   * @returns {Promise<Array>} 未评教课程的回填成绩列表
+   */
+  async getMonitorScores(userId) {
+    const { studentId, password } = await this._getUserCredentials(userId);
+    const cookies = await sessionService.getSession(userId, studentId, password);
+
+    try {
+      // 1. 并行获取学业监测数据 + 成绩数据
+      const [monitorRes, grades] = await Promise.all([
+        // 学业监测 API
+        schoolAxios.post(
+          `${this.jwHost}/jwapp/sys/xyjscx/modules/xyjscx/cxxyjs.do`,
+          new URLSearchParams({
+            querySetting: JSON.stringify([]),
+            '*order': '+XH',
+            pageSize: '1000',
+            pageNumber: '1',
+          }).toString(),
+          {
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'X-Requested-With': 'XMLHttpRequest',
+              Cookie: cookies,
+            },
+            timeout: 20000,
+          }
+        ),
+        // 同时获取成绩数据
+        this.getGrades(userId).catch(() => []),
+      ]);
+
+      // 2. 解析学业监测数据
+      if (monitorRes.data?.code !== '0') {
+        throw new Error(monitorRes.data?.msg || '获取学业监测数据失败');
+      }
+
+      const rootNodes = monitorRes.data?.datas?.cxxyjs?.rows || [];
+      const rawCourses = [];
+      for (const root of rootNodes) {
+        rawCourses.push(...this._extractMonitorCourseRows(root));
+      }
+
+      // 3. 标准化数据
+      const monitorCourses = rawCourses.map(r => this._normalizeMonitorCourse(r));
+
+      // 4. 去重（同一课程只保留第一条）
+      const seen = new Set();
+      const uniqueMonitorCourses = monitorCourses.filter(c => {
+        const key = `${c.semester}|${c.courseId}`;
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+
+      // 5. 从成绩数据中找出"未评教"课程
+      const ungradedGrades = grades.filter(g => {
+        const gradeStr = String(g.grade || '').trim();
+        return gradeStr === '未评教' || gradeStr === 'N/A' || gradeStr === '-';
+      });
+
+      if (ungradedGrades.length === 0) {
+        return { ungraded: [], allMonitorCourses: uniqueMonitorCourses };
+      }
+
+      // 6. 匹配回填：用学业监测数据中的真实成绩覆盖"未评教"
+      const results = [];
+      for (const grade of ungradedGrades) {
+        // 匹配优先级：courseId + semester > courseName + semester > courseId > courseName
+        const match =
+          uniqueMonitorCourses.find(r =>
+            r.courseId && r.semester &&
+            r.courseId === grade.courseCode &&
+            r.semester === grade.semester
+          )
+          || uniqueMonitorCourses.find(r =>
+            r.courseName && r.semester &&
+            r.courseName === grade.courseName &&
+            r.semester === grade.semester
+          )
+          || uniqueMonitorCourses.find(r =>
+            r.courseId && r.courseId === grade.courseCode
+          )
+          || uniqueMonitorCourses.find(r =>
+            r.courseName && r.courseName === grade.courseName
+          );
+
+        if (match && match.score && match.score !== '未评教') {
+          results.push({
+            courseName: grade.courseName,
+            courseCode: grade.courseCode,
+            semester: grade.semester,
+            credits: grade.credits,
+            hiddenGrade: grade.grade,
+            realScore: match.score,
+            realScoreText: match.scoreText,
+            realGpa: match.gpa,
+            matchedBy: match.courseId === grade.courseCode && match.semester === grade.semester
+              ? 'courseId+semester'
+              : match.courseName === grade.courseName && match.semester === grade.semester
+                ? 'courseName+semester'
+                : '模糊匹配',
+          });
+        }
+      }
+
+      return {
+        ungraded: results,
+        totalUngraded: ungradedGrades.length,
+        matchedCount: results.length,
+        allMonitorCourses: uniqueMonitorCourses,
+      };
+    } catch (err) {
+      if (err.response?.status === 403 || err.response?.status === 302) {
+        sessionService.invalidateSession(userId);
+        throw new Error('教务系统登录已过期，请重新绑定学校账号');
+      }
+      throw err;
+    }
+  }
+
   // ==================== 内部方法 ====================
 
   /**

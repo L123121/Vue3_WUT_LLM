@@ -57,6 +57,7 @@ class AgentService {
     const TOTAL_TIMEOUT = 60000;
     const userId = options.userId || null;
     const skillPrompt = options.skillPrompt || '';
+    const files = options.files || [];
     const ctx = this._buildHandlerCtx();
 
     console.log(`[Agent] 用户消息: "${message.substring(0, 50)}", userId: ${userId || 'anonymous'}`);
@@ -80,6 +81,13 @@ class AgentService {
       return;
     }
     console.log(`[Agent] 意图: ${routing.intent} → 路径: ${routing.route} (置信度: ${routing.confidence})`);
+
+    // Phase 1.5: 如果用户上传了图片，强制走 chat 路径（图片理解）
+    const hasImage = files.length > 0 && files.some(f => f.isImage);
+    if (hasImage) {
+      console.log('[Agent] 检测到图片，强制走 chat 路径进行图片理解');
+      routing.route = 'chat';
+    }
 
     yield { type: 'thinking', content: `正在分析：${routing.reason || routing.intent}` };
 
@@ -112,7 +120,7 @@ class AgentService {
           break;
         case 'chat':
         default:
-          yield* handleChat(message, history, userId, skillPrompt, memoryContext, ctx);
+          yield* handleChat(message, history, userId, skillPrompt, memoryContext, ctx, files);
           break;
       }
     } catch (err) {
@@ -150,8 +158,13 @@ class AgentService {
       if (!choice) return { content: '' };
 
       const message = choice.message;
+      const content = message.content || '';
+      // 调试：记录含 markdown 的响应
+      if (content && (content.includes('**') || content.includes('```') || content.includes('#'))) {
+        console.log(`[Agent:LLM] 响应含 markdown 标记 (前80字): ${content.substring(0, 80).replace(/\n/g, '\\n')}`);
+      }
       return {
-        content: message.content || '',
+        content,
         tool_calls: message.tool_calls || null,
       };
     } catch (err) {
@@ -167,7 +180,12 @@ class AgentService {
       return rawResult;
     }
 
-    const prompt = `以自然语气回答用户，保留全部关键信息。
+    const now = new Date();
+    const dateStr = now.toLocaleDateString('zh-CN', {
+      year: 'numeric', month: 'long', day: 'numeric', weekday: 'long',
+    });
+
+    const prompt = `以自然语气回答用户，保留全部关键信息。当前日期是 ${dateStr}。
 
 用户：${userMessage}
 
@@ -205,6 +223,8 @@ class AgentService {
         };
       case 'query_exam_schedule':
         return { semester: params?.semester || null, course: params?.course || null };
+      case 'query_ungraded_scores':
+        return { semester: params?.semester || null };
       case 'search_knowledge_base':
         return {
           query: message,
@@ -216,8 +236,17 @@ class AgentService {
   }
 
   _buildSystemPrompt(skillPrompt, memoryContext = '') {
+    const now = new Date();
+    const dateStr = now.toLocaleDateString('zh-CN', {
+      year: 'numeric', month: 'long', day: 'numeric', weekday: 'long',
+    });
+    const timeStr = now.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+
     const parts = [
       '你是武汉理工大学的校园 AI 助手（武理小精灵）。',
+      '',
+      `## 当前时间\n当前日期：${dateStr}\n当前时间：${timeStr}`,
+      '',
       '你可以使用工具查询校园信息，也可以直接回答用户问题。',
       '回答时使用中文，语气友好自然。',
       '如果用户的问题涉及具体数据（成绩、课表、考试等），请使用工具查询。',
