@@ -51,7 +51,7 @@ class ReactAgent {
 
     if (!tools || tools.length === 0) {
       console.warn('[ReactAgent] 没有可用的工具，跳过 ReAct 循环');
-      yield { type: 'content', content: '抱歉，当前没有可用工具来处理您的请求。' };
+      yield* this._streamContent('抱歉，当前没有可用工具来处理您的请求。');
       return;
     }
 
@@ -76,7 +76,7 @@ class ReactAgent {
 
       // 总超时检查
       if (Date.now() - startTime > TOTAL_TIMEOUT) {
-        yield { type: 'content', content: '处理超时，请简化您的问题或分步提问。' };
+        yield* this._streamContent('处理超时，请简化您的问题或分步提问。');
         return;
       }
 
@@ -91,7 +91,7 @@ class ReactAgent {
         const response = await this._callLLMWithTools(messages, tools);
 
         if (!response) {
-          yield { type: 'content', content: 'AI 服务暂时无响应，请稍后重试。' };
+          yield* this._streamContent('AI 服务暂时无响应，请稍后重试。');
           return;
         }
 
@@ -154,13 +154,9 @@ class ReactAgent {
             });
           }
         } else {
-          // LLM 直接回复文本 → 这是最终答案
-          const content = response.content || '';
-          if (content) {
-            yield { type: 'content', content };
-          } else {
-            yield { type: 'content', content: '抱歉，我没有理解您的问题。' };
-          }
+          // LLM 直接回复文本 → 这是最终答案，分块流式输出
+          const content = response.content || '抱歉，我没有理解您的问题。';
+          yield* this._streamContent(content);
 
           // 记录工具使用情况（用于未来路由优化）
           if (hasUsedTool) {
@@ -173,19 +169,16 @@ class ReactAgent {
         console.error(`[ReactAgent] 第 ${iteration} 步出错:`, err.message);
         // 如果已经成功使用过工具，提供部分结果
         if (hasUsedTool) {
-          yield { type: 'content', content: `分析过程中遇到问题：${err.message}。以上是已获取到的信息。` };
+          yield* this._streamContent(`分析过程中遇到问题：${err.message}。以上是已获取到的信息。`);
         } else {
-          yield { type: 'content', content: `处理您的请求时出错：${err.message}，请稍后重试。` };
+          yield* this._streamContent(`处理您的请求时出错：${err.message}，请稍后重试。`);
         }
         return;
       }
     }
 
     // 达到最大迭代次数
-    yield {
-      type: 'content',
-      content: '您的问题涉及较多步骤，无法在当前限制内完成。请尝试将问题拆解后分步提问，或简化您的问题。',
-    };
+    yield* this._streamContent('您的问题涉及较多步骤，无法在当前限制内完成。请尝试将问题拆解后分步提问，或简化您的问题。');
   }
 
   // ==================== LLM 调用（含工具参数） ====================
@@ -310,6 +303,18 @@ class ReactAgent {
     }
 
     return parts.join('\n');
+  }
+
+  /**
+   * 将最终文本分块流式输出，实现打字机效果
+   * 与 agent.service.js 的 _streamContent 行为一致
+   */
+  async *_streamContent(content) {
+    if (!content) return;
+    const chunkSize = 60;
+    for (let i = 0; i < content.length; i += chunkSize) {
+      yield { type: 'content', content: content.substring(i, i + chunkSize) };
+    }
   }
 
   // ==================== 历史格式化 ====================
