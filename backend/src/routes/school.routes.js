@@ -1,10 +1,20 @@
 const { Router } = require('express');
+const rateLimit = require('express-rate-limit');
 const { requireAuth, generateToken } = require('../middleware/auth.middleware');
 const schoolApi = require('../services/school-api.service');
 const sessionService = require('../services/school-session.service');
 const { redis: store } = require('../services/memory-store');
 
 const router = Router();
+
+// 登录接口频率限制：每 IP 每分钟最多 10 次，防止暴力破解
+const loginLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000,
+  max: 10,
+  message: { success: false, code: 'RATE_LIMIT', message: '登录尝试过于频繁，请稍后再试' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 const formatSchoolError = (err, fallbackMessage = '操作失败，请稍后重试') => {
   switch (err?.code) {
@@ -41,7 +51,7 @@ const formatSchoolError = (err, fallbackMessage = '操作失败，请稍后重�
  * Body: { studentId, password }
  * 无需 JWT，公开接口
  */
-router.post('/login', async (req, res) => {
+router.post('/login', loginLimiter, async (req, res) => {
   try {
     const { studentId, password } = req.body;
 

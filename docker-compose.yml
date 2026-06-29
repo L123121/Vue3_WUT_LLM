@@ -1,0 +1,91 @@
+# ======================================================================
+# Docker Compose — 武理小精灵 生产部署
+# 包含: nginx (SSL 反向代理) + backend (Express) + redis (会话缓存)
+# ======================================================================
+#
+# 使用方式:
+#   1. 准备 .env.production 文件 (参考 deploy/.env.production.example)
+#   2. 配置域名 SSL 证书
+#   3. docker compose -p wuli-elf up -d
+# ======================================================================
+
+services:
+  # ---- 反向代理 + SSL 终止 ----
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - nginx-logs:/var/log/nginx
+      # SSL 证书（用 certbot 或阿里云免费证书）
+      # 路径为 /etc/letsencrypt/live/your-domain.com/...
+      - ssl-certs:/etc/letsencrypt:ro
+    depends_on:
+      - backend
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ---- Express 后端 (API + 静态资源) ----
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:3000:3000"  # 仅 nginx 可访问
+    env_file:
+      - ./deploy/.env.production
+    volumes:
+      - backend-data:/app/data
+      - uploads-data:/app/backend/uploads
+    depends_on:
+      redis:
+        condition: service_started
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # 健康检查
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/api/health', r => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ---- Redis 会话缓存 ----
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  backend-data:
+    driver: local
+  uploads-data:
+    driver: local
+  redis-data:
+    driver: local
+  ssl-certs:
+    driver: local
+  nginx-logs:
+    driver: local

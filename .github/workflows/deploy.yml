@@ -1,0 +1,153 @@
+# ======================================================================
+# CI/CD Pipeline — 武理小精灵
+# 功能: Lint → Test → Build Docker → Push Registry → Deploy to ECS
+# ======================================================================
+#
+# 首次使用前需要在 GitHub Secrets 中添加:
+#   DOCKER_USERNAME / DOCKER_PASSWORD  — Docker Hub 账号
+#   或
+#   ALIYUN_ACR_USERNAME / ALIYUN_ACR_PASSWORD — 阿里云容器镜像服务
+#
+#   ECS_HOST / ECS_USER / ECS_SSH_KEY  — 阿里云 ECS 连接信息
+# ======================================================================
+
+name: Deploy to Alibaba Cloud ECS
+
+on:
+  push:
+    branches: [main]
+    # 当 backend/ 或 deploy/ 或 Dockerfile 有变更时触发
+    paths:
+      - "backend/**"
+      - "src/**"
+      - "deploy/**"
+      - "Dockerfile"
+      - "docker-compose.yml"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch: # 支持手动触发
+
+env:
+  # ─── 镜像仓库（二选一） ───
+  # Option A: Docker Hub
+  IMAGE_NAME: your-dockerhub-username/wuli-elf-backend
+  # Option B: 阿里云 ACR（国内部署推荐）
+  # IMAGE_NAME: registry.cn-hangzhou.aliyuncs.com/your-namespace/wuli-elf-backend
+
+jobs:
+  # ========== 1. 代码检查和测试 ==========
+  check:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Lint
+        run: npm run lint
+        continue-on-error: true # lint 失败不阻断部署（视团队规范而定）
+
+      - name: Run tests
+        run: npm test
+        env:
+          JWT_SECRET: test-secret
+          SCHOOL_ENC_KEY: test-enc-key
+          AI_API_KEY: test-ai-key
+
+  # ========== 2. 构建 & 推送 Docker 镜像 ==========
+  build:
+    name: Build & Push Docker Image
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # ── Docker Hub 登录 ──
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      # ── 阿里云 ACR 登录（二选一） ──
+      # - name: Login to Alibaba Cloud ACR
+      #   uses: docker/login-action@v3
+      #   with:
+      #     registry: registry.cn-hangzhou.aliyuncs.com
+      #     username: ${{ secrets.ALIYUN_ACR_USERNAME }}
+      #     password: ${{ secrets.ALIYUN_ACR_PASSWORD }}
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ========== 3. 部署到 ECS ==========
+  deploy:
+    name: Deploy to Alibaba Cloud ECS
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create .env.production on server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.ECS_HOST }}
+          username: ${{ secrets.ECS_USER }}
+          key: ${{ secrets.ECS_SSH_KEY }}
+          port: 22
+          source: "deploy/.env.production.example"
+          target: "/opt/wuli-elf/"
+          strip_components: 1  # 只拷贝文件，不包含 deploy/ 目录结构
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.ECS_HOST }}
+          username: ${{ secrets.ECS_USER }}
+          key: ${{ secrets.ECS_SSH_KEY }}
+          port: 22
+          script: |
+            set -e
+            cd /opt/wuli-elf
+
+            # 拉取最新镜像
+            docker compose -p wuli-elf pull backend
+
+            # 重启服务
+            docker compose -p wuli-elf up -d --no-deps backend
+
+            # 清理旧镜像
+            docker image prune -f
+
+            # 检查服务健康状态
+            echo "等待后端启动..."
+            for i in $(seq 1 12); do
+              if curl -sf http://localhost:3000/api/health > /dev/null 2>&1; then
+                echo "✅ 后端启动成功"
+                break
+              fi
+              sleep 5
+            done
+
+            # 重启 nginx（如果有配置变更）
+            docker compose -p wuli-elf exec nginx nginx -s reload 2>/dev/null || true
+
+            echo "🎉 部署完成: $(date)"

@@ -139,10 +139,15 @@ class SchoolSessionService {
     try {
       const puppeteer = await this._getPuppeteer();
 
-      browser = await puppeteer.launch({
+      const launchOpts = {
         headless: 'new',
         args: ['--no-sandbox', '--disable-setuid-sandbox', '--ignore-certificate-errors'],
-      });
+      };
+      // 支持通过环境变量指定 Chrome 路径（Docker 部署用系统 chromium）
+      if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+        launchOpts.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+      }
+      browser = await puppeteer.launch(launchOpts);
       console.log('[SchoolSession] 已启动无头浏览器');
 
       const page = await browser.newPage();
