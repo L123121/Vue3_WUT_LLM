@@ -11,6 +11,12 @@ lerna-debug.log*
 .env
 backend/.env
 
+# Session/cookie files
+cookies.txt
+
+# Design archive (old code)
+src/design-archive/
+
 node_modules
 dist
 dist-ssr
