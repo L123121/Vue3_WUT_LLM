@@ -36,6 +36,12 @@ class WorkingMemory {
 
     /** @type {{id, startedAt, steps: Array}|null} */
     this.currentTurn = null;
+
+    /**
+     * 持久化回调：turn 结束时调用，将 toJSON() 输出落盘。
+     * 由 AgentService 注入（绑定 conversationId → WorkingMemoryStore）。
+     * @type {null | ((json: object) => Promise<void>)} */
+    this.onPersist = null;
   }
 
   // ==================== 回合管理 ====================
@@ -63,12 +69,24 @@ class WorkingMemory {
 
   /**
    * 结束当前回合
+   * 触发持久化：将完整工作记忆落盘，进程重启后可恢复
    */
   endTurn() {
     if (this.currentTurn) {
       this.currentTurn.endedAt = Date.now();
     }
     this.currentTurn = null;
+
+    // 异步持久化（不阻塞响应流；失败仅告警，不影响主流程）
+    if (this.onPersist) {
+      try {
+        Promise.resolve(this.onPersist(this.toJSON())).catch((err) => {
+          console.warn('[WorkingMemory] 持久化失败:', err.message);
+        });
+      } catch (err) {
+        console.warn('[WorkingMemory] 持久化回调异常:', err.message);
+      }
+    }
   }
 
   // ==================== 步骤记录 ====================
