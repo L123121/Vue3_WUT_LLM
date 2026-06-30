@@ -13,6 +13,12 @@ backend/.env
 
 # Session/cookie files
 cookies.txt
+# 教务系统抓取脚本产生的真实凭证与数据（含真实 cookie/成绩/课表，禁止提交）
+scripts/jw-cookies.json
+scripts/grade-data.json
+scripts/schedule-data.json
+scripts/grade-page-data.json
+scripts/grade-api.json
 
 # Design archive (old code)
 src/design-archive/
