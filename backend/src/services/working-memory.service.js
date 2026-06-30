@@ -271,6 +271,60 @@ class WorkingMemory {
   }
 
   /**
+   * 构建"精简版"工作记忆上下文——用于多步 ReAct 每轮注入 system prompt
+   *
+   * 与 buildContext 的区别：
+   *   buildContext 输出全量历史（最近2回合完整 + 早期摘要），随 step 数线性膨胀，
+   *   每轮 ReAct 都拼进 system 会持续吃 token。
+   *
+   *   本方法只输出当前回合的"指针式"摘要：已记录的步骤数 + 各工具调用清单
+   *   （工具名+参数，不含结果正文）+ 最新一条 note。完整结果正文已存在于
+   *   messages 历史的 tool 角色消息中，LLM 可直接回看，无需在 system 重复展开。
+   *
+   * @param {number} [maxChars] - 硬上限（默认 1200 字符）
+   * @returns {string}
+   */
+  buildContextBrief(maxChars = 1200) {
+    if (this.turns.length === 0) return '';
+    const turn = this.currentTurn || this.turns[this.turns.length - 1];
+    if (!turn || turn.steps.length === 0) return '';
+
+    const lines = [];
+    lines.push(`当前回合已记录 ${turn.steps.length} 个步骤：`);
+
+    // 工具调用清单（仅工具名 + 参数，不含结果正文）
+    const toolSteps = turn.steps.filter(s => !s.isNote);
+    if (toolSteps.length > 0) {
+      lines.push('已调用工具：');
+      for (const s of toolSteps) {
+        const argsStr = this._formatArgs(s.args);
+        lines.push(`  - ${s.tool}(${argsStr})`);
+      }
+    }
+
+    // 最新一条 note（中间结论，高价值）
+    const notes = turn.steps.filter(s => s.isNote);
+    if (notes.length > 0) {
+      const last = notes[notes.length - 1];
+      const label = last.label ? ` [${last.label}]` : '';
+      const noteText = String(last.result || '').substring(0, 200);
+      lines.push(`最新笔记${label}: ${noteText}`);
+    }
+
+    // 早期回合：只给一个计数提示，让 LLM 知道有更早上下文（已在历史消息中）
+    const earlierTurns = this.turns.length - 1;
+    if (earlierTurns > 0) {
+      lines.push(`（另有 ${earlierTurns} 轮更早的对话历史，结果已在上方对话中，可直接引用）`);
+    }
+
+    let context = lines.join('\n');
+    if (context.length > maxChars) {
+      context = context.substring(0, maxChars) + '\n…（工作记忆已截断）';
+    }
+    return context;
+  }
+
+  /**
    * 清除所有工作记忆
    */
   clear() {

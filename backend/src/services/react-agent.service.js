@@ -40,11 +40,50 @@ class ReactAgent {
 
   /**
    * 截断工具结果，保留关键信息但防止 context window 溢出
+   *
+   * 智能截断策略（而非硬切前 N 字符）：
+   *   - 保留开头（表头/统计/标题，通常含最关键的总览信息）
+   *   - 保留结尾（末尾的结论/提示/待办，常是 LLM 决策所需的收尾信息）
+   *   - 中间内容按"段落"折叠，保留每段首行 + 计数，避免成绩列表等长文本
+   *     中间的关键课程数据被整段丢弃
    */
   _truncateResult(content, maxLen = MAX_TOOL_RESULT_LENGTH) {
     if (!content || typeof content !== 'string') return content;
     if (content.length <= maxLen) return content;
-    return content.substring(0, maxLen) + `\n\n...（结果过长，已截断至 ${maxLen} 字符，完整数据已保存在工作记忆中）`;
+
+    // 保留头尾各约 1/3 预算
+    const headBudget = Math.floor(maxLen * 0.35);
+    const tailBudget = Math.floor(maxLen * 0.35);
+    const head = content.substring(0, headBudget);
+    const tail = content.substring(content.length - tailBudget);
+
+    // 中间部分：按行折叠，保留每个非空块的首行，统计被折叠的行数
+    const middle = content.substring(headBudget, content.length - tailBudget);
+    const lines = middle.split('\n');
+    const kept = [];
+    let folded = 0;
+    let inBlock = false;
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        if (inBlock) { kept.push(''); inBlock = false; }
+        continue;
+      }
+      // 保留每个"块"的第一行（通常是课程名/分类标题）
+      if (!inBlock) {
+        kept.push(`  … ${trimmed.substring(0, 60)}`);
+        inBlock = true;
+      } else {
+        folded++;
+      }
+    }
+
+    const foldedNote = folded > 0
+      ? `\n…（中间折叠 ${folded} 行明细，完整数据已保存在工作记忆中）…\n`
+      : '\n…（部分明细已折叠，完整数据已保存在工作记忆中）…\n';
+
+    return head + '\n' + foldedNote + kept.join('\n') + '\n…\n' + tail
+      + `\n\n...（结果过长，已从 ${content.length} 字符智能截断至约 ${maxLen} 字符）`;
   }
 
   /**
@@ -108,7 +147,9 @@ class ReactAgent {
     });
 
     // 2. 构建系统提示词（含工作记忆）
-    const wmContext = wm.buildContext();
+    //    多步 ReAct 每轮都拼 system，用精简版 wmContext（仅步骤指针 + 最新 note），
+    //    完整结果正文已在 messages 历史的 tool 消息中，无需在 system 重复展开。
+    const wmContext = wm.buildContextBrief();
     const systemPrompt = this._buildSystemPrompt(memoryContext, skillPrompt, wmContext);
 
     console.log(`[ReactAgent] 系统提示词 ${systemPrompt.length} 字符，${tools.length} 个工具可用`);
@@ -622,9 +663,15 @@ class ReactAgent {
       '当需要获取数据时，请使用我提供的工具。每个工具都有明确的用途和参数说明。',
       '你可以：',
       '- 一次调用一个工具，等结果回来后决定下一步',
-      '- 同时调用多个相互独立的工具（并行执行）',
+      '- 同时调用多个**相互独立**的工具（并行执行，互不依赖对方的输出）',
       '- 根据工具返回的结果，调整策略或调用其他工具',
       '- 使用 _write_note 工具记录中间分析结论到工作记忆',
+      '',
+      '⚠️ 并行调用规则（重要）：',
+      '- 只在多个工具**互不依赖对方输出**时才并行调用（如同时查成绩和查课表）',
+      '- 若工具 B 需要 A 的结果作为输入（如先查成绩再算 GPA），**必须分多轮调用**：',
+      '  先单独调用 A，拿到结果后再调用 B。一轮里同时返回依赖工具会导致后者取到旧数据。',
+      '- 不确定是否有依赖时，默认串行调用（一轮一个工具）。',
       '',
       '工具执行完成后：',
       '- 如果信息足够回答用户问题，直接给出最终答案（不要继续调用工具）',
@@ -634,7 +681,8 @@ class ReactAgent {
       '## 工作记忆',
       '你有工作记忆（Working Memory），可以记录和引用之前的工具调用结果。',
       '_write_note 工具可用来记录中间分析结论，这些笔记会在后续步骤中保留。',
-      '你可以引用之前步骤的结果，如"上一步查到的成绩数据显示..."。',
+      '上方"当前工作记忆"列出本回合已调用的工具与最新笔记；',
+      '工具返回的完整结果在对话历史的 tool 消息中，可直接引用（如"上一步查到的成绩..."）。',
       '',
       '## 回答格式',
       '- 好的回答应该结构清晰、信息完整',

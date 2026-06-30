@@ -128,4 +128,66 @@ describe('ToolRegistry', () => {
     expect(stats.enabled).toBe(1);
     expect(stats.bySource.builtin).toBe(1);
   });
+
+  // ==================== 工具执行超时 ====================
+  it('慢工具超时后返回超时提示而非 reject', async () => {
+    const r = createRegistry();
+    r.register({
+      name: 'slow',
+      handler: async () => {
+        await new Promise(res => setTimeout(res, 2000));
+        return '不该看到这个';
+      },
+      timeoutMs: 50, // 50ms 超时
+    });
+    const result = await r.executeTool('slow', {});
+    expect(result).toContain('执行超时');
+    expect(result).toContain('50ms');
+    // 不应包含 handler 的真实返回
+    expect(result).not.toContain('不该看到这个');
+  });
+
+  it('工具在超时前完成则正常返回', async () => {
+    const r = createRegistry();
+    r.register({
+      name: 'fast',
+      handler: async (a) => `结果:${a.x}`,
+      timeoutMs: 1000,
+    });
+    const result = await r.executeTool('fast', { x: 1 });
+    expect(result).toBe('结果:1');
+  });
+
+  it('超时与异常都返回字符串（不抛出），不阻断 Promise.allSettled', async () => {
+    const r = createRegistry();
+    r.register({
+      name: 'hang',
+      handler: async () => { await new Promise(res => setTimeout(res, 5000)); return 'late'; },
+      timeoutMs: 30,
+    });
+    r.register({ name: 'boom', handler: async () => { throw new Error('炸了'); }, timeoutMs: 1000 });
+    r.register({ name: 'ok', handler: async () => '正常', timeoutMs: 1000 });
+
+    // 模拟 ReAct 并行执行（Promise.allSettled 不应被慢工具卡住）
+    const t0 = Date.now();
+    const settled = await Promise.allSettled([
+      r.executeTool('hang', {}),
+      r.executeTool('boom', {}),
+      r.executeTool('ok', {}),
+    ]);
+    const elapsed = Date.now() - t0;
+    // 三个都在 ~1s 内返回（hang 受 30ms 超时保护，不会等到 5s）
+    expect(elapsed).toBeLessThan(1500);
+    expect(settled.every(s => s.status === 'fulfilled')).toBe(true); // 无 reject
+    expect(settled[0].value).toContain('执行超时');
+    expect(settled[1].value).toContain('执行失败');
+    expect(settled[2].value).toBe('正常');
+  });
+
+  it('未设 timeoutMs 的工具使用默认超时', () => {
+    const r = createRegistry();
+    r.register({ name: 'def', handler: async () => 'ok' });
+    // 默认超时应为正数（DEFAULT_TOOL_TIMEOUT_MS=8000）
+    expect(r.getTool('def').timeoutMs).toBeGreaterThan(0);
+  });
 });

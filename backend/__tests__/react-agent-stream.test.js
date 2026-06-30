@@ -222,3 +222,46 @@ describe('ReactAgent._applyDelta SSE 解析（纯函数）', () => {
     expect(state.toolCallMap.get(0).name).toBe('query_grades');
   });
 });
+
+describe('ReactAgent._truncateResult 智能截断', () => {
+  function getAgent() {
+    const ai = new AiService();
+    ai.anthropicMode = false;
+    return new ReactAgent(ai, { getToolSchemas: () => [], executeTool: () => null, getTool: () => null });
+  }
+
+  it('短内容原样返回', () => {
+    const agent = getAgent();
+    const short = '只有几行\n的成绩';
+    expect(agent._truncateResult(short)).toBe(short);
+  });
+
+  it('长内容被截断且保留头尾', () => {
+    const agent = getAgent();
+    // 构造一个明确超过 MAX_TOOL_RESULT_LENGTH(3000) 的成绩报告
+    const head = '📊 GPA 报告\n总绩点: 3.85\n';
+    const body = Array.from({ length: 300 }, (_, i) => `课程${i} 90分 3学分`).join('\n');
+    const tail = '\n💡 提示：回填成绩来自学业监测系统';
+    const long = head + body + tail;
+    // 确保测试输入确实超过阈值
+    expect(long.length).toBeGreaterThan(3000);
+
+    const truncated = agent._truncateResult(long);
+    expect(truncated.length).toBeLessThan(long.length);
+    // 头部总览保留
+    expect(truncated).toContain('GPA 报告');
+    expect(truncated).toContain('3.85');
+    // 尾部提示保留
+    expect(truncated).toContain('学业监测系统');
+    // 标注了截断
+    expect(truncated).toContain('智能截断');
+  });
+
+  it('非字符串原样返回', () => {
+    const agent = getAgent();
+    const obj = { a: 1 };
+    expect(agent._truncateResult(obj)).toBe(obj);
+    expect(agent._truncateResult(null)).toBeNull();
+    expect(agent._truncateResult(undefined)).toBeUndefined();
+  });
+});
