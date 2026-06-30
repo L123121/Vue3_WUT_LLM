@@ -157,7 +157,7 @@ class SchoolSessionService {
       const jwxtLoginUrl = `${config.school.jwHost}/jwapp/sys/yjsrzfwapp/dbLogin/main.do`;
       console.log('[SchoolSession] 打开教务系统登录页...');
       try {
-        await page.goto(jwxtLoginUrl, { waitUntil: 'networkidle2', timeout: 30000 });
+        await page.goto(jwxtLoginUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
       } catch (e) {
         console.warn('[SchoolSession] jwxt 首页加载超时，继续执行:', e.message);
       }
@@ -170,8 +170,9 @@ class SchoolSessionService {
         throw createSchoolError('SERVICE_UNAVAILABLE', '未找到统一身份认证按钮，教务系统页面可能已变更');
       }
 
-      // 监听页面上所有 frame 的导航事件，检测 CAS 跳转
-      // 用 25 秒超时兜底，防止 Promise 永远不 resolve
+      // 同时用两种方式检测 CAS 登录页跳转：
+      // 1. framenavigated 事件（监听所有 frame）
+      // 2. waitForNavigation（监听顶层页面导航，更可靠）
       console.log('[SchoolSession] 设置 CAS 跳转监听...');
       let redirectResolved = false;
       const redirectPromise = new Promise((resolve) => {
@@ -186,7 +187,7 @@ class SchoolSessionService {
               if (url.includes('zhlgd.whut.edu.cn')) {
                 const newUrl = url.replace('zhlgd.whut.edu.cn', 'one.whut.edu.cn');
                 console.log(`[SchoolSession] 检测到旧域名跳转，自动修正: ${newUrl}`);
-                resolve(await page.goto(newUrl, { waitUntil: 'networkidle2', timeout: 20000 }));
+                resolve(await page.goto(newUrl, { waitUntil: 'domcontentloaded', timeout: 20000 }));
               } else {
                 resolve();
               }
@@ -196,15 +197,50 @@ class SchoolSessionService {
           }
         };
         page.on('framenavigated', handler);
-        // 25 秒超时兜底
+
+        // 同时用 waitForNavigation 兜底（对顶层导航更可靠）
+        const navPromise = page.waitForNavigation({ timeout: 35000 }).then(async () => {
+          if (!redirectResolved) {
+            redirectResolved = true;
+            page.off('framenavigated', handler);
+            const url = page.url();
+            console.log('[SchoolSession] waitForNavigation 检测到导航:', url.substring(0, 80));
+            if (url.includes('zhlgd.whut.edu.cn/tpass/login')) {
+              const newUrl = url.replace('zhlgd.whut.edu.cn', 'one.whut.edu.cn');
+              resolve(await page.goto(newUrl, { waitUntil: 'domcontentloaded', timeout: 20000 }));
+            } else {
+              resolve();
+            }
+          }
+        }).catch(() => {});
+
+        // 超时兜底（双监听的最大超时）
         setTimeout(() => {
           if (!redirectResolved) {
             redirectResolved = true;
             page.off('framenavigated', handler);
-            console.log('[SchoolSession] redirectPromise 超时，继续执行');
+            console.log('[SchoolSession] redirectPromise 超时(35s)，继续执行');
             resolve();
           }
-        }, 25000);
+        }, 35000);
+
+        // 第三个监听：URL 变化到 CAS 登录页（waitForFunction）
+        page.waitForFunction(() => window.location.href.includes('tpass/login'), { timeout: 35000 })
+          .then(() => {
+            if (!redirectResolved) {
+              redirectResolved = true;
+              page.off('framenavigated', handler);
+              const url = page.url();
+              console.log('[SchoolSession] waitForFunction 检测到 CAS URL:', url.substring(0, 80));
+              if (url.includes('zhlgd.whut.edu.cn/tpass/login')) {
+                const newUrl = url.replace('zhlgd.whut.edu.cn', 'one.whut.edu.cn');
+                resolve(page.goto(newUrl, { waitUntil: 'domcontentloaded', timeout: 20000 }));
+              } else {
+                resolve();
+              }
+            }
+          })
+          .catch(() => {});
       });
 
       await casBtn.click();
