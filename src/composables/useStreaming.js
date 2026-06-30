@@ -19,6 +19,35 @@ const INITIAL_RETRY_DELAY = 1000;
 const MAX_RETRY_DELAY = 30000;
 const STREAM_STALL_TIMEOUT = 60000;
 
+/**
+ * 更新消息对象的辅助函数
+ * 用新数组替换 conv.messages（属性赋值），触发 Vue 响应式链
+ *
+ * 关键：按 conversationId 在调用时重新解析会话下标，不缓存 convIndex。
+ * 流式过程中会话列表可能被 loadConversations / unshift 重排，缓存的下标
+ * 会指向错误的会话，导致消息写进别的会话。
+ *
+ * 持久化交给 convStore.scheduleSaveCache()（300ms 防抖的增量保存），
+ * 不再在此处对整个会话列表做 JSON.parse(JSON.stringify(...)) 全量序列化——
+ * 流式每个 chunk 都触发一次会阻塞主线程。
+ */
+function updateMessage(convStore, conversationId, msgId, updater) {
+  const convIndex = convStore.conversations.findIndex((c) => c.id === conversationId);
+  if (convIndex === -1) return null;
+  const conv = convStore.conversations[convIndex];
+  if (!conv) return null;
+  const msgs = conv.messages;
+  if (!msgs) return null;
+  const msgIdx = msgs.findIndex((m) => m.id === msgId);
+  if (msgIdx === -1) return null;
+  const newMessages = msgs.map((m, i) => (i === msgIdx ? updater(m) : m));
+  // 替换 messages 属性（而非整个 conv 对象），触发 conv.messages 的响应式追踪
+  conv.messages = newMessages;
+  // 防抖增量持久化（非每帧全量同步写）
+  convStore.scheduleSaveCache();
+  return msgIdx;
+}
+
 export function useStreaming() {
   const isLoading = ref(false);
   const currentStreamingId = ref(null);
@@ -27,7 +56,8 @@ export function useStreaming() {
   const reconnectAttempt = ref(0);
 
   let currentAbortController = null;
-  let activeStreamingConversationId = null;
+  // 当前正在流式的会话 id（响应式，供 store 层在切换会话时判断是否需中止）
+  const activeStreamingConversationId = ref(null);
   let unsubscribeConnection = null;
   let rafId = null;
   let pendingContent = '';
@@ -56,7 +86,7 @@ export function useStreaming() {
       currentAbortController.abort();
       currentAbortController = null;
     }
-    activeStreamingConversationId = null;
+    activeStreamingConversationId.value = null;
     currentStreamingId.value = null;
     isLoading.value = false;
     isReconnecting.value = false;
@@ -138,7 +168,7 @@ export function useStreaming() {
     convStore.scheduleSaveCache(true);
 
     isLoading.value = true;
-    activeStreamingConversationId = conversationId;
+    activeStreamingConversationId.value = conversationId;
     currentAbortController = new AbortController();
 
     const history = buildHistory(convStore.conversations[convIndex].messages || [], userMsg.id);
@@ -169,16 +199,20 @@ export function useStreaming() {
 
       const callbacks = {
         onChunk: (content) => {
+          // 切换会话自中止检测：用户已切到别的会话时，停止向旧会话写消息并中止请求，
+          // 否则 currentStreamingId 仍指向旧会话消息，新会话 UI 状态会错乱
+          if (convStore.currentConversationId !== conversationId) {
+            console.log('[Stream] 检测到会话已切换，中止旧流式');
+            abortCurrentRequest();
+            return;
+          }
           pendingContent += content;
           if (!rafId) {
             rafId = requestAnimationFrame(() => {
-              const msgs = convStore.conversations[convIndex]?.messages;
-              if (msgs) {
-                const msgIdx = msgs.findIndex((m) => m.id === aiMsgId);
-                if (msgIdx !== -1) {
-                  msgs[msgIdx] = { ...msgs[msgIdx], content: getMessageText(msgs[msgIdx]) + pendingContent };
-                }
-              }
+              updateMessage(convStore, conversationId, aiMsgId, (m) => {
+                const newText = getMessageText(m) + pendingContent;
+                return { ...m, text: newText, content: newText };
+              });
               pendingContent = '';
               rafId = null;
             });
@@ -186,71 +220,49 @@ export function useStreaming() {
           onStreamEvent?.('chunk', content);
         },
         onSources: (sources) => {
-          const msgs = convStore.conversations[convIndex]?.messages;
-          if (msgs) {
-            const msgIdx = msgs.findIndex((m) => m.id === aiMsgId);
-            if (msgIdx !== -1) {
-              msgs[msgIdx] = { ...msgs[msgIdx], sources };
-            }
-          }
+          updateMessage(convStore, conversationId, aiMsgId, (m) => ({ ...m, sources }));
         },
         onThinking: (content) => {
-          const msgs = convStore.conversations[convIndex]?.messages;
-          if (msgs) {
-            const msgIdx = msgs.findIndex((m) => m.id === aiMsgId);
-            if (msgIdx !== -1) {
-              const existing = msgs[msgIdx].thinkingSteps || [];
-              if (!existing.length || existing[existing.length - 1].content !== content) {
-                const steps = [...existing, { content }];
-                const timelineEvent = { type: 'thinking', content };
-                const timeline = [...(msgs[msgIdx]._timeline || []), timelineEvent];
-                msgs[msgIdx] = { ...msgs[msgIdx], thinkingSteps: steps, _timeline: timeline };
-              }
-            }
-          }
+          updateMessage(convStore, conversationId, aiMsgId, (m) => {
+            const existing = m.thinkingSteps || [];
+            if (existing.length && existing[existing.length - 1].content === content) return m;
+            const steps = [...existing, { content }];
+            const timelineEvent = { type: 'thinking', content };
+            const timeline = [...(m._timeline || []), timelineEvent];
+            return { ...m, thinkingSteps: steps, _timeline: timeline };
+          });
         },
         onToolCall: (toolCall) => {
-          const msgs = convStore.conversations[convIndex]?.messages;
-          if (msgs) {
-            const msgIdx = msgs.findIndex((m) => m.id === aiMsgId);
-            if (msgIdx !== -1) {
-              const existing = msgs[msgIdx].toolCalls || [];
-              if (!existing.some((tc) => tc.id === toolCall.id)) {
-                const calls = [...existing, { ...toolCall, status: 'running', result: '' }];
-                const timelineEvent = { type: 'tool', id: toolCall.id, name: toolCall.name };
-                const timeline = [...(msgs[msgIdx]._timeline || []), timelineEvent];
-                msgs[msgIdx] = { ...msgs[msgIdx], toolCalls: calls, _timeline: timeline };
-              }
-            }
-          }
+          updateMessage(convStore, conversationId, aiMsgId, (m) => {
+            const existing = m.toolCalls || [];
+            if (existing.some((tc) => tc.id === toolCall.id)) return m;
+            const calls = [...existing, { ...toolCall, status: 'running', result: '' }];
+            const timelineEvent = { type: 'tool', id: toolCall.id, name: toolCall.name };
+            const timeline = [...(m._timeline || []), timelineEvent];
+            return { ...m, toolCalls: calls, _timeline: timeline };
+          });
         },
         onToolResult: (toolResult) => {
-          const msgs = convStore.conversations[convIndex]?.messages;
-          if (msgs) {
-            const msgIdx = msgs.findIndex((m) => m.id === aiMsgId);
-            if (msgIdx !== -1) {
-              const calls = (msgs[msgIdx].toolCalls || []).map((tc) =>
-                tc.id === toolResult.id ? { ...tc, result: toolResult.content, status: toolResult.status || 'done' } : tc
-              );
-              msgs[msgIdx] = { ...msgs[msgIdx], toolCalls: calls };
-            }
-          }
+          updateMessage(convStore, conversationId, aiMsgId, (m) => {
+            const calls = (m.toolCalls || []).map((tc) =>
+              tc.id === toolResult.id ? { ...tc, result: toolResult.content, status: toolResult.status || 'done' } : tc
+            );
+            return { ...m, toolCalls: calls };
+          });
         },
         onRetry: () => {
           isReconnecting.value = true;
           reconnectAttempt.value = reconnectAttempt.value + 1;
         },
         onDone: () => {
+          // 必须在 cancelPendingRaf 之前捕获剩余内容（它会清空 pendingContent）
+          const remainingContent = pendingContent;
           cancelPendingRaf();
-          if (pendingContent) {
-            const msgs = convStore.conversations[convIndex]?.messages;
-            if (msgs) {
-              const msgIdx = msgs.findIndex((m) => m.id === aiMsgId);
-              if (msgIdx !== -1) {
-                const updated = { ...msgs[msgIdx], content: getMessageText(msgs[msgIdx]) + pendingContent, text: getMessageText(msgs[msgIdx]) + pendingContent };
-                msgs[msgIdx] = updated;
-              }
-            }
+          if (remainingContent) {
+            updateMessage(convStore, conversationId, aiMsgId, (m) => {
+              const newText = getMessageText(m) + remainingContent;
+              return { ...m, text: newText, content: newText };
+            });
           }
           if (conv && (conv.title.startsWith('新会话') || conv.title === '默认会话')) {
             const userText = trimmedText;
@@ -270,9 +282,22 @@ export function useStreaming() {
           isLoading.value = false;
           isReconnecting.value = false;
           reconnectAttempt.value = 0;
-          activeStreamingConversationId = null;
+          activeStreamingConversationId.value = null;
           currentAbortController = null;
           convStore.scheduleSaveCache(true);
+          // 额外保存：把当前会话消息单独存一份（固定 key，不受 convId 变化影响）
+          try {
+            // 重新按 id 解析会话，避免使用流开始时缓存的 convIndex（列表可能已重排）
+            const doneConv = convStore.conversations.find((c) => c.id === conversationId);
+            const msgBackup = doneConv?.messages;
+            if (msgBackup && msgBackup.length > 0) {
+              localStorage.setItem('chat_msgs_last', JSON.stringify({
+                messages: msgBackup,
+                conversationId: conversationId,
+                title: doneConv?.title || '',
+              }));
+            }
+          } catch (e) {}
           onStreamEvent?.('done');
           markResolved();
           resolve();
@@ -281,22 +306,18 @@ export function useStreaming() {
           console.log('[Stream] onError callback fired:', error.message);
           cancelPendingRaf();
 
-          const msgs = convStore.conversations[convIndex]?.messages;
-          if (msgs) {
-            const msgIdx = msgs.findIndex((m) => m.id === aiMsgId);
-            if (msgIdx !== -1 && !getMessageText(msgs[msgIdx])) {
-              msgs[msgIdx] = { ...msgs[msgIdx], content: '抱歉，连接服务器失败，请检查后端服务是否启动。', isError: true };
-            }
-            const userIdx = msgs.findIndex((m) => m.id === userMsg.id);
-            if (userIdx !== -1) {
-              msgs[userIdx] = { ...msgs[userIdx], canRetry: true };
-            }
-          }
+          // 空内容的 AI 消息标记为错误
+          updateMessage(convStore, conversationId, aiMsgId, (m) => {
+            if (getMessageText(m)) return m;
+            return { ...m, content: '抱歉，连接服务器失败，请检查后端服务是否启动。', isError: true };
+          });
+          // 用户的失败消息标记可重试
+          updateMessage(convStore, conversationId, userMsg.id, (m) => ({ ...m, canRetry: true }));
 
           currentStreamingId.value = null;
           isLoading.value = false;
           isReconnecting.value = false;
-          activeStreamingConversationId = null;
+          activeStreamingConversationId.value = null;
           currentAbortController = null;
           convStore.scheduleSaveCache(true);
           onStreamEvent?.('error');
@@ -307,7 +328,7 @@ export function useStreaming() {
           cancelPendingRaf();
           isLoading.value = false;
           isReconnecting.value = false;
-          activeStreamingConversationId = null;
+          activeStreamingConversationId.value = null;
           currentAbortController = null;
           markResolved();
           resolve();
@@ -342,7 +363,7 @@ export function useStreaming() {
     if (currentAbortController) {
       currentAbortController.abort();
       currentAbortController = null;
-      activeStreamingConversationId = null;
+      activeStreamingConversationId.value = null;
       currentStreamingId.value = null;
       isLoading.value = false;
     }
@@ -351,6 +372,7 @@ export function useStreaming() {
   return {
     isLoading,
     currentStreamingId,
+    activeStreamingConversationId,
     isConnected,
     isReconnecting,
     reconnectAttempt,

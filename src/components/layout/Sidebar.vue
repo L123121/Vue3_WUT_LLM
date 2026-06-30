@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import wutLogoImg from '../../assets/wuhan-university-logo.png';
 import ConversationList from '../chat/ConversationList.vue';
@@ -13,6 +13,10 @@ const authStore = useAuthStore();
 const currentPath = computed(() => route.path);
 
 const showDevEval = import.meta.env.VITE_SHOW_DEV_EVAL === 'true';
+
+// 头像加载失败时回退到首字母占位
+const avatarFailed = ref(false);
+watch(() => authStore.user?.avatar, () => { avatarFailed.value = false; });
 
 const handleLogout = () => {
   authStore.logout();
@@ -95,8 +99,9 @@ const handleLogout = () => {
     <!-- 底部用户信息 + 退出 -->
     <div class="shrink-0 px-3 py-3 border-t border-slate-200 dark:border-gray-800">
       <div class="flex items-center gap-3">
-        <div class="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-500 to-indigo-400 flex items-center justify-center text-white text-xs font-bold shrink-0">
-          {{ (authStore.user?.name || '?')[0] }}
+        <div class="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-500 to-indigo-400 flex items-center justify-center text-white text-xs font-bold shrink-0 overflow-hidden">
+          <img v-if="authStore.user?.avatar && !avatarFailed" :src="authStore.user.avatar" alt="头像" class="w-full h-full object-cover" @error="avatarFailed = true" />
+          <span v-else>{{ (authStore.user?.name || '?')[0] }}</span>
         </div>
         <div class="flex-1 min-w-0">
           <div class="text-sm font-medium text-slate-700 dark:text-gray-200 truncate">{{ authStore.user?.name || '用户' }}</div>
