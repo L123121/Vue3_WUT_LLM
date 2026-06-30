@@ -305,10 +305,10 @@ export const uploadChatFile = async (file) => {
   const formData = new FormData();
   formData.append('file', file);
 
-  // 注意：不设置 Content-Type，让浏览器自动设为 multipart/form-data
+  // 不能传 fetchOpts（它带了 application/json 头），FormData 必须由浏览器自动设置 multipart/form-data
   const response = await fetch(`${API_URL}/chat/upload`, {
-    ...fetchOpts,
     method: 'POST',
+    credentials: 'include',
     body: formData,
   });
 
