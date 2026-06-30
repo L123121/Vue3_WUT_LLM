@@ -29,7 +29,7 @@ A RAG-enhanced AI copilot for WUT campus — intelligent chat, streaming output,
 ### 技术特点
 - **前后端分离** — Vue 3 前端 + Express 后端，支持独立部署
 - **模拟模式** — 未配置 API Key 时自动使用模拟响应，本地开发零配置
-- **In-Memory 存储** — 无需 Redis，数据持久化到 JSON 文件
+- **存储自适应** — 本地开发用内存 + JSON 文件（零依赖），生产用 Redis（会话缓存）
 - **Web Worker** — Markdown 渲染在 Worker 线程执行，不阻塞 UI
 - **连接状态管理** — 心跳检测 + 断线自动重连 + 待发送队列
 
@@ -387,7 +387,8 @@ data: [DONE]
 - **ws** — WebSocket
 
 ### 数据存储
-- **In-Memory + JSON 文件** — 会话数据持久化
+- **Redis** — 生产环境会话/记忆缓存（通过 `REDIS_URL` 启用）
+- **内存 + JSON 文件** — 本地开发（无 `REDIS_URL` 时自动降级，数据持久化到 `data/store.json`）
 - **localStorage** — 前端缓存与备份
 - **讯飞 ChatDoc** — 向量化 + RAG 知识库
 
@@ -398,30 +399,43 @@ data: [DONE]
 
 ## 🚢 部署
 
-### 前端 → Vercel（推荐）
+生产环境推荐 **Docker Compose** 一体化部署（nginx 反向代理 + Express 后端 + Redis），适用于阿里云 ECS 等服务器。
 
-1. 推送代码到 GitHub
-2. [Vercel](https://vercel.com) 导入项目
-3. Build Command: `npm run build`，Publish Directory: `dist`
-4. 在 Environment 中设置 `VITE_API_BASE_URL=https://your-backend.com/api`
+### 架构
 
-### 后端 → 阿里云学生机
+```
+用户 → 域名 → nginx (SSL 终止 + 反向代理)
+                ↓
+            backend (Express API + 前端静态资源)
+                ↓
+            redis (会话缓存)
+```
 
-1. 购买阿里云轻量应用服务器（2核 2G，Ubuntu 22.04）
-2. SSH 登录后安装 Node.js、PM2、Nginx
-3. 克隆代码，配置 `backend/.env`
-4. `npm install && npm run build && pm2 start backend/src/app.js`
-5. 配置 Nginx 反向代理
+后端在 `NODE_ENV=production` 下会自动托管前端 `dist/`（含 SPA history fallback），因此 nginx 只需反代到 backend 即可，无需单独部署前端。
 
-详细步骤见 [部署指南](https://github.com/L123121/Vue3_WUT_LLM/wiki/部署指南)。
+### 快速部署
 
-### 后端 → Render（免费版）
+1. 服务器安装 Docker 与 Docker Compose V2
+2. 克隆代码，复制并填写生产环境变量：
+   ```bash
+   cp deploy/.env.production.example deploy/.env.production
+   # 必填：AI_API_KEY、JWT_SECRET、SCHOOL_ENC_KEY、CORS_ORIGIN、REDIS_URL
+   ```
+   > ⚠️ 生产环境必须配置 `CORS_ORIGIN`（你的前端域名），否则后端会拒绝启动。
+3. 启动：`docker compose -p wuli-elf up -d`
+4. 配置 SSL 证书后 nginx 自动启用 HTTPS
 
-1. [Render](https://render.com) 注册账号
-2. 新建 Web Service，Root Directory 填 `backend`
-3. Build Command: `npm install`，Start Command: `node src/app.js`
-4. 添加环境变量（AI_API_KEY、JWT_SECRET 等）
-5. 新建 Static Site 部署前端
+完整步骤（含 CI/CD、证书初始化、一键脚本）见 **[deploy/README.md](deploy/README.md)**。
+
+### 本地开发
+
+```bash
+npm install          # 同时安装前端与 backend 依赖
+npm run dev          # 前端 Vite 开发服务器 (5173)
+cd backend && npm run dev   # 后端 nodemon (3000)
+```
+
+本地无需 Redis，未配置 `REDIS_URL` 时自动降级为内存 + JSON 文件存储。
 
 ---
 
