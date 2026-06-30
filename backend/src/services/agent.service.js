@@ -10,6 +10,7 @@ const { request } = require('../utils/httpClient');
 const { handleSimple, handleKnowledge, handleChat } = require('./agent-handlers');
 const { toolRegistry } = require('./agent-tools');
 const { workingMemoryStore } = require('./working-memory-store');
+const { AgentTracer } = require('./agent-tracer');
 
 /**
  * AgentService — 意图路由 + 多路径处理引擎
@@ -45,8 +46,9 @@ class AgentService {
 
   /**
    * 构建传递给 handler 的上下文对象
+   * @param {AgentTracer} tracer — 本次请求的轨迹记录器
    */
-  _buildHandlerCtx() {
+  _buildHandlerCtx(tracer) {
     return {
       aiService: this.aiService,
       buildToolArgs: this._buildToolArgs.bind(this),
@@ -56,6 +58,7 @@ class AgentService {
       saveMemory: this._saveMemory.bind(this),
       buildSystemPrompt: this._buildSystemPrompt.bind(this),
       callLLM: this._callLLM.bind(this),
+      tracer,
     };
   }
 
@@ -73,7 +76,10 @@ class AgentService {
     const skillPrompt = options.skillPrompt || '';
     const files = options.files || [];
     const signal = options.signal || null; // 客户端断开的 abort 信号
-    const ctx = this._buildHandlerCtx();
+
+    // 轨迹记录：贯穿本次请求，结束时结构化落盘 + console 输出
+    const tracer = new AgentTracer({ userId, conversationId, message });
+    const ctx = this._buildHandlerCtx(tracer);
 
     console.log(`[Agent] 用户消息: "${message.substring(0, 50)}", userId: ${userId || 'anonymous'}`);
 
@@ -90,7 +96,10 @@ class AgentService {
 
     // Phase 1: 意图识别 + 路由
     const routing = await this.intentRouter.route(message);
+    tracer.setRouting(routing);
     if (Date.now() - startTime > TOTAL_TIMEOUT) {
+      tracer.markTimeout();
+      tracer.finish();
       yield { type: 'content', content: '处理超时，请重试。', done: false };
       yield { type: 'content', content: '', done: true };
       return;
@@ -120,7 +129,7 @@ class AgentService {
         case 'react':
           // 选课可行性 → 统一走新 ReAct Agent（LLM 自主调用工具，支持多步推理）
           console.log('[Agent] react 路径 → ReAct Agent');
-          if (signal?.aborted) return;
+          if (signal?.aborted) { tracer.markAborted(); tracer.finish(); return; }
           try {
             yield* this.reactAgent.execute(message, history, {
               userId,
@@ -129,10 +138,12 @@ class AgentService {
               conversationId,
               signal,
               workingMemory,
+              tracer,
             });
           } catch (err) {
             // ReAct 失败时降级为成绩查询，保证用户至少拿到部分结果
             console.error('[Agent] ReAct Agent 失败，降级为成绩查询:', err.message);
+            tracer.markError(err);
             const fallbackRouting = { intent: 'query_grades', tool: 'query_grades', params: {} };
             yield* handleSimple(message, history, fallbackRouting, userId, skillPrompt, ctx);
           }
@@ -144,6 +155,7 @@ class AgentService {
             yield* this.analysisService.analyzeGradeTrend(userId);
           } catch (err) {
             console.error('[Agent] 分析服务失败，降级为成绩查询:', err.message);
+            tracer.markError(err);
             const fallbackRouting = { intent: 'query_grades', tool: 'query_grades', params: {} };
             yield* handleSimple(message, history, fallbackRouting, userId, skillPrompt, ctx);
           }
@@ -160,7 +172,7 @@ class AgentService {
           // agent 和 chat 走统一路径：
           // - 有 API Key + 工具 → ReAct Agent（LLM 自主决定是否调用工具）
           // - 无 API Key/工具 → 纯 LLM 对话
-          if (signal?.aborted) { console.log('[Agent] 客户端已断开'); return; }
+          if (signal?.aborted) { console.log('[Agent] 客户端已断开'); tracer.markAborted(); tracer.finish(); return; }
           if (this.aiService.apiKey && toolRegistry.getToolSchemas().length > 0) {
             console.log(`[Agent] ${routing.route} 路径 → ReAct Agent`);
             yield* this.reactAgent.execute(message, history, {
@@ -170,6 +182,7 @@ class AgentService {
               conversationId,
               signal,
               workingMemory,
+              tracer,
             });
           } else {
             console.log('[Agent] 使用纯对话路径');
@@ -179,16 +192,17 @@ class AgentService {
       }
     } catch (err) {
       console.error('[Agent] 处理异常:', err.message);
+      tracer.markError(err);
       yield { type: 'content', content: `处理出错：${err.message}`, done: false };
       yield { type: 'content', content: '', done: true };
     }
 
     if (Date.now() - startTime > TOTAL_TIMEOUT) {
       console.warn('[Agent] 总处理超时');
-    } else {
-      // 提取对话摘要保存到记忆
-      // 注意：实际保存由各 handler 内部完成
+      tracer.markTimeout();
     }
+    // iterations 由 ReactAgent 内部通过 tracer.setIterations 回填
+    tracer.finish();
   }
 
   // ==================== LLM 调用 ====================

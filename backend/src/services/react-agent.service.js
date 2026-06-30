@@ -61,7 +61,7 @@ class ReactAgent {
    * @param {Object} context - 上下文 { userId, memoryContext, skillPrompt, signal }
    */
   async *execute(message, history = [], context = {}) {
-    const { userId, memoryContext, skillPrompt, workingMemory, conversationId, signal } = context;
+    const { userId, memoryContext, skillPrompt, workingMemory, conversationId, signal, tracer } = context;
     const startTime = Date.now();
     const TOTAL_TIMEOUT = 120000; // 整个 ReAct 循环最多 2 分钟
 
@@ -124,7 +124,8 @@ class ReactAgent {
     let hasUsedTool = false;
 
     // 4. ReAct 循环
-    while (iteration < this.maxIterations) {
+    try {
+      while (iteration < this.maxIterations) {
       iteration++;
 
       // 客户端断开检查
@@ -220,7 +221,8 @@ class ReactAgent {
           const settledResults = await Promise.allSettled(
             tools_calls.map(c => this.toolRegistry.executeTool(c.name, c.args, { userId }))
           );
-          console.log(`[ReactAgent] ${tools_calls.length} 个工具并行执行完毕，耗时 ${Date.now() - startExec}ms`);
+          const execElapsed = Date.now() - startExec;
+          console.log(`[ReactAgent] ${tools_calls.length} 个工具并行执行完毕，耗时 ${execElapsed}ms`);
 
           // Step 6: 统一处理各工具结果
           for (let i = 0; i < tools_calls.length; i++) {
@@ -238,6 +240,17 @@ class ReactAgent {
 
             // 记录到工作记忆
             wm.recordStep(c.name, c.args, result);
+
+            // 记录到 Agent 轨迹（便于生产调试）
+            if (tracer) {
+              tracer.recordToolCall(
+                c.name,
+                c.args,
+                execElapsed,
+                settled.status === 'fulfilled',
+                settled.status === 'rejected' ? (settled.reason?.message) : undefined
+              );
+            }
 
             // 产出 tool_result 事件（前端展示）
             yield { type: 'tool_result', tool_result: { id: c.id, name: c.name, content: result, status: 'done' } };
@@ -279,6 +292,10 @@ class ReactAgent {
     wm.writeNote('已达到最大推理步数限制', '待验证');
     wm.endTurn();
     yield* this._streamContent('您的问题涉及较多步骤，无法在当前限制内完成。请尝试将问题拆解后分步提问，或简化您的问题。');
+    } finally {
+      // 无论正常结束 / 超时 / 异常 / abort，都回填本次 ReAct 的迭代步数到轨迹
+      if (tracer) tracer.setIterations(iteration);
+    }
   }
 
   // ==================== LLM 调用（含工具参数） ====================
