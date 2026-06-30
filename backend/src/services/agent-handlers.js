@@ -41,7 +41,17 @@ async function* handleSimple(message, history, routing, userId, skillPrompt, ctx
 
   console.log(`[Agent:Simple] 执行工具: ${toolName}(${JSON.stringify(args).substring(0, 80)})`);
 
-  const result = await toolRegistry.executeTool(toolName, args, { userId });
+  const _t0 = Date.now();
+  let result, toolErr;
+  try {
+    result = await toolRegistry.executeTool(toolName, args, { userId });
+  } catch (err) {
+    toolErr = err;
+    result = `工具执行出错: ${err.message}`;
+  }
+  if (ctx.tracer) {
+    ctx.tracer.recordToolCall(toolName, args, Date.now() - _t0, !toolErr, toolErr?.message);
+  }
   const fullResult = typeof result === 'string' ? result : JSON.stringify(result);
 
   yield {
@@ -66,6 +76,8 @@ async function* handleSimple(message, history, routing, userId, skillPrompt, ctx
     // 否则已 yield 的 tool_call 没有 tool_result，前端工具匹配会卡住
     let backfillResult;
     let backfillFailed = false;
+    const _bt0 = Date.now();
+    let backfillErr;
     try {
       const backfill = await toolRegistry.executeTool('query_ungraded_scores', args, { userId });
       backfillResult = typeof backfill === 'string' ? backfill : JSON.stringify(backfill);
@@ -73,6 +85,10 @@ async function* handleSimple(message, history, routing, userId, skillPrompt, ctx
       console.warn('[Agent:Simple] 未评教回填工具执行异常:', err.message);
       backfillResult = '查询失败';
       backfillFailed = true;
+      backfillErr = err;
+    }
+    if (ctx.tracer) {
+      ctx.tracer.recordToolCall('query_ungraded_scores', args, Date.now() - _bt0, !backfillFailed, backfillErr?.message);
     }
     yield {
       type: 'tool_result',
@@ -128,7 +144,17 @@ async function* handleKnowledge(message, history, routing, userId, skillPrompt, 
     tool_call: { id: toolCallId, name: 'search_knowledge_base', arguments: JSON.stringify(args) }
   };
 
-  const result = await toolRegistry.executeTool('search_knowledge_base', args, { userId });
+  const _t0 = Date.now();
+  let result, toolErr;
+  try {
+    result = await toolRegistry.executeTool('search_knowledge_base', args, { userId });
+  } catch (err) {
+    toolErr = err;
+    result = `工具执行出错: ${err.message}`;
+  }
+  if (ctx.tracer) {
+    ctx.tracer.recordToolCall('search_knowledge_base', args, Date.now() - _t0, !toolErr, toolErr?.message);
+  }
   const fullResult = typeof result === 'string' ? result : JSON.stringify(result);
 
   yield {
