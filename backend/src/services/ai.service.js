@@ -92,8 +92,9 @@ class AiService {
     const body = JSON.stringify(payload);
     const options = this._buildOptions(path);
     options.headers['Content-Length'] = Buffer.byteLength(body, 'utf8');
-    // 支持调用方覆盖超时时间
+    // 支持调用方覆盖超时时间和重试次数
     if (opts.timeout) options.timeout = opts.timeout;
+    if (opts.retries !== undefined) options.retries = opts.retries;
 
     console.log(`[AI] ${options.hostname}${options.path} model=${this.model} bodyLen=${body.length}`);
 

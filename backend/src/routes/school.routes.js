@@ -16,6 +16,15 @@ const loginLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// 绑定/解绑接口频率限制：每 IP 每分钟最多 5 次，防止密码暴力破解
+const bindLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000,
+  max: 5,
+  message: { success: false, code: 'RATE_LIMIT', message: '操作过于频繁，请稍后再试' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 const formatSchoolError = (err, fallbackMessage = '操作失败，请稍后重试') => {
   switch (err?.code) {
     case 'INVALID_CREDENTIALS':
@@ -69,13 +78,13 @@ router.post('/login', loginLimiter, async (req, res) => {
     // 清除旧 Cookie 缓存，确保每次都通过 Puppeteer 重新登录获取新 Cookie
     sessionService.invalidateSession(userId);
 
-    // 尝试 CAS 登录验证（加 60 秒超时，防止 Puppeteer 卡死）
+    // 尝试 CAS 登录验证（加 120 秒超时，教务系统较慢时可能需要较长时间）
     console.log(`[SchoolLogin] 开始 CAS 登录: studentId=${studentId}`);
     try {
       await Promise.race([
         sessionService.login(studentId, password, userId),
         new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('登录超时(60s)')), 60000)
+          setTimeout(() => reject(new Error('登录超时(120s)')), 120000)
         ),
       ]);
     } catch (err) {
@@ -151,7 +160,7 @@ router.use(requireAuth);
  * 绑定学校账号（学号 + 教务密码）
  * Body: { studentId, password }
  */
-router.post('/bind', async (req, res) => {
+router.post('/bind', bindLimiter, async (req, res) => {
   try {
     const { studentId, password } = req.body;
     const userId = req.userId;
@@ -243,7 +252,7 @@ router.get('/status', async (req, res) => {
  * DELETE /api/school/bind
  * 解绑学校账号
  */
-router.delete('/bind', async (req, res) => {
+router.delete('/bind', bindLimiter, async (req, res) => {
   try {
     const userId = req.userId;
     await store.del(`school:user:${userId}`);
