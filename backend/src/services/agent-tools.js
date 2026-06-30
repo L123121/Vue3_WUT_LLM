@@ -636,10 +636,6 @@ const courseSelectionTools = [
     parameters: {
       type: 'object',
       properties: {
-        userId: {
-          type: 'string',
-          description: '用户 ID'
-        },
         courseName: {
           type: 'string',
           description: '课程名称'
@@ -650,10 +646,11 @@ const courseSelectionTools = [
           description: '先修课程名称列表'
         }
       },
-      required: ['userId', 'prerequisites']
+      required: ['prerequisites']
     },
     handler: async (args, context) => {
-      const userId = args.userId || context?.userId;
+      // userId 由服务端从 context 注入，不暴露给 LLM
+      const userId = context?.userId;
       if (!userId) {
         return '检查先修课需要用户登录。请在设置中绑定学校账号。';
       }
@@ -687,19 +684,16 @@ const courseSelectionTools = [
     parameters: {
       type: 'object',
       properties: {
-        userId: {
-          type: 'string',
-          description: '用户 ID'
-        },
         newCourse: {
           type: 'object',
           description: '新课的时间信息：{weekDay, startPeriod, endPeriod, weekBitmap, courseName}'
         }
       },
-      required: ['userId', 'newCourse']
+      required: ['newCourse']
     },
     handler: async (args, context) => {
-      const userId = args.userId || context?.userId;
+      // userId 由服务端从 context 注入，不暴露给 LLM
+      const userId = context?.userId;
       if (!userId) {
         return '检查时间冲突需要用户登录。请在设置中绑定学校账号。';
       }
@@ -732,10 +726,6 @@ const courseSelectionTools = [
     parameters: {
       type: 'object',
       properties: {
-        userId: {
-          type: 'string',
-          description: '用户 ID'
-        },
         newCourseCredits: {
           type: 'number',
           description: '新课程的学分数'
@@ -745,10 +735,11 @@ const courseSelectionTools = [
           description: '学分上限（可选，默认25）'
         }
       },
-      required: ['userId', 'newCourseCredits']
+      required: ['newCourseCredits']
     },
     handler: async (args, context) => {
-      const userId = args.userId || context?.userId;
+      // userId 由服务端从 context 注入，不暴露给 LLM
+      const userId = context?.userId;
       if (!userId) {
         return '检查学分需要用户登录。请在设置中绑定学校账号。';
       }

@@ -142,13 +142,22 @@ class IntentRouter {
   }
 
   /**
-   * 快速路由：只做关键词匹配，不调用 LLM
-   * 用于在高频简单查询上跳过 LLM 调用
+   * 快速路由：只做零误判的关键词匹配，不调用 LLM
+   *
+   * 设计原则（裁剪后）：
+   *   fastRoute 只保留"高置信、几乎不会误判"的规则——明确动词的教务查询、
+   *   问候/告别、选课可行性、数学计算。其余所有模糊意图（校园生活、就业、
+   *   奖学金、教师、体育、时间天气、课程专业咨询……）一律返回 null，
+   *   交给 LLM 分类或直接走 ReAct Agent 自主决策。
+   *
+   *   理由：低置信正则(0.5-0.65)把大量边缘问题硬路由到 knowledge/simple，
+   *   既误路由率高，又架空了 ReAct Agent 的多步推理能力。复合意图
+   *   （如"查成绩并分析趋势"）应让 LLM 自行决定调用顺序，而非被关键词拆碎。
    */
   fastRoute(message) {
     const lower = message.toLowerCase();
 
-    // 选课可行性关键词（需要 ReAct 多步）
+    // 选课可行性关键词（需要 ReAct 多步）—— 动词明确，置信高
     if (/(我能选|可以选|能不能选|选.*可以|选.*不行|先修|前置|冲突|撞课|时间.*撞)/.test(lower)) {
       return {
         intent: INTENT_TYPES.COURSE_FEASIBILITY,
@@ -160,8 +169,8 @@ class IntentRouter {
       };
     }
 
-    // 成绩分析关键词（需要先匹配，避免被普通查成绩覆盖）
-    if (/(分析|趋势|分析一下|趋势.*分析|各科.*分析)/.test(lower) && /成绩|绩点|GPA|学分/.test(lower)) {
+    // 成绩分析（动词"分析"+成绩相关词）—— 先于普通查成绩匹配
+    if (/(分析|趋势)/.test(lower) && /(成绩|绩点|GPA|学分)/.test(lower)) {
       return {
         intent: INTENT_TYPES.GRADE_ANALYSIS,
         confidence: 0.75,
@@ -172,7 +181,7 @@ class IntentRouter {
       };
     }
 
-    // 查GPA（优先级高于查成绩，更精确匹配）
+    // 查GPA（精确匹配，优先于查成绩）
     if (/^(GPA|绩点|平均.*绩点|平均.*学分.*绩点|加权.*绩点|我的.*绩点|GPA.*多少|绩点.*多少)/i.test(lower)) {
       return {
         intent: INTENT_TYPES.QUERY_GPA,
@@ -184,8 +193,8 @@ class IntentRouter {
       };
     }
 
-    // 查成绩
-    if (/(成绩|绩点|GPA|考了多少|多少分|成绩.*怎么样|成绩.*如何)/.test(lower)) {
+    // 查成绩 —— 仅匹配明确的"查成绩"动词意图，避免"我成绩不好怎么办"被误判
+    if (/(查.*成绩|查成绩|成绩.*怎么样|成绩.*如何|考了多少|多少分|看.*成绩|我的成绩)/.test(lower)) {
       return {
         intent: INTENT_TYPES.QUERY_GRADES,
         confidence: 0.75,
@@ -196,8 +205,8 @@ class IntentRouter {
       };
     }
 
-    // 查未评教隐藏成绩
-    if (/(未评教|隐藏.*成绩|隐藏.*分数|回填|学业监测|未.*评教|评教.*成绩)/.test(lower)) {
+    // 查未评教隐藏成绩 —— 专有术语，零误判
+    if (/(未评教|隐藏.*成绩|隐藏.*分数|回填.*成绩|学业监测)/.test(lower)) {
       return {
         intent: INTENT_TYPES.QUERY_UNGRADED,
         confidence: 0.85,
@@ -208,8 +217,8 @@ class IntentRouter {
       };
     }
 
-    // 查课表
-    if (/(课表|课程表|明天.*课|今天.*课|这周.*课|周.*课|课.*表)/.test(lower)) {
+    // 查课表 —— 明确"课表/课程表"或"明天/今天/这周有什么课"
+    if (/(课表|课程表|明天.*什么.*课|今天.*什么.*课|这周.*什么.*课|明天.*课|今天.*课)/.test(lower)) {
       return {
         intent: INTENT_TYPES.QUERY_SCHEDULE,
         confidence: 0.75,
@@ -224,8 +233,8 @@ class IntentRouter {
       };
     }
 
-    // 查考试
-    if (/(考试|期末|考点|考场|座位号|监考)/.test(lower)) {
+    // 查考试 —— "考试安排/期末考试/考场/座位号"
+    if (/(考试.*安排|考试.*时间|期末.*考试|考场|座位号|什么时候.*考试)/.test(lower)) {
       return {
         intent: INTENT_TYPES.QUERY_EXAMS,
         confidence: 0.75,
@@ -236,7 +245,7 @@ class IntentRouter {
       };
     }
 
-    // 数学计算
+    // 数学计算 —— 含运算符或明确"计算"动词
     if (/(计算|算一下|算算|等于多少|[\d]+\s*[+\-*/]\s*[\d]+)/.test(lower)) {
       return {
         intent: INTENT_TYPES.CALCULATE,
@@ -248,115 +257,19 @@ class IntentRouter {
       };
     }
 
-    // 校园信息
-    if (/(校址|地址|电话|校车|校历|校区|概况|学校.*怎么样|学校.*介绍|图书馆|几点.*关门|开放.*时间)/.test(lower)) {
+    // 校园基础信息（校区地址/电话/校车/校历/校训/概况）—— campus_info 工具的固定主题，零误判
+    if (/(校区.*地址|学校.*地址|在哪里|怎么走|联系电话|校车.*时刻|班车|校历|校训|学校.*概况|学校.*简介)/.test(lower)) {
       return {
         intent: INTENT_TYPES.KNOWLEDGE_QUERY,
-        confidence: 0.6,
+        confidence: 0.7,
         params: { topic: this._extractTopic(message) },
         route: 'knowledge',
         tool: 'search_knowledge_base',
-        reason: '关键词匹配：校园信息',
+        reason: '关键词匹配：校园基础信息',
       };
     }
 
-    // 课程/专业查询
-    if (/(课程|专业|培养方案|教学计划|选修|必修|通识|公选|任选|限选|学分|培养目标)/.test(lower)) {
-      return {
-        intent: INTENT_TYPES.KNOWLEDGE_QUERY,
-        confidence: 0.65,
-        params: { topic: '专业课程', category: '教务相关' },
-        route: 'knowledge',
-        tool: 'search_knowledge_base',
-        reason: '关键词匹配：课程专业',
-      };
-    }
-
-    // 就业/考研/出国
-    if (/(就业|考研|出国|留学|毕业去向|就业率|考研率|工作|实习|招聘)/.test(lower)) {
-      return {
-        intent: INTENT_TYPES.KNOWLEDGE_QUERY,
-        confidence: 0.6,
-        params: { topic: '就业考研', category: '学校概况' },
-        route: 'knowledge',
-        tool: 'search_knowledge_base',
-        reason: '关键词匹配：就业考研',
-      };
-    }
-
-    // 奖学金/助学金
-    if (/(奖学金|助学金|助学贷款|贫困补助|评优|评奖)/.test(lower)) {
-      return {
-        intent: INTENT_TYPES.KNOWLEDGE_QUERY,
-        confidence: 0.65,
-        params: { topic: '奖学金', category: '教务相关' },
-        route: 'knowledge',
-        tool: 'search_knowledge_base',
-        reason: '关键词匹配：奖学金',
-      };
-    }
-
-    // 宿舍/食堂/校园生活
-    if (/(宿舍|寝室|食堂|饭堂|校园卡|一卡通|门禁|热水|网络|空调|洗衣机)/.test(lower)) {
-      return {
-        intent: INTENT_TYPES.KNOWLEDGE_QUERY,
-        confidence: 0.6,
-        params: { topic: '校园生活', category: '学校概况' },
-        route: 'knowledge',
-        tool: 'search_knowledge_base',
-        reason: '关键词匹配：校园生活',
-      };
-    }
-
-    // 转专业/休学/请假
-    if (/(转专业|休学|退学|复学|请假|延期|毕业|结业|肄业)/.test(lower)) {
-      return {
-        intent: INTENT_TYPES.KNOWLEDGE_QUERY,
-        confidence: 0.6,
-        params: { topic: '学籍教务', category: '教务相关' },
-        route: 'knowledge',
-        tool: 'search_knowledge_base',
-        reason: '关键词匹配：学籍教务',
-      };
-    }
-
-    // 体测/体育
-    if (/(体测|体育|运动会|跑步|校园跑|健康|体检)/.test(lower)) {
-      return {
-        intent: INTENT_TYPES.KNOWLEDGE_QUERY,
-        confidence: 0.55,
-        params: { topic: '体育健康', category: '学校概况' },
-        route: 'knowledge',
-        tool: 'search_knowledge_base',
-        reason: '关键词匹配：体育健康',
-      };
-    }
-
-    // 导师/教师
-    if (/(导师|老师|教师|教授|博导|硕导|辅导员|班主任)/.test(lower)) {
-      return {
-        intent: INTENT_TYPES.KNOWLEDGE_QUERY,
-        confidence: 0.55,
-        params: { topic: '教师导师' },
-        route: 'knowledge',
-        tool: 'search_knowledge_base',
-        reason: '关键词匹配：教师导师',
-      };
-    }
-
-    // 时间/日期/天气
-    if (/(几点了|今天.*号|星期几|什么日子|天气|温度|下雨)/.test(lower)) {
-      return {
-        intent: INTENT_TYPES.GENERAL_CHAT,
-        confidence: 0.5,
-        params: {},
-        route: 'chat',
-        tool: null,
-        reason: '关键词匹配：时间天气',
-      };
-    }
-
-    // 问候语
+    // 问候语 —— 零误判
     if (/(你好|您好|嗨|早上好|晚上好|下午好|hello|hi)/.test(lower)) {
       return {
         intent: INTENT_TYPES.GENERAL_CHAT,
@@ -368,8 +281,8 @@ class IntentRouter {
       };
     }
 
-    // 感谢/告别
-    if (/(谢谢|感谢|再见|拜拜|好的|明白了|知道了|ok|好的吧)/.test(lower)) {
+    // 感谢/告别 —— 零误判
+    if (/(谢谢|感谢|再见|拜拜)/.test(lower)) {
       return {
         intent: INTENT_TYPES.GENERAL_CHAT,
         confidence: 0.8,
@@ -380,12 +293,8 @@ class IntentRouter {
       };
     }
 
-    // 帮忙/求助类（返回较低置信度，让 route() 决定是否走 LLM 分类）
-    if (/(请问|有没有|如何|怎么|怎样|什么.*意思|什么意思)/.test(lower)) {
-      return null; // 走 LLM 分类或 fallback
-    }
-
-    // 默认：需要 LLM 分类
+    // 其余所有模糊意图（校园生活、就业考研、奖学金、教师、体育、课程专业咨询、
+    // 时间天气、求助类等）→ 不做硬路由，交给 LLM 分类或 ReAct Agent 自主决策
     return null;
   }
 
