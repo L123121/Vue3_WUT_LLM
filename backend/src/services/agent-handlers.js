@@ -54,8 +54,53 @@ async function* handleSimple(message, history, routing, userId, skillPrompt, ctx
     }
   };
 
+  // ---- query_grades 特殊处理：检测到"未评教"时自动触发成绩回填 ----
+  if (toolName === 'query_grades' && /未评教|N\/A/i.test(fullResult)) {
+    console.log('[Agent:Simple] 检测到未评教成绩，自动触发隐藏成绩回填...');
+    const backfillId = ctx.genId();
+    yield {
+      type: 'tool_call',
+      tool_call: { id: backfillId, name: 'query_ungraded_scores', arguments: JSON.stringify(args) }
+    };
+    // 工具执行可能抛异常（接口 500/超时等），需捕获后走"使用原始成绩"降级路径，
+    // 否则已 yield 的 tool_call 没有 tool_result，前端工具匹配会卡住
+    let backfillResult;
+    let backfillFailed = false;
+    try {
+      const backfill = await toolRegistry.executeTool('query_ungraded_scores', args, { userId });
+      backfillResult = typeof backfill === 'string' ? backfill : JSON.stringify(backfill);
+    } catch (err) {
+      console.warn('[Agent:Simple] 未评教回填工具执行异常:', err.message);
+      backfillResult = '查询失败';
+      backfillFailed = true;
+    }
+    yield {
+      type: 'tool_result',
+      tool_result: { id: backfillId, name: 'query_ungraded_scores', content: backfillResult, status: 'done' }
+    };
+    // 回填成功（不含"失败"字样）才合并，否则直接用原始成绩
+    if (!backfillFailed && !/失败/i.test(backfillResult)) {
+      const combined = fullResult + '\n\n【未评教成绩回填结果】\n' + backfillResult;
+      yield { type: 'thinking', content: '正在整理结果...' };
+      const polished = await ctx.polishResult(toolName, combined, message, skillPrompt);
+      yield* ctx.streamContent(polished);
+      ctx.saveMemory(userId, message, polished);
+    } else {
+      console.warn('[Agent:Simple] 成绩回填失败，使用原始成绩:', backfillResult.substring(0, 100));
+      // 把错误信息附加到末尾，不干扰原始成绩
+      const note = '\n\n⚠️ 未评教成绩查询暂时不可用，以上显示的是原始成绩数据。';
+      yield { type: 'thinking', content: '正在整理结果...' };
+      const polished = await ctx.polishResult(toolName, fullResult + note, message, skillPrompt);
+      yield* ctx.streamContent(polished);
+      ctx.saveMemory(userId, message, polished);
+    }
+    return;
+  }
+
   // 数据查询类直接返回，跳过 LLM 润色
-  const directTools = ['query_grades', 'query_course_schedule', 'query_exam_schedule'];
+  // 注意：query_grades 不走 directTools，因为用户常问具体课程（如"计网考的怎么样"），
+  // 需要 LLM 润色成自然语言回答而非原始数据转储
+  const directTools = ['query_course_schedule', 'query_exam_schedule'];
   if (directTools.includes(toolName)) {
     yield* ctx.streamContent(fullResult);
     ctx.saveMemory(userId, message, fullResult);

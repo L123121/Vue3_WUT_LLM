@@ -114,11 +114,21 @@ class AgentService {
           break;
 
         case 'react':
-          // 选课可行性（现有硬编码 ReAct）
+          // 选课可行性 → 统一走新 ReAct Agent（LLM 自主调用工具，支持多步推理）
+          console.log('[Agent] react 路径 → ReAct Agent');
+          if (signal?.aborted) return;
           try {
-            yield* this.reactPlanner.analyzeCourseFeasibility(message, userId);
+            yield* this.reactAgent.execute(message, history, {
+              userId,
+              memoryContext,
+              skillPrompt,
+              conversationId,
+              signal,
+              workingMemory: this._getWorkingMemory(conversationId),
+            });
           } catch (err) {
-            console.error('[Agent] React 规划失败，降级为 Simple:', err.message);
+            // ReAct 失败时降级为成绩查询，保证用户至少拿到部分结果
+            console.error('[Agent] ReAct Agent 失败，降级为成绩查询:', err.message);
             const fallbackRouting = { intent: 'query_grades', tool: 'query_grades', params: {} };
             yield* handleSimple(message, history, fallbackRouting, userId, skillPrompt, ctx);
           }
@@ -228,19 +238,27 @@ class AgentService {
       year: 'numeric', month: 'long', day: 'numeric', weekday: 'long',
     });
 
-    const prompt = `以自然语气回答用户，保留全部关键信息。当前日期是 ${dateStr}。
+    const prompt = `你是武汉理工大学校园AI助手，根据**数据**直接回答用户的**问题**，不编造。当前日期是 ${dateStr}。
 
-用户：${userMessage}
+用户问题：${userMessage}
 
-数据：${rawResult.substring(0, 4000)}`;
+查询返回的数据：
+${rawResult.substring(0, 3000)}
+
+要求：
+1. 直接回答用户问题，不要答非所问
+2. 用户问具体课程（如"计网"）时，优先筛选该课程的信息回答
+3. 如果涉及"未评教成绩回填"，指出哪些是回填的真实成绩
+4. 如果数据中没有用户问的信息，诚实告知
+5. 格式简洁清晰`;
 
     try {
-      const response = await this.aiService.getCompletion(prompt, [], { timeout: 15000 });
-      if (!response || !response.content) {
-        console.warn('[Agent] 润色超时(15s)或返回空，返回原始结果');
+      const response = await this.aiService.getCompletion(prompt, [], { timeout: 15000, retries: 0 });
+      if (!response || !response.content || response.isMock) {
+        console.warn('[Agent] 润色超时或失败，返回原始数据');
         return rawResult;
       }
-      return response.content || rawResult;
+      return response.content;
     } catch (err) {
       console.error('[Agent] 润色失败:', err.message);
       return rawResult;

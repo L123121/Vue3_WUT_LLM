@@ -422,7 +422,10 @@ class SchoolApiService {
 
       // 2. 解析学业监测数据
       if (monitorRes.data?.code !== '0') {
-        throw new Error(monitorRes.data?.msg || '获取学业监测数据失败');
+        const errMsg = monitorRes.data?.msg || '未知错误';
+        // 上游 msg 可能含内部错误细节，仅记日志用于排查，不透传到响应层
+        console.warn(`[SchoolApi] 学业监测接口返回非零状态: code=${monitorRes.data?.code}, msg=${errMsg}`);
+        throw new Error('获取学业监测数据失败，请稍后重试');
       }
 
       const rootNodes = monitorRes.data?.datas?.cxxyjs?.rows || [];

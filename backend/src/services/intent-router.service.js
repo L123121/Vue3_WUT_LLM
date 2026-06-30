@@ -103,15 +103,15 @@ class IntentRouter {
 
     try {
       const prompt = CLASSIFICATION_PROMPT.replace('{message}', message);
-      // 分类调用加 10 秒超时，超时就走关键词匹配
+      // 分类调用加 15 秒超时，超时就走关键词匹配
       const response = await Promise.race([
-        this.aiService.getCompletion(prompt, []),
+        this.aiService.getCompletion(prompt, [], { timeout: 15000, retries: 0 }),
         new Promise((resolve) =>
-          setTimeout(() => resolve({ content: '', isMock: true, _timeout: true }), 10000)
+          setTimeout(() => resolve({ content: '', isMock: true, _timeout: true }), 15000)
         ),
       ]);
       if (response._timeout) {
-        console.warn('[IntentRouter] LLM 分类超时(10s)，降级为关键词匹配');
+        console.warn('[IntentRouter] LLM 分类超时(15s)，降级为关键词匹配');
         return this._fallbackClassify(message);
       }
 
@@ -467,15 +467,27 @@ class IntentRouter {
     const quick = this.fastRoute(message);
     if (quick) return quick;
 
-    // 未识别的消息也走知识库 + LLM，而不是纯 LLM
-    // 这样即使 LLM 无法分类，也能用知识库检索兜底
+    // 兜底路由：
+    // - 配置了 LLM apiKey → 走 ReAct Agent，让 LLM 自行判断是否需要工具
+    // - 未配置 apiKey → ReAct Agent 会降级为 mock 对话，回答质量差；
+    //   此时改走知识库检索，至少能给到有用信息
+    if (this.aiService.apiKey) {
+      return {
+        intent: INTENT_TYPES.GENERAL_CHAT,
+        confidence: 0.3,
+        params: {},
+        route: 'agent',
+        tool: null,
+        reason: 'fallback: 有 apiKey，默认走 ReAct Agent',
+      };
+    }
     return {
       intent: INTENT_TYPES.KNOWLEDGE_QUERY,
       confidence: 0.3,
-      params: { topic: 'general' },
+      params: {},
       route: 'knowledge',
       tool: 'search_knowledge_base',
-      reason: 'fallback: 默认走知识库检索',
+      reason: 'fallback: 无 apiKey，降级走知识库检索',
     };
   }
 }
