@@ -34,10 +34,10 @@ export const useChatStore = defineStore('chat', () => {
   const currentConversationId = computed(() => conversationStore.currentConversationId);
   const currentConversation = computed(() => conversationStore.currentConversation);
   const sortedConversations = computed(() => conversationStore.sortedConversations);
-  const messages = computed(() => {
-    const conv = conversationStore.currentConversation;
-    return conv?.messages || [];
-  });
+  // updateMessage 通过 conv.messages = newMessages 替换引用来触发响应式，
+  // 这里直接返回 conv.messages 即可触发 computed 重算，无需额外浅拷贝
+  // （浅拷贝会与 MessageList 的 v-memo 交互产生过期渲染，且增加每帧开销）
+  const messages = computed(() => conversationStore.currentConversation?.messages || []);
   const isLoaded = computed(() => conversationStore.isLoaded);
 
   // 状态 - 代理到 messageStore
@@ -51,7 +51,15 @@ export const useChatStore = defineStore('chat', () => {
   const loadConversations = () => conversationStore.loadConversations();
   const loadConversationMessages = (id) => conversationStore.loadConversationMessages(id);
   const createConversation = (title) => conversationStore.createConversation(title);
-  const switchConversation = (id) => conversationStore.switchConversation(id);
+  const switchConversation = (id) => {
+    // 切换前若仍有指向其他会话的活跃流式，先中止，避免旧流继续往旧会话写消息、
+    // currentStreamingId 错配导致新会话 UI 状态不一致
+    const activeId = messageStore.activeStreamingConversationId;
+    if (messageStore.isLoading && activeId && activeId !== id) {
+      messageStore.abortCurrentRequest();
+    }
+    return conversationStore.switchConversation(id);
+  };
   const renameConversation = (id, title) => conversationStore.renameConversation(id, title);
   const deleteConversation = (id) => {
     // 如果正在删除的会话有流式传输，先中止

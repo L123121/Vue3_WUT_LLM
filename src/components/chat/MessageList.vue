@@ -93,6 +93,14 @@ const reconnectProgress = computed(() => {
   return Math.min((chatStore.reconnectAttempt / 3) * 100, 100);
 });
 
+// 流式进行中、但 AI 消息尚未收到第一个 chunk（内容为空）时显示 typing 占位，
+// 避免首字节延迟期间没有任何反馈
+const showTypingIndicator = computed(() => {
+  if (!props.isLoading || !props.currentStreamingId) return false;
+  const msg = props.messages.find((item) => item.id === props.currentStreamingId);
+  return !msg || !(msg.content || msg.text);
+});
+
 watch(() => props.messages.length, () => {
   scrollToBottom();
 });
@@ -138,7 +146,7 @@ defineExpose({ scrollToBottom, shouldAutoScroll });
     >
       <TransitionGroup name="msg" tag="div">
         <div v-for="(msg, index) in messages" :key="msg.id"
-          v-memo="[msg.text, msg.isError, msg.sources, msg.canRetry, msg.toolCalls?.length, msg.thinkingSteps?.length, msg.id === currentStreamingId]"
+          v-memo="[msg.content, msg.text, msg.isError, msg.sources, msg.canRetry, msg.toolCalls?.length, msg.thinkingSteps?.length, msg.id === currentStreamingId]"
           class="mb-4">
           <LazyMessage v-if="shouldLazyLoad(index)" root-margin="400px">
             <MessageBubble :message="msg" @copy="handleCopy" />
@@ -177,22 +185,22 @@ defineExpose({ scrollToBottom, shouldAutoScroll });
       </div>
     </div>
 
-    <!-- Empty state -->
-    <div v-else class="flex-1 flex flex-col items-center justify-center text-slate-400 dark:text-gray-500 space-y-4 opacity-50">
-      <Bot :size="48" class="stroke-1" />
-      <p class="text-sm">{{ languageStore.t('chat.empty') }}</p>
-    </div>
-
-    <!-- Sending / Thinking indicator -->
-    <div v-if="isLoading && messages.length > 0" class="flex justify-start px-4 pb-4">
+    <!-- Typing indicator：流式进行中且首字节尚未到达时显示 -->
+    <div v-if="showTypingIndicator" class="flex justify-start px-4 pb-4">
       <div class="flex items-center ml-10 bg-white dark:bg-gray-800 px-4 py-3 rounded-2xl rounded-tl-none border border-slate-100 dark:border-gray-700 shadow-sm">
         <div class="flex items-center gap-1 mr-2">
           <span class="w-1.5 h-1.5 rounded-full bg-blue-500 animate-bounce" style="animation-delay: 0s"></span>
           <span class="w-1.5 h-1.5 rounded-full bg-blue-500 animate-bounce" style="animation-delay: 0.15s"></span>
           <span class="w-1.5 h-1.5 rounded-full bg-blue-500 animate-bounce" style="animation-delay: 0.3s"></span>
         </div>
-        <span class="text-xs text-slate-500 dark:text-gray-400">{{ currentStreamingId ? '正在输入...' : '思考中...' }}</span>
+        <span class="text-xs text-slate-500 dark:text-gray-400">思考中...</span>
       </div>
+    </div>
+
+    <!-- Empty state -->
+    <div v-else class="flex-1 flex flex-col items-center justify-center text-slate-400 dark:text-gray-500 space-y-4 opacity-50">
+      <Bot :size="48" class="stroke-1" />
+      <p class="text-sm">{{ languageStore.t('chat.empty') }}</p>
     </div>
 
     <!-- Reconnection overlay -->

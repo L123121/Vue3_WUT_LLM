@@ -43,6 +43,32 @@ const flushSave = (conversations, currentId) => {
   saveCache(conversations, currentId);
 };
 
+// 模块级单例：beforeunload 监听 + 自动保存定时器
+// store 可能在 HMR/测试中被多次实例化，用模块级变量保证只注册一次，
+// 并提供 dispose 以便测试 / 应用卸载时清理，避免内存与监听器泄漏。
+let beforeUnloadRegistered = false;
+let autoSaveTimer = null;
+const latestStoreRef = { value: null }; // 间接持有最近一次 store 实例的状态 getter
+
+const beforeUnloadHandler = () => {
+  const store = latestStoreRef.value;
+  if (!store) return;
+  flushSave(store.conversations, store.currentConversationId);
+  if (store.currentConversationId) {
+    localStorage.setItem(CURRENT_CONVERSATION_KEY, store.currentConversationId);
+  }
+};
+
+// 供测试 / 应用卸载调用：清理模块级定时器与监听
+export const disposeConversationStore = () => {
+  if (autoSaveTimer) { clearInterval(autoSaveTimer); autoSaveTimer = null; }
+  if (beforeUnloadRegistered && typeof window !== 'undefined') {
+    window.removeEventListener('beforeunload', beforeUnloadHandler);
+    beforeUnloadRegistered = false;
+  }
+  latestStoreRef.value = null;
+};
+
 export const useConversationStore = defineStore('conversation', () => {
   let authStore = null;
 
@@ -88,26 +114,36 @@ export const useConversationStore = defineStore('conversation', () => {
     }
 
     try {
+      // 优先从 localStorage 缓存恢复本地会话（含消息）
+      const cached = loadCache();
+      if (cached) console.log(`[Cache] 找到缓存: ${cached.conversations?.length || 0} 个会话, currentId=${cached.currentId?.substring(0, 20)}`);
+      else console.warn('[Cache] 缓存为空或版本不匹配');
+      let hasLocalConversations = false;
+      if (cached?.conversations?.length > 0) {
+        conversations.value = cached.conversations;
+        currentConversationId.value = cached.currentId || cached.conversations[0].id;
+        hasLocalConversations = true;
+      }
+
+      // 尝试从后端加载服务端会话（补充合并）
       const data = await fetchConversations();
-      if (data.length === 0) {
-        // 后端返回空（可能 Redis 未启动），从统一缓存恢复
-        const cached = loadCache();
-        if (cached?.conversations?.length > 0) {
-          conversations.value = cached.conversations;
-          currentConversationId.value = cached.currentId || cached.conversations[0].id;
-        } else {
-          const localConv = createLocalConversation('新会话');
-          conversations.value = [localConv];
-          currentConversationId.value = localConv.id;
-        }
-      } else {
-        conversations.value = data.map((conv) => ({ ...conv, messages: [] }));
-        if (currentConversationId.value && !conversations.value.find((c) => c.id === currentConversationId.value)) {
-          currentConversationId.value = conversations.value[0]?.id || '';
-        }
+      if (data.length > 0) {
+        // 后端有数据：合并到当前会话列表（去重，本地会话优先保留消息）
+        const serverIds = new Set(data.map(c => c.id));
+        const serverConvs = data.map(conv => ({ ...conv, messages: [] }));
+        // 保留本地有但后端没有的会话（本地创建的会话）
+        const localOnly = hasLocalConversations
+          ? conversations.value.filter(c => !serverIds.has(c.id))
+          : [];
+        conversations.value = [...serverConvs, ...localOnly];
         if (!currentConversationId.value && conversations.value.length > 0) {
           currentConversationId.value = conversations.value[0].id;
         }
+      } else if (!hasLocalConversations) {
+        // 后端和缓存都空 → 创建默认会话
+        const localConv = createLocalConversation('新会话');
+        conversations.value = [localConv];
+        currentConversationId.value = localConv.id;
       }
       isLoaded.value = true;
       // 首次加载成功后清理旧版备份
@@ -297,18 +333,31 @@ export const useConversationStore = defineStore('conversation', () => {
   };
 
   // 页面刷新/关闭前将未保存的数据刷入 localStorage
+  // 模块级单次注册：store 可能在 HMR/测试中被多次实例化，
+  // 用标志位避免重复注册 beforeunload 监听和定时器造成泄漏
   const setupBeforeUnload = () => {
-    window.addEventListener('beforeunload', () => {
-      flushSave(conversations.value, currentConversationId.value);
-      // 确保当前会话 ID 也持久化
-      if (currentConversationId.value) {
-        localStorage.setItem(CURRENT_CONVERSATION_KEY, currentConversationId.value);
-      }
-    });
+    if (beforeUnloadRegistered) return;
+    beforeUnloadRegistered = true;
+    window.addEventListener('beforeunload', beforeUnloadHandler);
   };
-
-  // 初始化时注册 beforeunload
   setupBeforeUnload();
+
+  // 定时自动保存（每 30 秒，确保聊天气泡的内容在刷新前已完成持久化）
+  if (!autoSaveTimer) {
+    autoSaveTimer = setInterval(() => {
+      // 定时器在 store 外部，无法直接访问当前实例的 conversations；
+      // 通过 latestStoreRef 间接引用最近一次实例化的 store
+      const store = latestStoreRef.value;
+      if (store && store.conversations.length > 0) {
+        flushSave(store.conversations, store.currentConversationId);
+      }
+    }, 30000);
+    if (autoSaveTimer && autoSaveTimer.unref) autoSaveTimer.unref();
+  }
+  latestStoreRef.value = {
+    get conversations() { return conversations.value; },
+    get currentConversationId() { return currentConversationId.value; },
+  };
 
   return {
     conversations,
