@@ -53,6 +53,19 @@ const statusConfig = computed(() => {
       };
   }
 });
+
+// 耗时格式化：>1000ms → 1.2s，<1000ms → 820ms
+const durationText = computed(() => {
+  const ms = props.toolCall?.durationMs;
+  if (ms == null || isNaN(ms)) return '';
+  if (ms >= 1000) return (ms / 1000).toFixed(1) + 's';
+  return Math.round(ms) + 'ms';
+});
+
+// 工具是否已结束（用来决定右侧显示耗时还是状态标签）
+const isFinished = computed(() =>
+  props.toolCall?.status === 'done' || props.toolCall?.status === 'error'
+);
 </script>
 
 <template>
@@ -72,7 +85,7 @@ const statusConfig = computed(() => {
       />
     </span>
 
-    <!-- 工具调用卡片（不可展开） -->
+    <!-- 工具调用卡片（不可展开，极简） -->
     <span
       class="flex-1 flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5"
       :class="statusConfig.bg + ' ' + statusConfig.border"
@@ -81,12 +94,22 @@ const statusConfig = computed(() => {
       <span class="truncate text-[11px] text-slate-700 dark:text-gray-200">
         {{ toolCall.name }}
       </span>
+      <!-- 已结束且有耗时：显示耗时 + ✓（极简，不显示参数/结果） -->
       <span
-        v-if="toolCall.completed || toolCall.status === 'done'"
+        v-if="isFinished && durationText"
+        class="ml-auto flex items-center gap-1 text-[10px] shrink-0 text-emerald-500 dark:text-emerald-400 font-mono"
+      >
+        <Check :size="9" />
+        <span>{{ durationText }}</span>
+      </span>
+      <!-- 已结束但无耗时数据：回退显示"已完成" -->
+      <span
+        v-else-if="toolCall.completed || toolCall.status === 'done'"
         class="ml-auto text-emerald-500 text-[10px] shrink-0"
       >
         已完成
       </span>
+      <!-- 进行中/等待：显示状态标签 -->
       <span
         v-else
         class="ml-auto px-1.5 py-0.5 rounded-md text-[10px] font-medium"

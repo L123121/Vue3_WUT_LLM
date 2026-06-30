@@ -64,4 +64,26 @@ describe('AgentTracer', () => {
     const step = t.steps[0];
     expect(step.args).toBeTruthy();
   });
+
+  it('toSummary 输出前端展示所需字段，不含敏感/大字段', () => {
+    const t = new AgentTracer({ userId, conversationId: 'c3', message: '查课表' });
+    t.setRouting({ route: 'simple', intent: 'query_schedule', confidence: 0.75 });
+    t.recordToolCall('query_course_schedule', { week: 3 }, 90, true);
+    t.recordToolCall('query_ungraded_scores', {}, 200, false, '超时');
+    t.setIterations(1);
+
+    const s = t.toSummary();
+    // 展示字段齐全
+    expect(s.route).toBe('simple');
+    expect(s.intent).toBe('query_schedule');
+    expect(s.confidence).toBe(0.75);
+    expect(s.iterations).toBe(1);
+    expect(s.stepCount).toBe(2);
+    expect(s.status).toBe('ok');
+    expect(s.totalMs).toBeGreaterThanOrEqual(0);
+    // 不应包含 steps 正文 / message / userId（敏感或大字段）
+    expect(s.steps).toBeUndefined();
+    expect(s.message).toBeUndefined();
+    expect(s.userId).toBeUndefined();
+  });
 });

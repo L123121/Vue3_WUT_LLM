@@ -122,6 +122,11 @@ describe('ReactAgent 无进展循环检测', () => {
     const contents = events.filter(e => e.type === 'content' && e.content).map(e => e.content).join('');
     expect(contents).toContain('这是最终结论');
     expect(events.some(e => e.type === 'content' && e.done)).toBe(true);
+    // tool_result 事件附带 durationMs（供前端工具卡片显示耗时）
+    const toolResults = events.filter(e => e.type === 'tool_result');
+    expect(toolResults.length).toBeGreaterThan(0);
+    expect(toolResults.every(e => typeof e.tool_result.durationMs === 'number')).toBe(true);
+    expect(toolResults.every(e => e.tool_result.durationMs >= 0)).toBe(true);
   });
 
   it('不同工具调用不触发循环检测', async () => {

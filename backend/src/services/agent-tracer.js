@@ -107,6 +107,22 @@ class AgentTracer {
     };
   }
 
+  /**
+   * 轻量摘要——供 SSE trace 事件回传给前端展示用（推理总览小条）
+   * 不含 steps 正文 / message / userId 等敏感或大字段，只给前端需要的展示数据
+   */
+  toSummary() {
+    return {
+      route: this.route,
+      intent: this.intent,
+      confidence: this.confidence,
+      iterations: this.iterations,
+      stepCount: this.steps.length,
+      status: this.status,
+      totalMs: this.endedAt ? (this.endedAt - this.startedAt) : (Date.now() - this.startedAt),
+    };
+  }
+
   // ==================== 内部 ====================
 
   _truncateArgs(args) {

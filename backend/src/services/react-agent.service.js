@@ -307,7 +307,9 @@ class ReactAgent {
             }
 
             // 产出 tool_result 事件（前端展示）
-            yield { type: 'tool_result', tool_result: { id: c.id, name: c.name, content: result, status: 'done' } };
+            // 附带 durationMs：本轮并行工具的总执行耗时（单工具场景即该工具耗时；
+            // 并行多工具共享同一 execElapsed，可接受——并行工具本就该显示相近耗时）
+            yield { type: 'tool_result', tool_result: { id: c.id, name: c.name, content: result, status: 'done', durationMs: execElapsed } };
 
             // 将 assistant 消息（含 tool_calls）加入历史
             messages.push({

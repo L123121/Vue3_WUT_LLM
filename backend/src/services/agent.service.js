@@ -202,7 +202,9 @@ class AgentService {
       tracer.markTimeout();
     }
     // iterations 由 ReactAgent 内部通过 tracer.setIterations 回填
+    // 先 finish（设 endedAt + 落盘），再 yield 摘要给前端（推理总览小条）
     tracer.finish();
+    yield { type: 'trace', trace: tracer.toSummary() };
   }
 
   // ==================== LLM 调用 ====================

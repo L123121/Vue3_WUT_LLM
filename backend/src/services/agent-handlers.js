@@ -61,6 +61,7 @@ async function* handleSimple(message, history, routing, userId, skillPrompt, ctx
       name: toolName,
       content: fullResult,
       status: 'done',
+      durationMs: Date.now() - _t0,
     }
   };
 
@@ -92,7 +93,7 @@ async function* handleSimple(message, history, routing, userId, skillPrompt, ctx
     }
     yield {
       type: 'tool_result',
-      tool_result: { id: backfillId, name: 'query_ungraded_scores', content: backfillResult, status: 'done' }
+      tool_result: { id: backfillId, name: 'query_ungraded_scores', content: backfillResult, status: 'done', durationMs: Date.now() - _bt0 }
     };
     // 回填成功（不含"失败"字样）才合并，否则直接用原始成绩
     if (!backfillFailed && !/失败/i.test(backfillResult)) {
@@ -159,7 +160,7 @@ async function* handleKnowledge(message, history, routing, userId, skillPrompt, 
 
   yield {
     type: 'tool_result',
-    tool_result: { id: toolCallId, name: 'search_knowledge_base', content: fullResult }
+    tool_result: { id: toolCallId, name: 'search_knowledge_base', content: fullResult, durationMs: Date.now() - _t0 }
   };
 
   const polished = await ctx.polishResult('search_knowledge_base', fullResult, message, skillPrompt);

@@ -138,6 +138,10 @@ const streamHandler = async (req, res) => {
         case 'tool_result':
           res.write(`data: ${JSON.stringify({ tool_result: chunk.tool_result })}\n\n`);
           break;
+        case 'trace':
+          // 推理总览摘要（路由/步数/总耗时/置信度），供前端展示
+          res.write(`data: ${JSON.stringify({ trace: chunk.trace })}\n\n`);
+          break;
         case 'content':
           if (chunk.done) {
             res.write(`data: [DONE]\n\n`);
