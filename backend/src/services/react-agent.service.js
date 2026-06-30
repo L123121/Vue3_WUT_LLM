@@ -24,7 +24,7 @@ const { WorkingMemory } = require('./working-memory.service');
  * - 记忆增强（跨步骤工作记忆 + 长短期记忆注入）
  */
 
-const { request } = require('../utils/httpClient');
+const { request, requestStream } = require('../utils/httpClient');
 
 // 工具结果截断常量（防止上下文窗口溢出）
 const MAX_TOOL_RESULT_LENGTH = 3000;
@@ -123,6 +123,11 @@ class ReactAgent {
     let iteration = 0;
     let hasUsedTool = false;
 
+    // 无进展循环检测：记录上一轮工具调用签名，连续相同则提示 LLM 收尾
+    let lastCallSignature = null;
+    let repeatCount = 0;
+    let forceFinal = false; // 已提示过收尾，下一轮若仍调工具则强制 break
+
     // 4. ReAct 循环
     try {
       while (iteration < this.maxIterations) {
@@ -150,28 +155,36 @@ class ReactAgent {
       yield { type: 'thinking', content: thinkingText };
 
       try {
-        // 调用 LLM（携带工具描述）
-        const response = await this._callLLMWithTools(messages, tools);
+        // 流式调用 LLM（携带工具描述）— 真流式：文本 token 实时 yield，工具调用按 index 拼接
+        let toolCalls = null;       // 流结束时的完整工具调用
+        let finalContent = '';      // 流结束时的完整文本（最终答案用）
+        let streamHadContent = false;
 
-        // LLM 返回后检查断开信号（调用可能花了较长时间）
+        for await (const ev of this._callLLMWithToolsStream(messages, tools, signal)) {
+          if (ev.type === 'delta') {
+            // 文本 token 实时透传给前端（最终答案的首 token 即出）
+            if (ev.content) {
+              streamHadContent = true;
+              yield { type: 'content', content: ev.content };
+            }
+          } else if (ev.type === 'end') {
+            toolCalls = ev.tool_calls;
+            finalContent = ev.content;
+          }
+        }
+
+        // LLM 返回后检查断开信号
         if (checkAborted()) {
           wm.endTurn();
           return;
         }
 
-        if (!response) {
-          wm.writeNote('LLM 无响应', '待验证');
-          wm.endTurn();
-          yield* this._streamContent('AI 服务暂时无响应，请稍后重试。');
-          return;
-        }
-
         // 检查是否有工具调用
-        if (response.tool_calls && response.tool_calls.length > 0) {
+        if (toolCalls && toolCalls.length > 0) {
           hasUsedTool = true;
 
           // Step 1: 解析所有工具调用
-          const parsedCalls = response.tool_calls.map(tc => {
+          const parsedCalls = toolCalls.map(tc => {
             const fn = tc.function || {};
             const name = fn.name || '';
             let args = {};
@@ -266,11 +279,49 @@ class ReactAgent {
               content: this._truncateResult(typeof result === 'string' ? result : JSON.stringify(result)),
             });
           }
+
+          // ---- 无进展循环检测 ----
+          // 计算本轮工具调用签名（tool + 参数），与上一轮比较
+          const signature = tools_calls
+            .map(c => `${c.name}(${JSON.stringify(c.args)})`)
+            .sort()
+            .join('|');
+          if (signature === lastCallSignature) {
+            repeatCount++;
+          } else {
+            repeatCount = 1;
+            lastCallSignature = signature;
+          }
+          // 连续 2 次完全相同的工具调用 → LLM 陷入死循环，强制收尾
+          if (repeatCount >= 2) {
+            if (!forceFinal) {
+              console.warn(`[ReactAgent] 检测到无进展循环（${signature}），提示 LLM 直接给出结论`);
+              wm.writeNote('检测到重复工具调用，强制收尾', '中间结论');
+              messages.push({
+                role: 'user',
+                content: '你已经多次调用相同的工具获取到相同结果。请基于已有信息直接给出最终回答，不要再调用任何工具。',
+              });
+              forceFinal = true;
+            } else {
+              // 已提示过收尾但仍调工具 → 彻底中断，输出已有信息
+              console.warn('[ReactAgent] 提示收尾后仍调用工具，强制中断');
+              wm.writeNote('强制中断：提示收尾后仍调用工具', '待验证');
+              yield* this._streamContent('已根据获取到的信息整理如下，如需更精确的结果请补充说明：');
+              break;
+            }
+          }
         } else {
-          // LLM 直接回复文本 → 这是最终答案，分块流式输出
-          const content = response.content || '抱歉，我没有理解您的问题。';
-          wm.writeNote(content.substring(0, 500), '最终回答');
-          yield* this._streamContent(content);
+          // LLM 直接回复文本 → 最终答案
+          // 注意：文本 token 已在流式 delta 阶段实时 yield 给前端，这里只收尾
+          const content = finalContent || '';
+          wm.writeNote((content || '空响应').substring(0, 500), '最终回答');
+
+          // 若流式阶段没产出任何 content（LLM 返回空），给兜底文案
+          if (!streamHadContent) {
+            yield { type: 'content', content: content || '抱歉，我没有理解您的问题。', done: false };
+          }
+          // 发送结束标记（前端依赖 done:true 收尾）
+          yield { type: 'content', content: '', done: true };
 
           wm.endTurn();
           console.log(`[ReactAgent] 完成，共 ${iteration} 步推理，${wm.currentTurn?.steps.length || 0} 步工具调用`);
@@ -365,6 +416,182 @@ class ReactAgent {
       }
       throw new Error(`AI 请求失败: ${err.message}`);
     }
+  }
+
+  /**
+   * 流式 LLM 调用（含工具参数）— 真流式
+   *
+   * 与 _callLLMWithTools 的区别：
+   *   - 用 stream:true 调用，逐 token 解析 SSE
+   *   - 文本 delta 实时 yield 给前端（{type:'delta', content}），首 token 即出
+   *   - tool_calls delta 按 index 拼接成完整结构，流结束统一 yield（{type:'end', tool_calls, content}）
+   *
+   * OpenAI 流式 tool_calls 分片格式：
+   *   delta.tool_calls = [{index:0, id, function:{name, arguments:"" }}]
+   *   delta.tool_calls = [{index:0, function:{arguments:'{"sem'}}]
+   *   delta.tool_calls = [{index:0, function:{arguments:'ester":"2025"}}]
+   *   → 按 index 累积 id / name / arguments
+   *
+   * @yields {{type:'delta', content:string} | {type:'end', tool_calls:Array|null, content:string}}
+   */
+  async *_callLLMWithToolsStream(messages, tools, signal) {
+    if (!this.aiService.apiKey) {
+      console.warn('[ReactAgent] API Key 缺失，无法使用 ReAct Agent');
+      yield { type: 'end', tool_calls: null, content: '' };
+      return;
+    }
+
+    const path = this.aiService.anthropicMode ? '/v1/messages' : '/v2/chat/completions';
+    const payload = {
+      model: this.aiService.model,
+      messages,
+      max_tokens: this.aiService.maxTokens || 4096,
+      temperature: this.aiService.temperature ?? 0.7,
+      stream: true,
+    };
+    if (tools && tools.length > 0) payload.tools = tools;
+
+    const body = JSON.stringify(payload);
+    const options = this.aiService._buildOptions(path);
+    options.headers['Content-Length'] = Buffer.byteLength(body, 'utf8');
+    options.timeout = 60000; // 流式调用放宽到 60s（首 token 后持续输出）
+
+    console.log(`[ReactAgent:流式] LLM 调用: model=${this.aiService.model}, messages=${messages.length}, tools=${tools.length}`);
+
+    let res;
+    try {
+      res = await requestStream(options, body);
+    } catch (err) {
+      // 连接失败 → 抛出由上层 catch 处理（保持与非流式一致的错误路径）
+      const msg = err.message || '未知错误';
+      throw new Error(`AI 流式连接失败: ${msg}`);
+    }
+
+    if (res.statusCode !== 200) {
+      let errBody = '';
+      for await (const c of res) errBody += c;
+      const code = res.statusCode;
+      console.error(`[ReactAgent:流式] ${code}: ${errBody.substring(0, 200)}`);
+      if (code === 400) {
+        throw new Error('AI 模型不支持工具调用，请检查模型配置。');
+      }
+      throw new Error(`AI 服务返回错误 ${code}`);
+    }
+
+    // 累积器（传给 _applyDelta，便于独立单测）
+    const state = {
+      contentAccum: '',
+      toolCallMap: new Map(),
+      hasToolCalls: false,
+      anthropic: !!this.aiService.anthropicMode,
+    };
+
+    // SSE 解析（行切分 + 委托 _applyDelta 应用 delta）
+    let buf = '';
+    for await (const chunk of res) {
+      // 客户端断开 → 终止流
+      if (signal && signal.aborted) {
+        res.destroy();
+        break;
+      }
+
+      buf += chunk.toString();
+      const lines = buf.split('\n');
+      buf = lines.pop() || '';
+
+      for (const line of lines) {
+        const t = line.trim();
+        if (!t || t.startsWith('event:')) continue;
+        if (!t.startsWith('data:')) continue;
+        const d = t.slice(5).trim();
+        if (d === '[DONE]') continue; // 结束标记，下面统一处理
+
+        try {
+          const j = JSON.parse(d);
+          const textDelta = this._applyDelta(j, state);
+          if (textDelta) {
+            yield { type: 'delta', content: textDelta };
+          }
+        } catch (err) {
+          console.warn('[ReactAgent:流式] SSE 解析失败:', err.message);
+        }
+      }
+    }
+
+    // 流结束：组装最终结果
+    const { contentAccum, toolCallMap, hasToolCalls } = state;
+    let tool_calls = null;
+    if (hasToolCalls && toolCallMap.size > 0) {
+      tool_calls = Array.from(toolCallMap.entries())
+        .sort(([a], [b]) => a - b)
+        .map(([_, tc]) => ({
+          id: tc.id || this._genId(),
+          type: 'function',
+          function: { name: tc.name, arguments: tc.arguments || '{}' },
+        }));
+    }
+
+    yield { type: 'end', tool_calls, content: contentAccum };
+  }
+
+  /**
+   * 对单个解析后的 SSE 事件应用 delta，更新累积状态
+   * 抽成独立方法便于单测（不依赖 HTTP / 流）
+   *
+   * @param {Object} j - JSON.parse 后的 SSE 事件
+   * @param {Object} state - 累积状态 { contentAccum, toolCallMap, hasToolCalls, anthropic }
+   * @returns {string|null} 文本 delta（需 yield 给前端），无则 null
+   */
+  _applyDelta(j, state) {
+    if (state.anthropic) {
+      // Anthropic 流式：content_block_delta 给文本，tool_use 在 content_block_start/delta
+      if (j.type === 'content_block_delta' && j.delta?.text) {
+        state.contentAccum += j.delta.text;
+        return j.delta.text;
+      }
+      if (j.type === 'content_block_start' && j.content_block?.type === 'tool_use') {
+        state.hasToolCalls = true;
+        const idx = j.index ?? 0;
+        state.toolCallMap.set(idx, {
+          id: j.content_block.id || '',
+          name: j.content_block.name || '',
+          arguments: '',
+        });
+      } else if (j.type === 'content_block_delta' && j.delta?.type === 'input_json_delta') {
+        const idx = j.index ?? 0;
+        const tc = state.toolCallMap.get(idx);
+        if (tc) tc.arguments += j.delta.partial_json || '';
+      }
+      return null;
+    }
+
+    // OpenAI 兼容流式
+    const choice = j.choices?.[0];
+    if (!choice) return null;
+    const delta = choice.delta || {};
+    let textDelta = null;
+
+    if (delta.content) {
+      state.contentAccum += delta.content;
+      textDelta = delta.content;
+    }
+
+    if (delta.tool_calls) {
+      state.hasToolCalls = true;
+      for (const tc of delta.tool_calls) {
+        const idx = tc.index ?? 0;
+        let entry = state.toolCallMap.get(idx);
+        if (!entry) {
+          entry = { id: tc.id || '', name: tc.function?.name || '', arguments: '' };
+          state.toolCallMap.set(idx, entry);
+        }
+        if (tc.id) entry.id = tc.id;
+        if (tc.function?.name) entry.name = tc.function.name;
+        if (tc.function?.arguments) entry.arguments += tc.function.arguments;
+      }
+    }
+
+    return textDelta;
   }
 
   // ==================== 系统提示词 ====================
