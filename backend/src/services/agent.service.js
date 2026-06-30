@@ -9,6 +9,7 @@ const { analysisService } = require('./analysis.service');
 const { request } = require('../utils/httpClient');
 const { handleSimple, handleKnowledge, handleChat } = require('./agent-handlers');
 const { toolRegistry } = require('./agent-tools');
+const { workingMemoryStore } = require('./working-memory-store');
 
 /**
  * AgentService — 意图路由 + 多路径处理引擎
@@ -105,6 +106,9 @@ class AgentService {
 
     yield { type: 'thinking', content: `正在分析：${routing.reason || routing.intent}` };
 
+    // 预加载工作记忆（仅在需要 ReAct 的路径使用；命中缓存时开销极小）
+    const workingMemory = await this._getWorkingMemory(conversationId);
+
     // Phase 2: 按路径分发
     try {
       switch (routing.route) {
@@ -124,7 +128,7 @@ class AgentService {
               skillPrompt,
               conversationId,
               signal,
-              workingMemory: this._getWorkingMemory(conversationId),
+              workingMemory,
             });
           } catch (err) {
             // ReAct 失败时降级为成绩查询，保证用户至少拿到部分结果
@@ -165,7 +169,7 @@ class AgentService {
               skillPrompt,
               conversationId,
               signal,
-              workingMemory: this._getWorkingMemory(conversationId),
+              workingMemory,
             });
           } else {
             console.log('[Agent] 使用纯对话路径');
@@ -351,14 +355,34 @@ ${rawResult.substring(0, 3000)}
   /**
    * 获取或创建会话的工作记忆
    * 同一个 conversationId 共享 WorkingMemory，实现跨轮引用
+   *
+   * 持久化：优先从 WorkingMemoryStore（Redis/内存）加载历史 turns，
+   * 进程重启后仍可恢复多步分析上下文；turn 结束时自动落盘。
    * 带 TTL 淘汰：30 分钟无访问自动回收
    */
-  _getWorkingMemory(conversationId) {
+  async _getWorkingMemory(conversationId) {
     if (!conversationId) return null;
     // 记录/更新访问时间
     this._wmLastAccess.set(conversationId, Date.now());
+
     if (!this.workingMemories.has(conversationId)) {
-      this.workingMemories.set(conversationId, new WorkingMemory({ conversationId }));
+      // 优先从存储层恢复历史工作记忆
+      let wm = null;
+      try {
+        const json = await workingMemoryStore.load(conversationId);
+        if (json) {
+          wm = WorkingMemory.fromJSON(json);
+          console.log(`[Agent] 从存储层恢复工作记忆: ${wm.turns.length} 回合`);
+        }
+      } catch (err) {
+        console.warn('[Agent] 加载工作记忆失败，将新建:', err.message);
+      }
+      if (!wm) {
+        wm = new WorkingMemory({ conversationId });
+      }
+      // 注入持久化回调：turn 结束时落盘
+      wm.onPersist = (data) => workingMemoryStore.save(conversationId, data);
+      this.workingMemories.set(conversationId, wm);
     }
     // 启动定期清理（仅首次调用时启动）
     this._startWmCleanup();
