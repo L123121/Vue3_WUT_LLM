@@ -14,6 +14,25 @@ const TOOL_SOURCES = {
   SCHOOL: 'school',
 };
 
+// 默认单工具执行超时（毫秒）。慢工具不应拖死整轮 ReAct——
+// 超时后返回"工具执行超时"字符串（而非 reject），让 LLM 基于已有信息继续。
+const DEFAULT_TOOL_TIMEOUT_MS = 8000;
+
+/**
+ * 给一个 Promise 套上超时：到点 reject('TIMEOUT')。
+ * 注意：handler 内部的网络请求不会被真正取消（HTTP 客户端自己处理 abort），
+ * 但本层会停止等待其结果，避免 Promise.allSettled 被一个慢工具卡住。
+ */
+function withTimeout(promise, timeoutMs) {
+  if (!timeoutMs || timeoutMs <= 0) return promise;
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error('__TOOL_TIMEOUT__')), timeoutMs);
+  });
+  // handler 先 settled 就清掉定时器，避免悬挂 timer
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 class ToolRegistry {
   constructor() {
     this.tools = new Map();
@@ -42,6 +61,8 @@ class ToolRegistry {
       category: tool.category || 'general',
       source: tool.source || TOOL_SOURCES.CUSTOM,
       enabled: tool.enabled !== false,
+      // 单工具超时覆盖（0/不设 = 用 DEFAULT_TOOL_TIMEOUT_MS）
+      timeoutMs: tool.timeoutMs || DEFAULT_TOOL_TIMEOUT_MS,
       registeredAt: new Date(),
     });
   }
@@ -153,9 +174,16 @@ class ToolRegistry {
     const tool = this.tools.get(name);
     if (!tool) return `未知工具: ${name}`;
     if (!tool.enabled) return `工具 ${name} 已禁用`;
+    const timeoutMs = tool.timeoutMs || DEFAULT_TOOL_TIMEOUT_MS;
     try {
-      return await tool.handler(args, context);
+      // 超时不 reject——返回语义化提示，让 LLM 能基于已有信息继续推理，
+      // 而非整轮 ReAct 被一个慢工具（如抓教务系统）拖死。
+      return await withTimeout(tool.handler(args, context), timeoutMs);
     } catch (err) {
+      if (err && err.message === '__TOOL_TIMEOUT__') {
+        console.warn(`[ToolRegistry] 工具 ${name} 执行超时（${timeoutMs}ms），返回超时提示`);
+        return `工具 ${name} 执行超时（${timeoutMs}ms）。请基于已有信息继续回答，或换一种方式获取数据。`;
+      }
       return `工具 ${name} 执行失败: ${err.message}`;
     }
   }

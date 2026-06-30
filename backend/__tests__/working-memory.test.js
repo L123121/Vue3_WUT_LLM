@@ -57,6 +57,66 @@ describe('WorkingMemory 持久化', () => {
   });
 });
 
+describe('WorkingMemory.buildContextBrief（精简上下文）', () => {
+  it('无回合/无步骤时返回空字符串', () => {
+    const wm = new WorkingMemory({});
+    expect(wm.buildContextBrief()).toBe('');
+    wm.startTurn();
+    expect(wm.buildContextBrief()).toBe('');
+  });
+
+  it('输出工具调用清单（仅名+参数），不含结果正文', () => {
+    const wm = new WorkingMemory({});
+    wm.startTurn();
+    // 一段很长的结果正文——精简版不应把它展开
+    const longResult = '共 50 条成绩：\n' + '课程X 90分\n'.repeat(50);
+    wm.recordStep('query_grades', { semester: '2025-2026-1' }, longResult);
+    wm.recordStep('calculate_gpa', {}, 'GPA=3.8');
+
+    const brief = wm.buildContextBrief();
+    expect(brief).toContain('2 个步骤');
+    expect(brief).toContain('query_grades');
+    expect(brief).toContain('semester="2025-2026-1"');
+    expect(brief).toContain('calculate_gpa');
+    // 结果正文不应泄露进精简上下文
+    expect(brief).not.toContain('90分');
+    expect(brief).not.toContain('GPA=3.8');
+  });
+
+  it('保留最新一条 note（中间结论高价值）', () => {
+    const wm = new WorkingMemory({});
+    wm.startTurn();
+    wm.writeNote('第一条笔记', '初步分析');
+    wm.writeNote('第二条笔记，更重要', '中间结论');
+    wm.recordStep('query_grades', {}, '成绩数据');
+
+    const brief = wm.buildContextBrief();
+    expect(brief).toContain('第二条笔记');
+    expect(brief).not.toContain('第一条笔记'); // 只保留最新一条
+  });
+
+  it('有更早回合时给出历史提示', () => {
+    const wm = new WorkingMemory({});
+    wm.startTurn();
+    wm.recordStep('query_grades', {}, '旧成绩');
+    wm.endTurn();
+    wm.startTurn();
+    wm.recordStep('query_course_schedule', {}, '课表');
+
+    const brief = wm.buildContextBrief();
+    expect(brief).toContain('1 轮更早');
+  });
+
+  it('超出 maxChars 时截断', () => {
+    const wm = new WorkingMemory({});
+    wm.startTurn();
+    wm.recordStep('query_grades', {}, 'r');
+    const brief = wm.buildContextBrief(20); // 极小上限
+    expect(brief.length).toBeLessThanOrEqual(40); // 含截断提示
+    expect(brief).toContain('截断');
+  });
+});
+
 describe('WorkingMemoryStore', () => {
   it('load 未命中返回 null', async () => {
     const { workingMemoryStore } = require('../src/services/working-memory-store');
