@@ -254,6 +254,10 @@ export const sendMessageStream = async (message, history = [], callbacks, option
               console.log('[Stream] tool_result:', json.tool_result.name);
               callbacks.onToolResult?.(json.tool_result);
             }
+            if (json.trace) {
+              console.log('[Stream] trace:', JSON.stringify(json.trace));
+              callbacks.onTrace?.(json.trace);
+            }
           } catch (err) {
             console.warn('[Stream] SSE 数据解析失败:', err.message, 'data:', data.substring(0, 100));
           }

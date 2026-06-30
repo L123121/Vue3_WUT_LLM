@@ -175,7 +175,7 @@ export function useStreaming() {
     const skillPrompt = useSkillStore().buildSystemPrompt();
 
     const aiMsgId = createMessageId();
-    const aiMsg = { id: aiMsgId, role: 'model', content: '', timestamp: new Date(), sources: [], toolCalls: [], thinkingSteps: [] };
+    const aiMsg = { id: aiMsgId, role: 'model', content: '', timestamp: new Date(), sources: [], toolCalls: [], thinkingSteps: [], trace: null };
     convStore.conversations[convIndex].messages.push(aiMsg);
     currentStreamingId.value = aiMsgId;
 
@@ -245,10 +245,13 @@ export function useStreaming() {
         onToolResult: (toolResult) => {
           updateMessage(convStore, conversationId, aiMsgId, (m) => {
             const calls = (m.toolCalls || []).map((tc) =>
-              tc.id === toolResult.id ? { ...tc, result: toolResult.content, status: toolResult.status || 'done' } : tc
+              tc.id === toolResult.id ? { ...tc, result: toolResult.content, status: toolResult.status || 'done', durationMs: toolResult.durationMs } : tc
             );
             return { ...m, toolCalls: calls };
           });
+        },
+        onTrace: (trace) => {
+          updateMessage(convStore, conversationId, aiMsgId, (m) => ({ ...m, trace }));
         },
         onRetry: () => {
           isReconnecting.value = true;

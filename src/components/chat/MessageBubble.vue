@@ -1,6 +1,6 @@
 <script setup>
 import { computed } from 'vue';
-import { User, Bot, Copy, RotateCcw, FileText, BookOpen, Tag, Hash } from 'lucide-vue-next';
+import { User, Bot, Copy, RotateCcw, FileText, BookOpen, Tag, Hash, Cpu } from 'lucide-vue-next';
 import { useLanguageStore } from '../../stores/language.store.js';
 import { useChatStore } from '../../stores/chat.store.js';
 import { useAuthStore } from '../../stores/auth.store.js';
@@ -46,6 +46,31 @@ const timeline = computed(() => {
 });
 
 const isStreaming = computed(() => chatStore.currentStreamingId === props.message.id);
+
+// 推理总览（trace 摘要）：路由中文映射 + 耗时格式化
+const ROUTE_LABELS = {
+  react: 'ReAct 推理',
+  simple: '快捷查询',
+  knowledge: '知识库',
+  agent: '自主推理',
+  chat: '对话',
+  analysis: '成绩分析',
+};
+
+const traceSummary = computed(() => {
+  const t = props.message.trace;
+  if (!t) return null;
+  const routeLabel = ROUTE_LABELS[t.route] || t.route || '推理';
+  const ms = t.totalMs;
+  const totalText = ms == null ? '' : (ms >= 1000 ? (ms / 1000).toFixed(1) + 's' : Math.round(ms) + 'ms');
+  // 步数：优先用 stepCount（实际工具调用数），回退 iterations（推理轮数）
+  const stepNum = t.stepCount != null ? t.stepCount : t.iterations;
+  const parts = [routeLabel];
+  if (stepNum != null) parts.push(`${stepNum}步`);
+  if (totalText) parts.push(totalText);
+  if (t.confidence != null) parts.push(`置信${Number(t.confidence).toFixed(2)}`);
+  return parts.join(' · ');
+});
 
 const hasSources = computed(() => props.message.sources && props.message.sources.length > 0);
 
@@ -159,6 +184,12 @@ const timeClasses = computed(() => {
             <AgentThinking v-if="event.type === 'thinking'" :step="event" :has-reply="!!messageText" :timeline="timeline" />
             <AgentToolCall v-if="event.type === 'tool'" :tool-call="event" />
           </template>
+        </div>
+
+        <!-- 推理总览小条：流式结束后 trace 到达自动出现 -->
+        <div v-if="isModel && traceSummary" class="flex items-center gap-1.5 mb-2.5 text-[10px] text-slate-400 dark:text-gray-500">
+          <Cpu :size="11" class="shrink-0" />
+          <span class="font-mono">{{ traceSummary }}</span>
         </div>
 
         <!-- Message text -->
