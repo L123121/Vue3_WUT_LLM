@@ -13,10 +13,21 @@ function applyMiddleware(app) {
   const isProduction = process.env.NODE_ENV === 'production';
 
   // CORS — 允许前端跨域 + cookie
+  // 生产环境必须显式配置 CORS_ORIGIN 白名单，缺失时 fail-fast 而非回退到 origin:true，
+  // 否则任意第三方站点可携带 httpOnly cookie 发起跨域请求（CSRF 式凭证泄露）
+  let corsOrigin;
+  if (isProduction) {
+    const origin = process.env.CORS_ORIGIN;
+    if (!origin) {
+      console.error('[CORS] 生产环境未配置 CORS_ORIGIN，拒绝启动。请在环境变量中设置允许的前端域名。');
+      process.exit(1);
+    }
+    corsOrigin = origin.split(',').map(s => s.trim()).filter(Boolean);
+  } else {
+    corsOrigin = ['http://localhost:5173', 'http://127.0.0.1:5173'];
+  }
   app.use(cors({
-    origin: isProduction
-      ? process.env.CORS_ORIGIN || true
-      : ['http://localhost:5173', 'http://127.0.0.1:5173'],
+    origin: corsOrigin,
     credentials: true,
   }));
 
