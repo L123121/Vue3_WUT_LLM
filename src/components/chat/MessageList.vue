@@ -1,7 +1,6 @@
 <script setup>
 import { ref, watch, nextTick, onMounted, onUnmounted, computed } from 'vue';
-import { Bot, RefreshCw } from 'lucide-vue-next';
-import { useLanguageStore } from '../../stores/language.store.js';
+import { RefreshCw } from 'lucide-vue-next';
 import { useChatStore } from '../../stores/chat.store.js';
 import LazyMessage from './LazyMessage.vue';
 import MessageBubble from './MessageBubble.vue';
@@ -17,7 +16,6 @@ const props = defineProps({
 });
 
 const emit = defineEmits(['copy']);
-const languageStore = useLanguageStore();
 const chatStore = useChatStore();
 const scrollerRef = ref(null);
 
@@ -145,9 +143,11 @@ defineExpose({ scrollToBottom, shouldAutoScroll });
       @mouseleave="handleScrollEnd"
     >
       <TransitionGroup name="msg" tag="div">
-        <div v-for="(msg, index) in messages" :key="msg.id"
+        <div
+          v-for="(msg, index) in messages" :key="msg.id"
           v-memo="[msg.content, msg.text, msg.isError, msg.sources, msg.canRetry, msg.toolCalls?.length, msg.thinkingSteps?.length, msg.id === currentStreamingId]"
-          class="mb-4">
+          class="mb-4"
+        >
           <LazyMessage v-if="shouldLazyLoad(index)" root-margin="400px">
             <MessageBubble :message="msg" @copy="handleCopy" />
           </LazyMessage>
@@ -195,12 +195,6 @@ defineExpose({ scrollToBottom, shouldAutoScroll });
         </div>
         <span class="text-xs text-slate-500 dark:text-gray-400">思考中...</span>
       </div>
-    </div>
-
-    <!-- Empty state -->
-    <div v-else class="flex-1 flex flex-col items-center justify-center text-slate-400 dark:text-gray-500 space-y-4 opacity-50">
-      <Bot :size="48" class="stroke-1" />
-      <p class="text-sm">{{ languageStore.t('chat.empty') }}</p>
     </div>
 
     <!-- Reconnection overlay -->
