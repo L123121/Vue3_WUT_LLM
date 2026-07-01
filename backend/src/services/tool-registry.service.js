@@ -19,18 +19,42 @@ const TOOL_SOURCES = {
 const DEFAULT_TOOL_TIMEOUT_MS = 8000;
 
 /**
- * 给一个 Promise 套上超时：到点 reject('TIMEOUT')。
+ * 工具超时专用错误。用 instanceof 判定，避免靠魔法字符串 message 比较
+ * （handler 自己 throw 一个 message 恰为 '__TOOL_TIMEOUT__' 的错误会被误判）。
+ */
+class ToolTimeoutError extends Error {
+  constructor(timeoutMs) {
+    super(`__TOOL_TIMEOUT__:${timeoutMs}`);
+    this.name = 'ToolTimeoutError';
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+/**
+ * 给一个 Promise 套上超时：到点 reject(ToolTimeoutError)。
  * 注意：handler 内部的网络请求不会被真正取消（HTTP 客户端自己处理 abort），
  * 但本层会停止等待其结果，避免 Promise.allSettled 被一个慢工具卡住。
+ *
+ * 超时后原 promise 仍在后台运行：这里附加 .catch 兜底，
+ *   1) 防止 handler 最终 reject 时无人监听触发 unhandledRejection；
+ *   2) 记录"超时后 handler 实际以何种状态结束"，便于排查副作用重复。
  */
 function withTimeout(promise, timeoutMs) {
   if (!timeoutMs || timeoutMs <= 0) return promise;
   let timer;
   const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error('__TOOL_TIMEOUT__')), timeoutMs);
+    timer = setTimeout(() => reject(new ToolTimeoutError(timeoutMs)), timeoutMs);
   });
-  // handler 先 settled 就清掉定时器，避免悬挂 timer
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+  const raced = Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+  // 超时后原 promise 可能仍在跑（有副作用如写库/调外部 API）。
+  // 兜底监听其最终结果，仅做日志，不影响 race 已返回的结果。
+  promise
+    .then(
+      (v) => { /* 超时后成功完成，结果被丢弃——副作用已发生 */ },
+      (e) => { console.warn('[ToolRegistry] 超时后 handler 最终失败:', e?.message || e); }
+    )
+    .catch(() => { /* then 内已处理，这里仅防 then 抛错 */ });
+  return raced;
 }
 
 class ToolRegistry {
@@ -180,7 +204,7 @@ class ToolRegistry {
       // 而非整轮 ReAct 被一个慢工具（如抓教务系统）拖死。
       return await withTimeout(tool.handler(args, context), timeoutMs);
     } catch (err) {
-      if (err && err.message === '__TOOL_TIMEOUT__') {
+      if (err instanceof ToolTimeoutError) {
         console.warn(`[ToolRegistry] 工具 ${name} 执行超时（${timeoutMs}ms），返回超时提示`);
         return `工具 ${name} 执行超时（${timeoutMs}ms）。请基于已有信息继续回答，或换一种方式获取数据。`;
       }
@@ -207,4 +231,4 @@ class ToolRegistry {
   }
 }
 
-module.exports = { ToolRegistry, TOOL_SOURCES };
+module.exports = { ToolRegistry, TOOL_SOURCES, ToolTimeoutError };
