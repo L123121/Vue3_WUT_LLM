@@ -5,6 +5,7 @@ const schoolRoutes = require('./school.routes');
 const evalRoutes = require('./eval.routes');
 const { createToolRoutes } = require('./tool.routes');
 const { createMemoryRoutes } = require('./memory.routes');
+const { createAgentRoutes } = require('./agent.routes');
 const { toolRegistry } = require('../services/agent-tools');
 const { MemoryService } = require('../services/memory.service');
 
@@ -18,5 +19,6 @@ router.use('/school', schoolRoutes);
 router.use('/eval', evalRoutes);
 router.use('/tools', createToolRoutes(toolRegistry));
 router.use('/memory', createMemoryRoutes(memoryService));
+router.use('/agent', createAgentRoutes());
 
 module.exports = { router, memoryService };

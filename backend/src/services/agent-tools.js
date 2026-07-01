@@ -13,8 +13,15 @@ const { aiService } = require('./ai.service');
 const { redis: store } = require('./memory-store');
 const { create } = require('mathjs');
 const schoolApi = require('./school-api.service');
+const campusInfo = require('../config/campus-info.json');
 
 const ragService = new RagService(aiService);
+
+// 工具执行超时分级（覆盖 ToolRegistry 默认 8s）
+// 教务系统类工具走外部 HTTP，峰值可能较慢，给 15s；
+// 本地纯计算类工具应秒级返回，给 3s 以便尽早暴露卡死。
+const TIMEOUT_SCHOOL = 15000;
+const TIMEOUT_LOCAL = 3000;
 
 // ============================================================
 // 创建全局注册表并注册内置工具
@@ -28,6 +35,7 @@ const builtinTools = [
     description: '从校园知识库中检索相关信息。当用户询问学校相关问题时使用此工具。支持按类别检索：学校概况、计算机学院、图书馆、教务相关。',
     category: '知识库',
     source: TOOL_SOURCES.BUILTIN,
+    timeoutMs: TIMEOUT_SCHOOL,
     parameters: {
       type: 'object',
       properties: {
@@ -60,6 +68,7 @@ const builtinTools = [
     description: '查询学生的成绩信息。返回各科成绩、学分、绩点等。需要用户已绑定学校账号。',
     category: '教务',
     source: TOOL_SOURCES.SCHOOL,
+    timeoutMs: TIMEOUT_SCHOOL,
     parameters: {
       type: 'object',
       properties: {
@@ -124,6 +133,7 @@ const builtinTools = [
     description: '查询学生的课程表信息。返回一周的课程安排，包括课程名称、时间、地点、教师。需要用户已绑定学校账号。',
     category: '教务',
     source: TOOL_SOURCES.SCHOOL,
+    timeoutMs: TIMEOUT_SCHOOL,
     parameters: {
       type: 'object',
       properties: {
@@ -207,6 +217,7 @@ const builtinTools = [
     description: '查询考试安排信息，包括考试时间、地点、科目等。需要用户已绑定学校账号。',
     category: '教务',
     source: TOOL_SOURCES.SCHOOL,
+    timeoutMs: TIMEOUT_SCHOOL,
     parameters: {
       type: 'object',
       properties: {
@@ -267,6 +278,7 @@ const builtinTools = [
     description: '查询未评教课程的隐藏成绩。教务系统中未完成评教的课程在成绩查询时不显示分数，但学业监测接口已有真实成绩。此工具从学业监测数据中提取这些被隐藏的真实成绩并回填显示。',
     category: '教务',
     source: TOOL_SOURCES.SCHOOL,
+    timeoutMs: TIMEOUT_SCHOOL,
     parameters: {
       type: 'object',
       properties: {
@@ -378,6 +390,7 @@ const builtinTools = [
     description: '计算学生的加权平均绩点（GPA）。需要用户已绑定学校账号。返回总GPA、每学期GPA、学分统计等。',
     category: '教务',
     source: TOOL_SOURCES.SCHOOL,
+    timeoutMs: TIMEOUT_LOCAL,
     parameters: {
       type: 'object',
       properties: {
@@ -520,36 +533,9 @@ const builtinTools = [
       required: ['topic']
     },
     handler: async (args) => {
-      const info = {
-        '校区地址': `武汉理工大学校区地址：
-  马房山校区：武汉市洪山区珞狮路122号
-  余家头校区：武汉市武昌区和平大道1178号
-  南湖校区：武汉市雄楚大道168号`,
-        '联系电话': `常用联系电话：
-  招生办：027-87859017
-  教务处：027-87651321
-  图书馆：027-87651543
-  信息中心：027-87651728
-  后勤集团：027-87651890`,
-        '校车时刻': `马房山 ↔ 余家头 校车时刻：
-  马房山发车：7:30, 8:30, 10:00, 12:00, 14:00, 16:00, 17:30
-  余家头发车：7:30, 8:30, 10:00, 12:00, 14:00, 16:00, 17:30
-  车程约 30 分钟，免费乘坐`,
-        '校历': `2024-2025 学年校历：
-  第一学期：2024年9月2日 - 2025年1月17日
-  寒假：2025年1月18日 - 2月21日
-  第二学期：2025年2月24日 - 2025年7月11日
-  暑假：2025年7月12日 - 8月29日`,
-        '校训': '武汉理工大学校训：厚德博学、追求卓越',
-        '概况': `武汉理工大学简介：
-  教育部直属全国重点大学，国家"211工程"和"双一流"建设高校。
-  由原武汉工业大学、武汉交通科技大学、武汉汽车工业大学于2000年合并组建。
-  现有马房山、余家头、南湖三个校区，占地4000余亩。
-  在校学生5万余人，教职工5000余人。
-  优势学科：材料科学与工程、船舶与海洋工程、机械工程等。`
-      };
-
-      return info[args.topic] || `可用主题：${Object.keys(info).join('、')}`;
+      // 校园基础信息外置在 src/config/campus-info.json，更新校历/电话只需改配置
+      const topics = Object.keys(campusInfo).filter(k => !k.startsWith('_'));
+      return campusInfo[args.topic] || `可用主题：${topics.join('、')}`;
     }
   },
 
@@ -558,6 +544,7 @@ const builtinTools = [
     description: '执行数学计算。支持加减乘除、乘方、开方、三角函数等。当用户需要计算时使用。',
     category: '工具',
     source: TOOL_SOURCES.BUILTIN,
+    timeoutMs: TIMEOUT_LOCAL,
     parameters: {
       type: 'object',
       properties: {
