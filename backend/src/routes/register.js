@@ -7,9 +7,12 @@ const config = require('../config');
 
 function applyRoutes(app, chatLimiter) {
   const { router: apiRoutes, memoryService } = require('./index');
-  const { chatHandler, streamHandler } = require('../controllers/chat.controller');
+  const { chatHandler, streamHandler, setMemoryService } = require('../controllers/chat.controller');
   const { chatUpload, parseFile, cleanupFile } = require('../services/file-upload.service');
   const { COOKIE_NAME } = require('../middleware/auth.middleware');
+
+  // 启动时显式注入 memoryService，避免 controller 反向 require routes 造成循环依赖
+  setMemoryService(memoryService);
 
   const isProduction = process.env.NODE_ENV === 'production';
 
