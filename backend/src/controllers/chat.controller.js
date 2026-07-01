@@ -6,10 +6,21 @@ const { metrics } = require('../services/metrics.service');
 
 // 单例服务
 let _agentService = null;
+let _memoryService = null;
+
+/**
+ * 注入 memoryService（由 routes/register.js 在启动时调用）。
+ * 避免 controller 反向 require routes/index 造成循环依赖。
+ */
+const setMemoryService = (ms) => {
+  _memoryService = ms;
+  if (_agentService) _agentService.memoryService = ms;
+};
+
 const getAgentService = () => {
   if (!_agentService) {
     _agentService = new AgentService(aiService);
-    _agentService.memoryService = require('../routes/index').memoryService;
+    _agentService.memoryService = _memoryService;
   }
   return _agentService;
 };
@@ -252,4 +263,4 @@ function extractQuestion(message) {
   return message.slice(0, 8);
 }
 
-module.exports = { chatHandler, streamHandler };
+module.exports = { chatHandler, streamHandler, setMemoryService };
