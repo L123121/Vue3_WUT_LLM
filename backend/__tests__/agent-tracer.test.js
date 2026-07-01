@@ -75,6 +75,7 @@ describe('AgentTracer', () => {
     const s = t.toSummary();
     // 展示字段齐全
     expect(s.route).toBe('simple');
+    expect(s.routeLabel).toBe('快捷查询'); // 后端下发中文，前端无需再映射
     expect(s.intent).toBe('query_schedule');
     expect(s.confidence).toBe(0.75);
     expect(s.iterations).toBe(1);

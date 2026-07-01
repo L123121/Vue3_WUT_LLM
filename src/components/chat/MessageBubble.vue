@@ -47,20 +47,12 @@ const timeline = computed(() => {
 
 const isStreaming = computed(() => chatStore.currentStreamingId === props.message.id);
 
-// 推理总览（trace 摘要）：路由中文映射 + 耗时格式化
-const ROUTE_LABELS = {
-  react: 'ReAct 推理',
-  simple: '快捷查询',
-  knowledge: '知识库',
-  agent: '自主推理',
-  chat: '对话',
-  analysis: '成绩分析',
-};
-
+// 推理总览（trace 摘要）：routeLabel 由后端 toSummary() 下发（中文），
+// 旧 trace 无该字段时回退到 route 英文 key。耗时格式化 + 步数 + 置信度。
 const traceSummary = computed(() => {
   const t = props.message.trace;
   if (!t) return null;
-  const routeLabel = ROUTE_LABELS[t.route] || t.route || '推理';
+  const routeLabel = t.routeLabel || t.route || '推理';
   const ms = t.totalMs;
   const totalText = ms == null ? '' : (ms >= 1000 ? (ms / 1000).toFixed(1) + 's' : Math.round(ms) + 'ms');
   // 步数：优先用 stepCount（实际工具调用数），回退 iterations（推理轮数）

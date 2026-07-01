@@ -20,6 +20,17 @@ const { redis: store } = require('./memory-store');
 const TRACE_KEEP = 50; // 每用户保留最近 50 条 trace
 const TRACE_KEY = (userId) => `agent:trace:${userId || 'anonymous'}`;
 
+// 路由英文 key → 中文展示名。后端是 route 值的真相源，统一在此映射，
+// 通过 toSummary() 下发给前端，前端无需再维护一份同步表。
+const ROUTE_LABELS = {
+  react: 'ReAct 推理',
+  simple: '快捷查询',
+  knowledge: '知识库',
+  agent: '自主推理',
+  chat: '对话',
+  analysis: '成绩分析',
+};
+
 class AgentTracer {
   constructor({ userId = null, conversationId = null, message = '' } = {}) {
     this.userId = userId;
@@ -114,6 +125,7 @@ class AgentTracer {
   toSummary() {
     return {
       route: this.route,
+      routeLabel: ROUTE_LABELS[this.route] || this.route || '推理',
       intent: this.intent,
       confidence: this.confidence,
       iterations: this.iterations,
