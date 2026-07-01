@@ -65,11 +65,18 @@ class ReactAgent {
   }
 
   /**
-   * 计算本轮普通工具调用的签名（tool + 参数，排序后拼接），用于无进展循环检测。
+   * 计算本轮普通工具调用的签名（tool + 参数 + 结果摘要，排序后拼接），用于无进展循环检测。
+   * 纳入结果摘要是为了捕捉"换工具名但拿到同一份数据"或"夹 note 后重复调用"这类
+   * 仅靠工具名+参数无法识别的无进展——结果相同即说明本轮没有任何新信息。
+   * 结果摘要用前 80 字符 + 长度，避免大结果撑大签名。
    */
-  _buildLoopSignature(toolsCalls) {
+  _buildLoopSignature(toolsCalls, results = []) {
     return toolsCalls
-      .map(c => `${c.name}(${JSON.stringify(c.args)})`)
+      .map((c, i) => {
+        const r = results[i] != null ? String(results[i]) : '';
+        const digest = `${r.length}:${r.substring(0, 80)}`;
+        return `${c.name}(${JSON.stringify(c.args)})=>${digest}`;
+      })
       .sort()
       .join('|');
   }
@@ -185,6 +192,8 @@ class ReactAgent {
     // 2. 构建系统提示词（含工作记忆）
     //    多步 ReAct 每轮都拼 system，用精简版 wmContext（仅步骤指针 + 最新 note），
     //    完整结果正文已在 messages 历史的 tool 消息中，无需在 system 重复展开。
+    //    注意：wmContext 随步骤增加而变化，每轮循环开头都要刷新（见循环内），
+    //    否则第 2 步起 LLM 看到的"已记录 N 步"摘要会停在初始值，误判已获取的信息。
     const wmContext = wm.buildContextBrief();
     const systemPrompt = this._buildSystemPrompt(memoryContext, skillPrompt, wmContext);
 
@@ -209,6 +218,11 @@ class ReactAgent {
     try {
       while (iteration < this.maxIterations) {
       iteration++;
+
+      // 每轮刷新工作记忆摘要到 system 消息——多步推理中步骤数/最新 note 会变，
+      // 不刷新则 LLM 基于过时的工作记忆状态决策（可能重复调已调过的工具）。
+      const freshWmContext = wm.buildContextBrief();
+      messages[0].content = this._buildSystemPrompt(memoryContext, skillPrompt, freshWmContext);
 
       // 客户端断开检查
       if (checkAborted()) {
@@ -300,6 +314,7 @@ class ReactAgent {
           console.log(`[ReactAgent] ${tools_calls.length} 个工具并行执行完毕，耗时 ${execElapsed}ms`);
 
           // Step 6: 统一处理各工具结果
+          const roundResults = []; // 收集本轮结果摘要，供循环检测签名使用
           for (let i = 0; i < tools_calls.length; i++) {
             const c = tools_calls[i];
             const settled = settledResults[i];
@@ -312,6 +327,7 @@ class ReactAgent {
               console.error(`[ReactAgent] 工具 ${c.name} 异常:`, errMsg);
               result = `工具执行出错: ${errMsg}`;
             }
+            roundResults.push(result);
 
             // 记录到工作记忆
             wm.recordStep(c.name, c.args, result);
@@ -345,8 +361,8 @@ class ReactAgent {
           }
 
           // ---- 无进展循环检测 ----
-          // 计算本轮工具调用签名（tool + 参数），与上一轮比较
-          const signature = this._buildLoopSignature(tools_calls);
+          // 计算本轮工具调用签名（tool + 参数 + 结果摘要），与上一轮比较
+          const signature = this._buildLoopSignature(tools_calls, roundResults);
           if (signature === lastCallSignature) {
             repeatCount++;
           } else {
@@ -453,8 +469,13 @@ class ReactAgent {
 
     let res;
     try {
-      res = await requestStream(options, body);
+      res = await requestStream(options, body, signal);
     } catch (err) {
+      // 客户端断开 → 静默返回空，由上层 abort 检查处理
+      if (signal && signal.aborted) {
+        yield { type: 'end', tool_calls: null, content: '' };
+        return;
+      }
       // 连接失败 → 抛出由上层 catch 处理（保持与非流式一致的错误路径）
       const msg = err.message || '未知错误';
       throw new Error(`AI 流式连接失败: ${msg}`);
@@ -481,6 +502,8 @@ class ReactAgent {
 
     // SSE 解析（行切分 + 委托 _applyDelta 应用 delta）
     let buf = '';
+    let parseFailStreak = 0; // 连续解析失败计数，超阈值则流已坏，主动中断
+    let totalParsed = 0;     // 成功解析的累计事件数
     for await (const chunk of res) {
       // 客户端断开 → 终止流
       if (signal && signal.aborted) {
@@ -501,12 +524,22 @@ class ReactAgent {
 
         try {
           const j = JSON.parse(d);
+          totalParsed++;
+          parseFailStreak = 0;
           const textDelta = this._applyDelta(j, state);
           if (textDelta) {
             yield { type: 'delta', content: textDelta };
           }
         } catch (err) {
+          parseFailStreak++;
           console.warn('[ReactAgent:流式] SSE 解析失败:', err.message);
+          // 连续 5 条解析失败且无任何成功 → 上游 SSE 流已坏，主动中断
+          // （否则会空转到流结束，产出空回答让用户以为"没理解"，排障困难）
+          if (parseFailStreak >= 5 && totalParsed === 0) {
+            console.error('[ReactAgent:流式] 连续解析失败，判定为坏流，中断');
+            res.destroy();
+            throw new Error('AI 流式响应解析连续失败，请检查模型/网关配置');
+          }
         }
       }
     }
@@ -521,7 +554,28 @@ class ReactAgent {
           id: tc.id || this._genId(),
           type: 'function',
           function: { name: tc.name, arguments: tc.arguments || '{}' },
-        }));
+        }))
+        .filter((tc) => {
+          // 首片丢失（携带 name 的分片被丢）→ name 为空，下游无法执行，
+          // 丢弃并告警，避免 LLM 拿到"未知工具:" 的无意义错误。
+          if (!tc.function.name) {
+            console.warn('[ReactAgent:流式] 丢弃 name 为空的 tool_call（首片可能丢失）:', tc.id);
+            return false;
+          }
+          // arguments 非空但残缺（流中断/截断）→ JSON.parse 失败，降级为 {} 并告警，
+          // 让下游以空参数执行而非静默用残缺 JSON。
+          if (tc.function.arguments && tc.function.arguments !== '{}') {
+            try {
+              JSON.parse(tc.function.arguments);
+            } catch {
+              console.warn('[ReactAgent:流式] tool_call arguments 残缺，降级为空参数:', tc.function.name);
+              tc.function.arguments = '{}';
+            }
+          }
+          return true;
+        });
+      // 过滤后可能为空
+      if (tool_calls.length === 0) tool_calls = null;
     }
 
     yield { type: 'end', tool_calls, content: contentAccum };
