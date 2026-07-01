@@ -170,10 +170,19 @@ const streamHandler = async (req, res) => {
       console.log('[Chat] /api/stream 被客户端断开');
     }
   } catch (error) {
-    if (!abortController.signal.aborted) {
+    // 连接可能因非 abort 原因断开（TCP reset / 代理断开），此时 aborted=false
+    // 但 res 已不可写——再 res.write 会抛二次错误致连接泄漏，需先检查可写状态。
+    if (!abortController.signal.aborted && !res.writableEnded && !res.destroyed) {
       console.error('[Chat] /api/stream failed:', error);
-      res.write(`data: ${JSON.stringify({ error: '流式响应出错，请重试' })}\n\n`);
-      res.end();
+      try {
+        res.write(`data: ${JSON.stringify({ error: '流式响应出错，请重试' })}\n\n`);
+        res.end();
+      } catch (writeErr) {
+        // 写失败（连接刚断）仅记录，不再尝试 end
+        console.warn('[Chat] 错误事件写入失败:', writeErr.message);
+      }
+    } else {
+      console.error('[Chat] /api/stream failed (连接已断):', error.message);
     }
   }
 };

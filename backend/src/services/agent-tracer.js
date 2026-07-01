@@ -20,6 +20,14 @@ const { redis: store } = require('./memory-store');
 const TRACE_KEEP = 50; // 每用户保留最近 50 条 trace
 const TRACE_KEY = (userId) => `agent:trace:${userId || 'anonymous'}`;
 
+// 落盘熔断：连续失败 ≥3 次后，接下来 60s 内跳过 _persist（不发 Redis），
+// 避免 Redis 持续宕机时每请求一条 warn 刷屏 + pending Promise 积压。
+// 60s 后放行一次探活，成功则复位。
+const PERSIST_FAIL_THRESHOLD = 3;
+const PERSIST_BREAKER_MS = 60 * 1000;
+let _persistFailStreak = 0;
+let _persistBreakUntil = 0;
+
 // 路由英文 key → 中文展示名。后端是 route 值的真相源，统一在此映射，
 // 通过 toSummary() 下发给前端，前端无需再维护一份同步表。
 const ROUTE_LABELS = {
@@ -93,10 +101,22 @@ class AgentTracer {
     try {
       console.log(`[AgentTrace] ${JSON.stringify(trace)}`);
     } catch { /* 序列化失败忽略 */ }
-    // 2) 异步落盘，不阻塞响应
-    this._persist(trace).catch((e) => {
-      console.warn('[AgentTracer] 落盘失败:', e.message);
-    });
+    // 2) 异步落盘，不阻塞响应。熔断期间直接跳过（见模块级 _persistBreakUntil）
+    if (Date.now() < _persistBreakUntil) {
+      // 熔断中：静默跳过，不再发 Redis 也不再 warn（避免刷屏）
+      return trace;
+    }
+    this._persist(trace)
+      .then(() => { _persistFailStreak = 0; }) // 成功则复位失败计数
+      .catch((e) => {
+        _persistFailStreak++;
+        if (_persistFailStreak >= PERSIST_FAIL_THRESHOLD) {
+          _persistBreakUntil = Date.now() + PERSIST_BREAKER_MS;
+          console.warn(`[AgentTracer] 落盘连续失败 ${_persistFailStreak} 次，熔断 ${PERSIST_BREAKER_MS / 1000}s：${e.message}`);
+        } else {
+          console.warn('[AgentTracer] 落盘失败:', e.message);
+        }
+      });
     return trace;
   }
 
@@ -171,6 +191,8 @@ class AgentTracer {
  * @param {number} limit
  */
 async function getRecentTraces(userId, limit = 20) {
+  // 防御：limit<=0 时 lrange(-0,-1) 会返回整个列表（语义错误），直接返回空
+  if (!Number.isFinite(limit) || limit <= 0) return [];
   const key = TRACE_KEY(userId);
   const raw = await store.lrange(key, -limit, -1);
   if (!raw || raw.length === 0) return [];
