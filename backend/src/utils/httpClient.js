@@ -70,7 +70,7 @@ async function request(options, body) {
  * @param {string} [body] - JSON 字符串体
  * @returns {Promise<IncomingMessage>}
  */
-async function requestStream(options, body) {
+async function requestStream(options, body, signal) {
   const timeout = options.timeout || DEFAULT_TIMEOUT;
   const reqOptions = {
     ...options,
@@ -96,6 +96,24 @@ async function requestStream(options, body) {
       req.destroy();
       reject(new Error('请求超时'));
     });
+
+    // 客户端断开 / abort → 立即销毁底层 socket，使流式 for-await 尽快退出，
+    // 不必等到下一个 chunk 或 socket 超时（最坏 60s）。
+    if (signal) {
+      if (signal.aborted) {
+        req.destroy();
+        return reject(new Error('aborted'));
+      }
+      const onAbort = () => {
+        req.destroy();
+        reject(new Error('aborted'));
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      // 请求结束后移除监听，避免 signal 上累积监听器
+      const cleanup = () => signal.removeEventListener('abort', onAbort);
+      req.on('close', cleanup);
+      req.on('error', cleanup);
+    }
 
     if (body) req.write(body);
     req.end();
