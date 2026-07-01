@@ -2,7 +2,6 @@
 
 const { AiService } = require('./ai.service');
 const { IntentRouter } = require('./intent-router.service');
-const { ReactPlanner, REACT_STEPS } = require('./react-planner.service');
 const { ReactAgent } = require('./react-agent.service');
 const { WorkingMemory } = require('./working-memory.service');
 const { analysisService } = require('./analysis.service');
@@ -32,7 +31,6 @@ class AgentService {
   constructor(aiService = null) {
     this.aiService = aiService || new AiService();
     this.intentRouter = new IntentRouter(aiService);
-    this.reactPlanner = new ReactPlanner(aiService);
     this.reactAgent = new ReactAgent(aiService, toolRegistry);
     this.analysisService = analysisService;
     this.memoryService = null; // 由 app.js 注入
@@ -202,7 +200,8 @@ class AgentService {
       tracer.markTimeout();
     }
     // iterations 由 ReactAgent 内部通过 tracer.setIterations 回填
-    // 先 finish（设 endedAt + 落盘），再 yield 摘要给前端（推理总览小条）
+    // finish() 同步设 endedAt + 输出 console，再异步落盘；
+    // 此处先 finish 再 toSummary，保证 summary 的 totalMs 与落盘 trace 同源（都用 endedAt）
     tracer.finish();
     yield { type: 'trace', trace: tracer.toSummary() };
   }

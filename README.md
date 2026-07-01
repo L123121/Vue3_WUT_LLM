@@ -275,7 +275,6 @@ data: [DONE]
 │   │   │   ├── agent-tools.js        # Agent 工具定义
 │   │   │   ├── tool-registry.service.js  # 工具注册表
 │   │   │   ├── deterministic-tools.js    # 确定性工具
-│   │   │   ├── react-planner.service.js   # 推理规划器
 │   │   │   ├── memory.service.js     # 记忆服务
 │   │   │   ├── memory-store.js       # 记忆存储（JSON + 内存）
 │   │   │   ├── memory/

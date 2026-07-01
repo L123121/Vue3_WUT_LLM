@@ -39,6 +39,42 @@ class ReactAgent {
   }
 
   /**
+   * 解析 LLM 返回的 tool_calls：拆出 name/args/id，并分离 _write_note 元工具。
+   * 纯函数，无副作用，便于单测。
+   * @param {Array} toolCalls - OpenAI 格式 tool_calls
+   * @returns {{ notes: Array, tools: Array }} notes 为 _write_note 调用，tools 为普通工具调用
+   */
+  _parseToolCalls(toolCalls) {
+    if (!toolCalls || toolCalls.length === 0) return { notes: [], tools: [] };
+    const parsed = toolCalls.map(tc => {
+      const fn = tc.function || {};
+      const name = fn.name || '';
+      let args = {};
+      try {
+        args = fn.arguments ? JSON.parse(fn.arguments) : {};
+      } catch (e) {
+        console.warn(`[ReactAgent] 工具参数解析失败: ${fn.arguments}`);
+        args = {};
+      }
+      return { tc, name, args, id: tc.id || this._genId() };
+    });
+    return {
+      notes: parsed.filter(c => c.name === '_write_note'),
+      tools: parsed.filter(c => c.name !== '_write_note'),
+    };
+  }
+
+  /**
+   * 计算本轮普通工具调用的签名（tool + 参数，排序后拼接），用于无进展循环检测。
+   */
+  _buildLoopSignature(toolsCalls) {
+    return toolsCalls
+      .map(c => `${c.name}(${JSON.stringify(c.args)})`)
+      .sort()
+      .join('|');
+  }
+
+  /**
    * 截断工具结果，保留关键信息但防止 context window 溢出
    *
    * 智能截断策略（而非硬切前 N 字符）：
@@ -224,23 +260,8 @@ class ReactAgent {
         if (toolCalls && toolCalls.length > 0) {
           hasUsedTool = true;
 
-          // Step 1: 解析所有工具调用
-          const parsedCalls = toolCalls.map(tc => {
-            const fn = tc.function || {};
-            const name = fn.name || '';
-            let args = {};
-            try {
-              args = fn.arguments ? JSON.parse(fn.arguments) : {};
-            } catch (e) {
-              console.warn(`[ReactAgent] 工具参数解析失败: ${fn.arguments}`);
-              args = {};
-            }
-            return { tc, name, args, id: tc.id || this._genId() };
-          });
-
-          // Step 2: 分离 _write_note（元工具）与普通工具
-          const notes = parsedCalls.filter(c => c.name === '_write_note');
-          const tools_calls = parsedCalls.filter(c => c.name !== '_write_note');
+          // Step 1: 解析工具调用并分离 _write_note 元工具
+          const { notes, tools: tools_calls } = this._parseToolCalls(toolCalls);
 
           // Step 3: _write_note 轻量元工具同步执行
           for (const c of notes) {
@@ -325,10 +346,7 @@ class ReactAgent {
 
           // ---- 无进展循环检测 ----
           // 计算本轮工具调用签名（tool + 参数），与上一轮比较
-          const signature = tools_calls
-            .map(c => `${c.name}(${JSON.stringify(c.args)})`)
-            .sort()
-            .join('|');
+          const signature = this._buildLoopSignature(tools_calls);
           if (signature === lastCallSignature) {
             repeatCount++;
           } else {
@@ -394,78 +412,10 @@ class ReactAgent {
 
   // ==================== LLM 调用（含工具参数） ====================
 
-  async _callLLMWithTools(messages, tools) {
-    if (!this.aiService.apiKey) {
-      console.warn('[ReactAgent] API Key 缺失，无法使用 ReAct Agent');
-      return null;
-    }
-
-    const path = this.aiService.anthropicMode ? '/v1/messages' : '/v2/chat/completions';
-
-    const payload = {
-      model: this.aiService.model,
-      messages,
-      max_tokens: this.aiService.maxTokens || 4096,
-      temperature: this.aiService.temperature ?? 0.7,
-      stream: false,
-    };
-
-    // 注入工具定义（OpenAI function calling 格式）
-    if (tools && tools.length > 0) {
-      payload.tools = tools;
-    }
-
-    const body = JSON.stringify(payload);
-    const options = this.aiService._buildOptions(path);
-    options.headers['Content-Length'] = Buffer.byteLength(body, 'utf8');
-    options.timeout = 30000; // 单次 LLM 调用 30 秒超时
-
-    console.log(`[ReactAgent] LLM 调用: model=${this.aiService.model}, messages=${messages.length}, tools=${tools.length}`);
-
-    try {
-      const result = await request(options, body);
-      const json = result.data;
-      const choice = json?.choices?.[0];
-
-      if (!choice) {
-        console.warn('[ReactAgent] LLM 返回空:', JSON.stringify(json).substring(0, 200));
-        return null;
-      }
-
-      const message = choice.message || {};
-      const content = message.content || '';
-
-      // 检查 finish_reason — 'tool_calls' 表示 LLM 想调用工具
-      if (choice.finish_reason === 'tool_calls' && message.tool_calls) {
-        return {
-          content,
-          tool_calls: message.tool_calls,
-        };
-      }
-
-      return {
-        content,
-        tool_calls: null,
-      };
-    } catch (err) {
-      if (err.statusCode === 400) {
-        // 可能是工具定义或消息格式问题
-        const detail = err.body ? err.body.substring(0, 200) : '';
-        console.error(`[ReactAgent] LLM 400 错误: ${detail}`);
-        throw new Error(`AI 模型不支持工具调用，请检查模型配置。${detail ? ' ' + detail : ''}`);
-      }
-      if (err.statusCode) {
-        throw new Error(`AI 服务返回错误 ${err.statusCode}`);
-      }
-      throw new Error(`AI 请求失败: ${err.message}`);
-    }
-  }
-
   /**
    * 流式 LLM 调用（含工具参数）— 真流式
    *
-   * 与 _callLLMWithTools 的区别：
-   *   - 用 stream:true 调用，逐 token 解析 SSE
+   * 用 stream:true 调用，逐 token 解析 SSE：
    *   - 文本 delta 实时 yield 给前端（{type:'delta', content}），首 token 即出
    *   - tool_calls delta 按 index 拼接成完整结构，流结束统一 yield（{type:'end', tool_calls, content}）
    *
