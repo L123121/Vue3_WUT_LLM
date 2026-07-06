@@ -245,6 +245,26 @@ const getCategoryLabel = (value) => {
   return categories.find(c => c.value === value)?.label || value;
 };
 
+
+const vectorStatusLabels = {
+  ready: '可检索',
+  vectoring: '向量化中',
+  timeout: '待确认',
+  failed: '向量失败',
+  local_only: '本地保存'
+};
+
+const vectorStatusClassMap = {
+  ready: 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300',
+  vectoring: 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300',
+  timeout: 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300',
+  failed: 'bg-rose-100 dark:bg-rose-900/30 text-rose-700 dark:text-rose-300',
+  local_only: 'bg-slate-100 dark:bg-gray-700 text-slate-600 dark:text-gray-300'
+};
+
+const getVectorStatusLabel = (status) => vectorStatusLabels[status || 'local_only'] || '未知状态';
+
+const getVectorStatusClasses = (status) => vectorStatusClassMap[status || 'local_only'] || vectorStatusClassMap.local_only;
 // 格式化日期
 const formatDate = (date) => {
   if (!date) return '-';
@@ -389,6 +409,13 @@ onMounted(() => {
                 <div class="flex items-center gap-2 mt-1">
                   <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300">
                     {{ getCategoryLabel(doc.category) }}
+                  </span>
+                  <span
+                    class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium"
+                    :class="getVectorStatusClasses(doc.vectorStatus)"
+                    :title="doc.vectorMessage || getVectorStatusLabel(doc.vectorStatus)"
+                  >
+                    {{ getVectorStatusLabel(doc.vectorStatus) }}
                   </span>
                   <span class="text-[10px] text-slate-400 dark:text-gray-500">{{ formatSize(doc.contentLength) }}</span>
                   <span class="text-[10px] text-slate-400 dark:text-gray-500">{{ doc.chunkCount }} 片段</span>

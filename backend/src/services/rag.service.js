@@ -24,28 +24,34 @@ class RagService {
    * 父子文档召回：将 ChatDoc 返回的 fileRefer 映射为本地完整父文档上下文
    */
   async assembleParentContext(fileRefer) {
-    if (!fileRefer || Object.keys(fileRefer).length === 0) {
+    const entries = Object.entries(fileRefer || {})
+      .filter(([fileId]) => fileId)
+      .map(([fileId, chunkIndices]) => [
+        fileId,
+        Array.isArray(chunkIndices) ? chunkIndices : []
+      ]);
+
+    if (entries.length === 0) {
       return { sources: [], context: '', parentDocs: [] };
     }
 
-    const matchedFileIds = Object.keys(fileRefer);
-    const matchedIndices = Object.values(fileRefer);
+    const docsByFileId = await this.documentService.getDocumentsByChatdocFileIds(entries.map(([fileId]) => fileId));
 
-    const parentDocs = await this._fetchParentDocuments(matchedFileIds);
-
-    if (parentDocs.length === 0) {
+    if (docsByFileId.size === 0) {
       return { sources: [], context: '', parentDocs: [] };
     }
 
     const contextParts = [];
     const sources = [];
+    const parentDocs = [];
     let totalLength = 0;
 
-    for (let i = 0; i < parentDocs.length; i++) {
-      const doc = parentDocs[i];
-      const chunkIndices = matchedIndices[i] || [];
+    for (const [fileId, chunkIndices] of entries) {
+      const doc = docsByFileId.get(fileId);
+      if (!doc) continue;
 
-      const header = `【文档 ${i + 1}】${doc.title}`;
+      const documentNumber = sources.length + 1;
+      const header = `【文档 ${documentNumber}】${doc.title}`;
       const summaryPrefix = doc.metadata?.summary
         ? `\n摘要：${doc.metadata.summary}\n`
         : '\n';
@@ -58,12 +64,23 @@ class RagService {
         const remaining = this.maxContextLength - totalLength;
         if (remaining > 200) {
           contextParts.push(entry.substring(0, remaining) + '\n...(内容过长已截断)');
+          parentDocs.push(doc);
+          sources.push({
+            id: doc.id,
+            title: doc.title,
+            category: doc.category,
+            chunkCount: doc.chunkCount,
+            matchedChunks: chunkIndices.length,
+            matchedChunkIds: chunkIndices,
+            chatdocFileId: doc.chatdocFileId
+          });
         }
         break;
       }
 
       contextParts.push(entry);
       totalLength += entryLength;
+      parentDocs.push(doc);
 
       sources.push({
         id: doc.id,
@@ -71,6 +88,7 @@ class RagService {
         category: doc.category,
         chunkCount: doc.chunkCount,
         matchedChunks: chunkIndices.length,
+        matchedChunkIds: chunkIndices,
         chatdocFileId: doc.chatdocFileId
       });
     }
@@ -79,51 +97,6 @@ class RagService {
 
     return { sources, context, parentDocs };
   }
-
-  /**
-   * 从本地 MemoryStore 批量拉取父文档
-   */
-  async _fetchParentDocuments(fileIds) {
-    if (!fileIds || fileIds.length === 0) return [];
-
-    try {
-      const allDocIds = await this.documentService._getAllDocIds();
-      const matchedDocIds = [];
-      for (const docId of allDocIds) {
-        const meta = await this.documentService._getDocMeta(docId);
-        if (meta && meta.chatdocFileId && fileIds.includes(meta.chatdocFileId)) {
-          matchedDocIds.push(docId);
-        }
-      }
-
-      if (matchedDocIds.length === 0) return [];
-
-      const pipeline = require('../services/memory-store').store.pipeline();
-      matchedDocIds.forEach(id => {
-        pipeline.hgetall(`document:${id}`);
-      });
-      const results = await pipeline.exec();
-
-      return results
-        .map(([err, data]) => data)
-        .filter(d => d && d.id)
-        .map(d => ({
-          id: d.id,
-          title: d.title,
-          category: d.category,
-          content: d.content || '',
-          contentLength: parseInt(d.contentLength) || 0,
-          chunkCount: parseInt(d.chunkCount) || 0,
-          chatdocFileId: d.chatdocFileId || '',
-          createdAt: parseInt(d.createdAt) || 0,
-          metadata: d.metadata ? JSON.parse(d.metadata) : {}
-        }));
-    } catch (err) {
-      console.warn(`[RAG] 拉取父文档失败: ${err.message}`);
-      return [];
-    }
-  }
-
   /**
    * 构建父子召回增强的 RAG Prompt
    */
@@ -150,7 +123,7 @@ ${context}
    */
   async chatdocChat(message, history = [], options = {}) {
     const totalStart = Date.now();
-    const fileIds = await this.documentService.getAllChatdocFileIds();
+    const fileIds = await this.documentService.getAllChatdocFileIds({ category: options.category });
     if (fileIds.length === 0) return null;
 
     const messages = [];
@@ -179,6 +152,32 @@ ${context}
       }
     }
 
+    if (!this._hasFileRefer(effectiveFileRefer)) {
+      const totalLatency = Date.now() - totalStart;
+      metrics.recordLatency('total', totalLatency);
+      metrics.recordRagQuery({
+        usedRag: true,
+        usedParentChild: false,
+        matchedDocs: 0,
+        retrievedChunks: 0
+      });
+
+      return {
+        reply: this._buildNoReliableSourcesReply(),
+        isMock: false,
+        sources: [],
+        context: '',
+        model: 'chatdoc+no-source',
+        _metrics: {
+          totalLatency,
+          chatdocLatency,
+          parentChildLatency: 0,
+          aiLatency: 0,
+          matchedDocs: 0,
+          retrievedChunks: 0
+        }
+      };
+    }
     // 父子召回：用 ChatDoc 的 fileRefer 从本地拉取完整父文档
     let enhancedContext = '';
     let parentSources = [];
@@ -261,6 +260,13 @@ ${context}
     }));
   }
 
+  _hasFileRefer(fileRefer) {
+    return !!fileRefer && Object.values(fileRefer).some(indices => Array.isArray(indices) && indices.length > 0);
+  }
+
+  _buildNoReliableSourcesReply() {
+    return '知识库中没有检索到足够可靠的来源。请换一种问法，或先在知识库中上传/补充相关文档后再试。';
+  }
   // ==================== Rerank 精排 ====================
 
   /**
@@ -425,7 +431,7 @@ ${context}
    */
   async *chatStream(message, history = [], options = {}) {
     const totalStart = Date.now();
-    const fileIds = await this.documentService.getAllChatdocFileIds();
+    const fileIds = await this.documentService.getAllChatdocFileIds({ category: options.category });
 
     if (fileIds.length > 0) {
       try {
@@ -454,6 +460,18 @@ ${context}
           metrics.recordLatency('rerank', Date.now() - rerankStart);
         }
 
+        if (!this._hasFileRefer(effectiveFileRefer)) {
+          metrics.recordRagQuery({
+            usedRag: true,
+            usedParentChild: false,
+            matchedDocs: 0,
+            retrievedChunks: 0
+          });
+          metrics.recordLatency('total', Date.now() - totalStart);
+          yield { type: 'content', content: this._buildNoReliableSourcesReply(), done: false };
+          yield { type: 'content', content: '', done: true };
+          return;
+        }
         // 第二步：父子召回 — 用 fileRefer 拉取完整父文档
         let enhancedContext = '';
         let parentSources = [];
