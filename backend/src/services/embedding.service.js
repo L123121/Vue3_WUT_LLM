@@ -85,6 +85,7 @@ class EmbeddingService {
   // ==================== 内部方法 ====================
 
   async _callApi(text) {
+    const startedAt = Date.now();
     const payload = JSON.stringify({
       model: this.model,
       input: text.slice(0, 8000), // 限制长度
@@ -104,7 +105,7 @@ class EmbeddingService {
     };
 
     const result = await request(options, payload);
-    metrics.recordLatency('embedding', Date.now() - Date.now());
+    metrics.recordLatency('embedding', Date.now() - startedAt);
 
     const vector = result.data?.data?.[0]?.embedding;
     if (vector && Array.isArray(vector)) {

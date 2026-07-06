@@ -5,13 +5,20 @@ const { TextSplitter } = require('../utils/text-splitter');
 const { redis: store } = require('./memory-store');
 const { ChatdocService } = require('./chatdoc.service');
 
+const VECTOR_STATUS = Object.freeze({
+  LOCAL_ONLY: 'local_only',
+  VECTORING: 'vectoring',
+  READY: 'ready',
+  FAILED: 'failed',
+  TIMEOUT: 'timeout'
+});
+
 class DocumentService {
   constructor() {
     this.splitter = new TextSplitter({
       chunkSize: 500,
       chunkOverlap: 50
     });
-    this.DOC_TTL = 30 * 24 * 60 * 60;
     this.chatdocService = new ChatdocService();
   }
 
@@ -31,29 +38,29 @@ class DocumentService {
     const chunks = this.splitter.splitByParagraph(content);
     console.log(`[Document] 文档切片完成: ${chunks.length} 段`);
 
-    // 上传到星火知识库
     let chatdocFileId = null;
+    let vectorStatus = fileBuffer && fileName ? VECTOR_STATUS.FAILED : VECTOR_STATUS.LOCAL_ONLY;
+    let vectorMessage = fileBuffer && fileName ? '等待上传到星火知识库' : '仅本地存储，暂不参与星火检索';
+
     if (fileBuffer && fileName) {
       try {
         console.log(`[Document] 上传到星火知识库: ${fileName}`);
         const uploadResult = await this.chatdocService.uploadDocument(fileBuffer, fileName);
         if (uploadResult.code === 0 && uploadResult.data?.fileId) {
           chatdocFileId = uploadResult.data.fileId;
+          vectorStatus = VECTOR_STATUS.VECTORING;
+          vectorMessage = '星火知识库向量化中';
           console.log(`[Document] 星火知识库上传成功, fileId: ${chatdocFileId}`);
-
-          // 后台异步等待向量化（不阻塞响应）
-          this.chatdocService.waitForVectoring(chatdocFileId, 30000).then(ok => {
-            if (ok) console.log(`[Document] 星火知识库向量化完成`);
-          }).catch(() => {});
         } else {
-          console.warn(`[Document] 星火知识库上传失败: ${uploadResult.desc || uploadResult.message}`);
+          vectorMessage = uploadResult.desc || uploadResult.message || '星火知识库上传失败';
+          console.warn(`[Document] 星火知识库上传失败: ${vectorMessage}`);
         }
       } catch (err) {
+        vectorMessage = err.message;
         console.warn(`[Document] 星火知识库上传异常: ${err.message}`);
       }
     }
 
-    // 存储文档元数据到 Redis
     const docMetadata = {
       id: docId,
       title,
@@ -63,20 +70,52 @@ class DocumentService {
       chunkCount: chunks.length,
       createdAt: now,
       chatdocFileId: chatdocFileId || '',
+      vectorStatus,
+      vectorMessage,
+      vectorUpdatedAt: now,
       metadata: JSON.stringify(metadata)
     };
 
     await store.hset(`document:${docId}`, docMetadata);
     await store.sadd('documents:all', docId);
-    await store.expire(`document:${docId}`, this.DOC_TTL);
+
+    if (chatdocFileId) {
+      this._trackVectoringStatus(docId, chatdocFileId);
+    }
 
     return {
       id: docId,
       title,
       chunkCount: chunks.length,
       chatdocFileId,
+      vectorStatus,
+      vectorMessage,
       message: chatdocFileId ? '文档添加成功（已同步到星火知识库）' : '文档添加成功（仅本地存储）'
     };
+  }
+
+  _trackVectoringStatus(docId, chatdocFileId) {
+    this.chatdocService.waitForVectoring(chatdocFileId, 30000).then(async ok => {
+      if (ok) {
+        console.log(`[Document] 星火知识库向量化完成: ${chatdocFileId}`);
+        await this._setVectorStatus(docId, VECTOR_STATUS.READY, '星火知识库向量化完成');
+      } else {
+        await this._setVectorStatus(docId, VECTOR_STATUS.TIMEOUT, '向量化状态暂未确认，后续查询会继续尝试');
+      }
+    }).catch(async err => {
+      await this._setVectorStatus(docId, VECTOR_STATUS.FAILED, err.message);
+    });
+  }
+
+  async _setVectorStatus(docId, vectorStatus, vectorMessage = '') {
+    const docMeta = await store.hgetall(`document:${docId}`);
+    if (!docMeta || !docMeta.id) return;
+
+    await store.hset(`document:${docId}`, {
+      vectorStatus,
+      vectorMessage,
+      vectorUpdatedAt: Date.now()
+    });
   }
 
   async addDocuments(docs) {
@@ -108,7 +147,7 @@ class DocumentService {
   async listDocuments(options = {}) {
     const { category, page = 1, limit = 20 } = options;
 
-    let docIds = await store.smembers('documents:all');
+    const docIds = await store.smembers('documents:all');
 
     const pipeline = store.pipeline();
     docIds.forEach(id => pipeline.hgetall(`document:${id}`));
@@ -117,15 +156,7 @@ class DocumentService {
     let documents = results
       .map(([err, data]) => data)
       .filter(d => d && d.id)
-      .map(d => ({
-        id: d.id,
-        title: d.title,
-        category: d.category,
-        contentLength: parseInt(d.contentLength) || 0,
-        chunkCount: parseInt(d.chunkCount) || 0,
-        chatdocFileId: d.chatdocFileId || '',
-        createdAt: new Date(parseInt(d.createdAt))
-      }));
+      .map(d => this._normalizeDocMeta(d, { includeContent: false }));
 
     if (category) {
       documents = documents.filter(d => d.category === category);
@@ -148,30 +179,46 @@ class DocumentService {
     const docMeta = await store.hgetall(`document:${docId}`);
     if (!docMeta || !docMeta.id) return null;
 
-    return {
-      id: docMeta.id,
-      title: docMeta.title,
-      category: docMeta.category,
-      content: docMeta.content || '',
-      contentLength: parseInt(docMeta.contentLength) || 0,
-      chunkCount: parseInt(docMeta.chunkCount) || 0,
-      chatdocFileId: docMeta.chatdocFileId || '',
-      createdAt: new Date(parseInt(docMeta.createdAt)),
-      metadata: docMeta.metadata ? JSON.parse(docMeta.metadata) : {}
-    };
+    return this._normalizeDocMeta(docMeta, { includeContent: true });
   }
 
-  async getAllChatdocFileIds() {
+  async getAllChatdocFileIds(options = {}) {
+    const { category, includePending = false } = options;
     const docIds = await this._getAllDocIds();
     if (!docIds.length) return [];
 
     const pipeline = store.pipeline();
-    docIds.forEach(id => pipeline.hget(`document:${id}`, 'chatdocFileId'));
+    docIds.forEach(id => pipeline.hgetall(`document:${id}`));
     const results = await pipeline.exec();
 
     return results
       .map(([err, data]) => data)
-      .filter(id => id && id.length > 0);
+      .filter(d => d && d.id && d.chatdocFileId)
+      .filter(d => !category || d.category === category)
+      .filter(d => includePending || this._isSearchableVector(d))
+      .map(d => d.chatdocFileId);
+  }
+
+  async getDocumentsByChatdocFileIds(fileIds) {
+    if (!fileIds || fileIds.length === 0) return new Map();
+
+    const wanted = new Set(fileIds);
+    const docIds = await this._getAllDocIds();
+    if (!docIds.length) return new Map();
+
+    const pipeline = store.pipeline();
+    docIds.forEach(id => pipeline.hgetall(`document:${id}`));
+    const results = await pipeline.exec();
+
+    const docsByFileId = new Map();
+    results
+      .map(([err, data]) => data)
+      .filter(d => d && d.id && wanted.has(d.chatdocFileId))
+      .forEach(d => {
+        docsByFileId.set(d.chatdocFileId, this._normalizeDocMeta(d, { includeContent: true }));
+      });
+
+    return docsByFileId;
   }
 
   /**
@@ -199,6 +246,46 @@ class DocumentService {
     }
     return null;
   }
+
+  _normalizeDocMeta(docMeta, { includeContent = false } = {}) {
+    const doc = {
+      id: docMeta.id,
+      title: docMeta.title,
+      category: docMeta.category,
+      contentLength: parseInt(docMeta.contentLength) || 0,
+      chunkCount: parseInt(docMeta.chunkCount) || 0,
+      chatdocFileId: docMeta.chatdocFileId || '',
+      vectorStatus: this._normalizeVectorStatus(docMeta),
+      vectorMessage: docMeta.vectorMessage || '',
+      vectorUpdatedAt: docMeta.vectorUpdatedAt ? new Date(parseInt(docMeta.vectorUpdatedAt)) : null,
+      createdAt: new Date(parseInt(docMeta.createdAt)),
+      metadata: docMeta.metadata ? this._parseMetadata(docMeta.metadata) : {}
+    };
+
+    if (includeContent) {
+      doc.content = docMeta.content || '';
+    }
+
+    return doc;
+  }
+
+  _normalizeVectorStatus(docMeta) {
+    if (docMeta.vectorStatus) return docMeta.vectorStatus;
+    return docMeta.chatdocFileId ? VECTOR_STATUS.READY : VECTOR_STATUS.LOCAL_ONLY;
+  }
+
+  _isSearchableVector(docMeta) {
+    const vectorStatus = this._normalizeVectorStatus(docMeta);
+    return vectorStatus === VECTOR_STATUS.READY || vectorStatus === VECTOR_STATUS.TIMEOUT;
+  }
+
+  _parseMetadata(raw) {
+    try {
+      return JSON.parse(raw);
+    } catch (err) {
+      return {};
+    }
+  }
 }
 
-module.exports = { DocumentService };
+module.exports = { DocumentService, VECTOR_STATUS };
