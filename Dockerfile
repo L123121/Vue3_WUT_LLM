@@ -15,7 +15,7 @@ RUN npm ci --ignore-scripts
 # 拷贝前端源码
 COPY vite.config.js index.html ./
 COPY src/ src/
-COPY public/ public/ 2>/dev/null || true
+COPY public/ public/
 
 # 构建（输出到 /app/dist）
 RUN npm run build
@@ -30,9 +30,11 @@ LABEL description="武理小精灵 - 武理校园 AI 助手 / WUT Campus AI Assi
 # PUPPETEER_SKIP_DOWNLOAD=true 表示不重复下载，使用系统已安装的 chromium
 ENV PUPPETEER_SKIP_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+# 注意: chromium 依赖大量系统库（libnss3、libgbm1 等），不能使用 --no-install-recommends
+# 否则 headless 启动立即崩溃（Failed to launch the browser process）
 RUN apt-get update && apt-get install -y \
     chromium \
-    --no-install-recommends \
+    fonts-wqy-zenhei \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
