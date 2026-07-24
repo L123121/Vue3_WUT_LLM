@@ -23,6 +23,7 @@ export const useMessageStore = defineStore('message', () => {
 
     // 消息操作
     deleteMessage: actions.deleteMessage,
+    setMessageFeedback: actions.setMessageFeedback,
     clearMessages: actions.clearMessages,
     getConversationHistory: actions.getConversationHistory,
   };

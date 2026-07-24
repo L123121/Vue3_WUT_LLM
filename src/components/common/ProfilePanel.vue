@@ -1,9 +1,9 @@
 <script setup>
-import { computed } from 'vue';
+import { ref, computed } from 'vue';
 import { useAuthStore } from '../../stores/auth.store.js';
 import { useThemeStore } from '../../stores/theme.store.js';
 import { useToastStore } from '../../stores/toast.store.js';
-import { Moon, Sun, Upload, Image } from 'lucide-vue-next';
+import { Moon, Sun, Upload, Image, Lock, Loader2 } from 'lucide-vue-next';
 
 defineProps({ show: Boolean });
 const emit = defineEmits(['close', 'open-avatar-picker']);
@@ -13,6 +13,11 @@ const themeStore = useThemeStore();
 const toastStore = useToastStore();
 
 const draftAvatar = computed(() => authStore.user?.avatar || '');
+const showChangePassword = ref(false);
+const changePasswordLoading = ref(false);
+const currentPassword = ref('');
+const newPassword = ref('');
+const confirmPassword = ref('');
 
 const handleAvatarUpload = (event) => {
   const file = event.target.files[0];
@@ -27,13 +32,37 @@ const handleAvatarUpload = (event) => {
   reader.onerror = () => { toastStore.error('图片读取失败'); };
   reader.readAsDataURL(file);
 };
+
+const resetPasswordForm = () => {
+  currentPassword.value = '';
+  newPassword.value = '';
+  confirmPassword.value = '';
+  showChangePassword.value = false;
+};
+
+const handleChangePassword = async () => {
+  if (!currentPassword.value) { toastStore.error('请输入当前密码'); return; }
+  if (!newPassword.value || newPassword.value.length < 6) { toastStore.error('新密码至少 6 位'); return; }
+  if (newPassword.value !== confirmPassword.value) { toastStore.error('两次密码输入不一致'); return; }
+
+  changePasswordLoading.value = true;
+  try {
+    await authStore.changePassword(currentPassword.value, newPassword.value);
+    toastStore.success('密码修改成功');
+    resetPasswordForm();
+  } catch (err) {
+    toastStore.error(err.message || '密码修改失败');
+  } finally {
+    changePasswordLoading.value = false;
+  }
+};
 </script>
 
 <template>
   <div
     v-if="show"
-    class="profile-panel absolute top-16 mt-2 right-8 z-30 w-[420px] max-w-[calc(100%-2rem)] rounded-xl border border-slate-200 dark:border-gray-700 bg-white/95 dark:bg-gray-900/95 backdrop-blur-sm shadow-xl p-4 overflow-y-auto"
-    :style="{ maxHeight: 'calc(100vh - 6rem)' }"
+    class="profile-panel w-full rounded-xl border border-slate-200 dark:border-gray-700 bg-white/95 dark:bg-gray-900/95 backdrop-blur-sm shadow-xl p-4 overflow-y-auto"
+    style="max-height: 400px"
   >
     <div class="flex items-center justify-between mb-3">
       <h3 class="text-sm font-bold text-slate-800 dark:text-gray-100">个人中心</h3>
@@ -73,5 +102,25 @@ const handleAvatarUpload = (event) => {
       <Sun v-else :size="14" />
       <span>{{ themeStore.darkMode ? '夜间模式' : '日间模式' }}</span>
     </button>
+
+    <div class="mt-3">
+      <button v-if="!showChangePassword" @click="showChangePassword = true" class="w-full h-9 rounded-lg inline-flex items-center justify-center gap-2 text-sm border border-slate-200 dark:border-gray-700 bg-slate-50 dark:bg-gray-800 text-slate-700 dark:text-gray-200 hover:bg-slate-100 dark:hover:bg-gray-700 transition-colors">
+        <Lock :size="14" />
+        <span>修改密码</span>
+      </button>
+
+      <div v-else class="space-y-2 p-3 rounded-lg bg-slate-50 dark:bg-gray-800/60 border border-slate-200 dark:border-gray-700">
+        <input v-model="currentPassword" type="password" class="block w-full h-8 rounded-md border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2.5 text-xs text-slate-900 dark:text-gray-100 placeholder-slate-400 outline-none focus:border-blue-500" placeholder="当前密码" />
+        <input v-model="newPassword" type="password" class="block w-full h-8 rounded-md border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2.5 text-xs text-slate-900 dark:text-gray-100 placeholder-slate-400 outline-none focus:border-blue-500" placeholder="新密码（至少 6 位）" />
+        <input v-model="confirmPassword" type="password" class="block w-full h-8 rounded-md border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2.5 text-xs text-slate-900 dark:text-gray-100 placeholder-slate-400 outline-none focus:border-blue-500" placeholder="确认新密码" />
+        <div class="flex gap-2">
+          <button @click="handleChangePassword" :disabled="changePasswordLoading" class="flex-1 h-7 rounded-md text-xs font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50 inline-flex items-center justify-center gap-1">
+            <Loader2 v-if="changePasswordLoading" class="h-3 w-3 animate-spin" />
+            <span>{{ changePasswordLoading ? '修改中...' : '确认' }}</span>
+          </button>
+          <button @click="resetPasswordForm" class="h-7 px-3 rounded-md text-xs border border-slate-200 dark:border-gray-700 text-slate-600 dark:text-gray-300 hover:bg-slate-100 dark:hover:bg-gray-700 transition-colors">取消</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>

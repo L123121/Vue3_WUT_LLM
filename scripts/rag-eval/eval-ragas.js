@@ -1,250 +1,344 @@
 /**
- * RAGAS 生成质量评测
- * 指标：Faithfulness, Answer Relevancy, Context Precision, Context Recall
+ * RAGAS 离线生成质量评测
  *
- * 由于 RAGAS 官方库是 Python，本文件在 Node.js 中重新实现
- * 核心逻辑：prompt 模板 + LLM 调用 + 分数解析
+ * 流程：
+ *   1. 通过后端 RAG 接口导出 query + retrieved contexts + answer + ground_truth
+ *   2. 调用 Python RAGAS 官方库计算 Faithfulness / Answer Relevancy / Context Precision / Context Recall
+ *   3. 输出 JSON 结构化报告，供调参和综合报告复用
  */
 
-import { readFileSync, writeFileSync, mkdirSync } from 'fs';
-import { resolve, dirname } from 'path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { dirname, resolve } from 'path';
+import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
-import { ragQuery, getDocument, withRetry, checkBackendHealth } from './utils/api-client.js';
-import { computeAllMetrics } from './utils/ragas-metrics.js';
+import { checkBackendHealth, getDocument, ragChat, withRetry } from './utils/api-client.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATASET_PATH = resolve(__dirname, 'dataset/campus-qa.json');
 const RESULTS_DIR = resolve(__dirname, 'results');
+const SAMPLES_JSON_PATH = resolve(RESULTS_DIR, 'ragas-samples.json');
+const SAMPLES_JSONL_PATH = resolve(RESULTS_DIR, 'ragas-samples.jsonl');
+const RAGAS_OUTPUT_PATH = resolve(RESULTS_DIR, 'ragas-results.json');
+const PYTHON_RUNNER_PATH = resolve(__dirname, 'ragas_runner.py');
 
 mkdirSync(RESULTS_DIR, { recursive: true });
 
-/**
- * 从 fileRefer 和文档内容中提取上下文片段
- * @param {Array} sources - RAG 返回的 sources (含 id 和 chunks 索引)
- * @returns {Promise<string[]>} 上下文片段数组
- */
-async function extractContexts(sources) {
+function parseCliArgs(argv = process.argv.slice(2)) {
+  const getArgValue = (name, fallback = '') => {
+    const index = argv.indexOf(name);
+    return index >= 0 ? argv[index + 1] || fallback : fallback;
+  };
+
+  const sampleValue = getArgValue('--sample', '0');
+  return {
+    sampleSize: Number.parseInt(sampleValue, 10) || 0,
+    datasetPath: getArgValue('--dataset', DATASET_PATH),
+    inputPath: getArgValue('--input', ''),
+    outputPath: getArgValue('--output', RAGAS_OUTPUT_PATH),
+    pythonCommand: getArgValue('--python', process.env.RAGAS_PYTHON || 'python'),
+    metrics: getArgValue('--metrics', process.env.RAGAS_METRICS || ''),
+    exportOnly: argv.includes('--export-only'),
+    skipBackendHealth: argv.includes('--skip-health-check'),
+    noCategoryFilter: argv.includes('--no-category-filter'),
+    verbose: !argv.includes('--quiet'),
+  };
+}
+
+function loadJson(path) {
+  const raw = readFileSync(path, 'utf-8');
+  const parsed = JSON.parse(raw);
+  if (Array.isArray(parsed)) return parsed;
+  if (Array.isArray(parsed.samples)) return parsed.samples;
+  if (Array.isArray(parsed.results)) return parsed.results;
+  throw new Error(`无法从 ${path} 读取评测数组`);
+}
+
+function splitContext(context) {
+  return String(context || '')
+    .split(/\n\n={10,}\n\n/g)
+    .map(part => part.trim())
+    .filter(Boolean);
+}
+
+function forceSplit(text, chunkSize = 500, chunkOverlap = 50) {
+  const chunks = [];
+  const step = Math.max(1, chunkSize - chunkOverlap);
+  for (let index = 0; index < text.length; index += step) {
+    const chunk = text.slice(index, index + chunkSize).trim();
+    if (chunk) chunks.push(chunk);
+  }
+  return chunks;
+}
+
+function splitBySentence(text, chunkSize = 500) {
+  const sentences = String(text || '').split(/(?<=[。！？.!?])\s*/);
+  const chunks = [];
+  let currentChunk = '';
+
+  for (const sentence of sentences) {
+    if (currentChunk.length + sentence.length > chunkSize) {
+      if (currentChunk.trim()) chunks.push(currentChunk.trim());
+      if (sentence.length > chunkSize) {
+        chunks.push(...forceSplit(sentence));
+        currentChunk = '';
+      } else {
+        currentChunk = sentence;
+      }
+    } else {
+      currentChunk += sentence;
+    }
+  }
+
+  if (currentChunk.trim()) chunks.push(currentChunk.trim());
+  return chunks;
+}
+
+function splitByParagraph(text, chunkSize = 500, chunkOverlap = 50) {
+  if (!text) return [];
+
+  const paragraphs = String(text).split(/\n\n+/);
+  const chunks = [];
+  let currentChunk = '';
+
+  for (const paragraph of paragraphs) {
+    if (paragraph.length > chunkSize) {
+      if (currentChunk.trim()) chunks.push(currentChunk.trim());
+      currentChunk = '';
+      chunks.push(...splitBySentence(paragraph, chunkSize));
+    } else if (currentChunk.length + paragraph.length > chunkSize) {
+      if (currentChunk.trim()) chunks.push(currentChunk.trim());
+      currentChunk = currentChunk.slice(-chunkOverlap) + paragraph;
+    } else {
+      currentChunk += (currentChunk ? '\n\n' : '') + paragraph;
+    }
+  }
+
+  if (currentChunk.trim()) chunks.push(currentChunk.trim());
+  return chunks.filter(Boolean);
+}
+
+function getSourceChunkIndexes(source) {
+  const indexes = [];
+  if (Array.isArray(source.matchedChunkIds)) indexes.push(...source.matchedChunkIds);
+  if (Array.isArray(source.chunks)) indexes.push(...source.chunks);
+  if (Number.isInteger(source.chunkIndex) && source.chunkIndex >= 0) indexes.push(source.chunkIndex);
+
+  return [...new Set(indexes)]
+    .map(Number)
+    .filter(index => Number.isInteger(index) && index >= 0);
+}
+
+async function extractContextsFromSources(sources = []) {
   const contexts = [];
 
   for (const source of sources) {
-    if (!source.id) continue;
+    if (!source?.id) continue;
 
     try {
       const doc = await getDocument(source.id);
-      if (!doc || !doc.content) continue;
+      if (!doc?.content) continue;
 
-      // 如果有 chunk 索引，按索引切片
-      if (source.chunks && source.chunks.length > 0) {
-        const content = doc.content;
-        const chunkSize = 500; // 与 TextSplitter 的 chunkSize 一致
-        const chunkOverlap = 50;
-
-        for (const chunkIndex of source.chunks) {
-          const start = Math.max(0, chunkIndex * (chunkSize - chunkOverlap));
-          const end = Math.min(content.length, start + chunkSize);
-          const chunk = content.substring(start, end).trim();
-          if (chunk) contexts.push(chunk);
+      const chunks = splitByParagraph(doc.content);
+      const chunkIndexes = getSourceChunkIndexes(source);
+      if (chunkIndexes.length > 0 && chunks.length > 0) {
+        for (const chunkIndex of chunkIndexes) {
+          if (chunks[chunkIndex]) contexts.push(chunks[chunkIndex]);
         }
       } else {
-        // 没有 chunk 索引，使用文档摘要（前 1000 字）
-        contexts.push(doc.content.substring(0, 1000));
+        contexts.push(doc.content.slice(0, 1200));
       }
     } catch (err) {
       console.warn(`  [RAGAS] 获取文档 ${source.id} 失败: ${err.message}`);
     }
   }
 
-  // 去重
-  return [...new Set(contexts)];
+  return [...new Set(contexts.map(context => context.trim()).filter(Boolean))];
 }
 
-/**
- * 运行 RAGAS 评测
- */
-export async function runRagasEval(options = {}) {
-  const { sampleSize = 0, verbose = true } = options;
+async function extractContexts({ context, sources }) {
+  const contextParts = splitContext(context);
+  if (contextParts.length > 0) return contextParts;
+  return extractContextsFromSources(sources);
+}
 
-  console.log('\n========================================');
-  console.log('  RAGAS 生成质量评测');
-  console.log('========================================\n');
+function normalizeDatasetItem(item, index) {
+  const question = item.question || item.query || item.user_input || '';
+  const groundTruth = item.ground_truth || item.groundTruth || item.reference || '';
 
-  // 检查后端
-  const healthy = await checkBackendHealth();
-  if (!healthy) {
-    console.error('❌ 后端服务不可用，请先启动后端: cd backend && npm run dev');
-    return null;
+  return {
+    id: item.id || `sample_${index + 1}`,
+    question,
+    ground_truth: groundTruth,
+    category: item.category || 'default',
+    difficulty: item.difficulty || 'unknown',
+    relevant_doc_ids: item.relevant_doc_ids || item.relevantDocIds || [],
+  };
+}
+
+function buildExportSummary(samples, datasetSize, skipped) {
+  const valid = samples.filter(sample => !sample.error && sample.answer && sample.contexts.length > 0 && sample.ground_truth);
+  return {
+    total: datasetSize,
+    exported: samples.length,
+    validForRagas: valid.length,
+    skipped,
+    warnings: samples.filter(sample => sample.warning).length,
+    errors: samples.filter(sample => sample.error).length,
+    output: {
+      json: SAMPLES_JSON_PATH,
+      jsonl: SAMPLES_JSONL_PATH,
+    },
+  };
+}
+
+function writeSamples(samples, summary) {
+  writeFileSync(SAMPLES_JSON_PATH, JSON.stringify({ summary, samples }, null, 2));
+  writeFileSync(SAMPLES_JSONL_PATH, samples.map(sample => JSON.stringify(sample)).join('\n') + '\n');
+}
+
+async function exportRagasSamples(options = {}) {
+  const { sampleSize = 0, datasetPath = DATASET_PATH, verbose = true, skipBackendHealth = false, noCategoryFilter = false } = options;
+
+  if (!existsSync(datasetPath)) {
+    throw new Error(`评测集不存在: ${datasetPath}`);
   }
-  console.log('✅ 后端服务正常\n');
 
-  // 加载评测集
-  const dataset = JSON.parse(readFileSync(DATASET_PATH, 'utf-8'));
+  if (!skipBackendHealth) {
+    const healthy = await checkBackendHealth();
+    if (!healthy) {
+      throw new Error('后端服务不可用，请先启动: cd backend && npm run dev');
+    }
+  }
+
+  const dataset = loadJson(datasetPath).map(normalizeDatasetItem);
   const testSet = sampleSize > 0 ? dataset.slice(0, sampleSize) : dataset;
-  console.log(`📋 评测集: ${testSet.length} 条（共 ${dataset.length} 条）\n`);
-
-  const results = [];
+  const samples = [];
   let skipped = 0;
 
-  for (let i = 0; i < testSet.length; i++) {
-    const item = testSet[i];
-    const progress = `[${i + 1}/${testSet.length}]`;
+  if (verbose) {
+    console.log(`📋 评测集: ${testSet.length} 条（共 ${dataset.length} 条）`);
+    console.log('📤 正在从后端 RAG 管道导出 query + retrieved contexts + answer...\n');
+  }
 
-    // 跳过没有标准答案的条目
-    if (!item.ground_truth || item.ground_truth.trim() === '') {
-      if (verbose) console.log(`${progress} ⏭️  ${item.id}: 无标准答案，跳过`);
+  for (let index = 0; index < testSet.length; index++) {
+    const item = testSet[index];
+    const progress = `[${index + 1}/${testSet.length}]`;
+
+    if (!item.question || !item.ground_truth) {
+      if (verbose) console.log(`${progress} ⏭️  ${item.id}: 缺少 question 或 ground_truth`);
       skipped++;
       continue;
     }
 
     try {
-      if (verbose) process.stdout.write(`${progress} 🤖 ${item.id}: ${item.question.substring(0, 40)}...`);
+      if (verbose) process.stdout.write(`${progress} 🤖 ${item.id}: ${item.question.slice(0, 40)}...`);
 
-      // 1. 调用 RAG 接口获取回答和来源
-      const { answer, sources } = await withRetry(() => ragQuery(item.question));
+      const ragResult = await withRetry(
+        () => ragChat(item.question, [], { category: noCategoryFilter ? undefined : item.category }),
+        2,
+        2000
+      );
+      const contexts = await extractContexts(ragResult);
+      const warning = contexts.length === 0 ? '无检索上下文' : '';
 
-      // 2. 提取上下文片段
-      const contexts = await extractContexts(sources);
-
-      if (contexts.length === 0) {
-        if (verbose) console.log(' ⚠️ 无上下文');
-        results.push({
-          id: item.id,
-          question: item.question,
-          category: item.category,
-          difficulty: item.difficulty,
-          answer: answer.substring(0, 200),
-          contexts: [],
-          metrics: null,
-          warning: '无检索上下文'
-        });
-        continue;
-      }
-
-      // 3. 计算 RAGAS 指标
-      if (verbose) process.stdout.write(' → 评分中...');
-      const metrics = await withRetry(() => computeAllMetrics({
-        question: item.question,
-        answer,
-        contexts,
-        groundTruth: item.ground_truth
-      }), 2, 3000);
-
-      results.push({
+      samples.push({
         id: item.id,
+        query: item.question,
         question: item.question,
+        answer: ragResult.answer,
+        retrieved_docs: contexts,
+        retrieved_contexts: contexts,
+        contexts,
+        ground_truth: item.ground_truth,
+        reference: item.ground_truth,
         category: item.category,
         difficulty: item.difficulty,
-        ground_truth: item.ground_truth,
-        answer: answer.substring(0, 200),
-        contexts: contexts.map(c => c.substring(0, 200)),
-        metrics: {
-          faithfulness: metrics.faithfulness.score,
-          answer_relevancy: metrics.answer_relevancy.score,
-          context_precision: metrics.context_precision.score,
-          context_recall: metrics.context_recall.score,
-          overall: metrics.overall
-        },
-        metricsDetail: {
-          faithfulness: metrics.faithfulness.detail,
-          answer_relevancy: metrics.answer_relevancy.detail,
-          context_precision: metrics.context_precision.detail,
-          context_recall: metrics.context_recall.detail
-        }
+        relevant_doc_ids: item.relevant_doc_ids,
+        sources: ragResult.sources,
+        retrieval: ragResult.retrieval,
+        model: ragResult.model,
+        warning,
       });
 
       if (verbose) {
-        const f = (metrics.faithfulness.score * 100).toFixed(0);
-        const a = (metrics.answer_relevancy.score * 100).toFixed(0);
-        const cp = (metrics.context_precision.score * 100).toFixed(0);
-        const cr = (metrics.context_recall.score * 100).toFixed(0);
-        console.log(` ✅ F=${f}% A=${a}% CP=${cp}% CR=${cr}%`);
+        const status = warning ? '⚠️' : '✅';
+        console.log(` ${status} contexts=${contexts.length} answer=${ragResult.answer.length} chars`);
       }
     } catch (err) {
       console.error(` ❌ 错误: ${err.message}`);
-      results.push({
+      samples.push({
         id: item.id,
+        query: item.question,
         question: item.question,
+        answer: '',
+        retrieved_docs: [],
+        retrieved_contexts: [],
+        contexts: [],
+        ground_truth: item.ground_truth,
+        reference: item.ground_truth,
         category: item.category,
         difficulty: item.difficulty,
-        metrics: null,
-        error: err.message
+        relevant_doc_ids: item.relevant_doc_ids,
+        sources: [],
+        retrieval: null,
+        error: err.message,
       });
     }
   }
 
-  // 汇总统计
-  const validResults = results.filter(r => r.metrics !== null);
-  if (validResults.length === 0) {
-    console.log('\n⚠️  没有有效的评测结果');
-    return null;
+  const summary = buildExportSummary(samples, testSet.length, skipped);
+  writeSamples(samples, summary);
+
+  if (verbose) {
+    console.log('\n📦 RAGAS 样本已导出');
+    console.log(`   JSON:  ${SAMPLES_JSON_PATH}`);
+    console.log(`   JSONL: ${SAMPLES_JSONL_PATH}`);
+    console.log(`   有效样本: ${summary.validForRagas} / ${summary.total}`);
   }
 
-  const avg = (arr, key) => arr.reduce((s, r) => s + r.metrics[key], 0) / arr.length;
+  return { summary, samples };
+}
 
-  const overall = {
-    faithfulness: avg(validResults, 'faithfulness'),
-    answer_relevancy: avg(validResults, 'answer_relevancy'),
-    context_precision: avg(validResults, 'context_precision'),
-    context_recall: avg(validResults, 'context_recall'),
-    overall: avg(validResults, 'overall')
-  };
+function runPythonRagas({ inputPath, outputPath, pythonCommand, metrics = '', verbose = true }) {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const args = [PYTHON_RUNNER_PATH, '--input', inputPath, '--output', outputPath];
+    if (metrics) args.push('--metrics', metrics);
 
-  // 按类别统计
-  const byCategory = {};
-  for (const r of validResults) {
-    if (!byCategory[r.category]) byCategory[r.category] = { count: 0, scores: [] };
-    byCategory[r.category].count++;
-    byCategory[r.category].scores.push(r.metrics);
-  }
-  for (const [cat, stats] of Object.entries(byCategory)) {
-    const n = stats.count;
-    stats.avg = {
-      faithfulness: (stats.scores.reduce((s, m) => s + m.faithfulness, 0) / n * 100).toFixed(1) + '%',
-      answer_relevancy: (stats.scores.reduce((s, m) => s + m.answer_relevancy, 0) / n * 100).toFixed(1) + '%',
-      context_precision: (stats.scores.reduce((s, m) => s + m.context_precision, 0) / n * 100).toFixed(1) + '%',
-      context_recall: (stats.scores.reduce((s, m) => s + m.context_recall, 0) / n * 100).toFixed(1) + '%'
-    };
-    delete stats.scores;
-  }
+    const child = spawn(pythonCommand, args, {
+      cwd: __dirname,
+      env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
 
-  // 按难度统计
-  const byDifficulty = {};
-  for (const r of validResults) {
-    if (!byDifficulty[r.difficulty]) byDifficulty[r.difficulty] = { count: 0, scores: [] };
-    byDifficulty[r.difficulty].count++;
-    byDifficulty[r.difficulty].scores.push(r.metrics);
-  }
-  for (const [diff, stats] of Object.entries(byDifficulty)) {
-    const n = stats.count;
-    stats.avg = {
-      overall: (stats.scores.reduce((s, m) => s + m.overall, 0) / n * 100).toFixed(1) + '%',
-      faithfulness: (stats.scores.reduce((s, m) => s + m.faithfulness, 0) / n * 100).toFixed(1) + '%',
-      answer_relevancy: (stats.scores.reduce((s, m) => s + m.answer_relevancy, 0) / n * 100).toFixed(1) + '%'
-    };
-    delete stats.scores;
-  }
+    child.stdout.on('data', chunk => {
+      if (verbose) process.stdout.write(chunk.toString());
+    });
+    child.stderr.on('data', chunk => {
+      if (verbose) process.stderr.write(chunk.toString());
+    });
 
-  const summary = {
-    total: testSet.length,
-    evaluated: validResults.length,
-    skipped,
-    warnings: results.filter(r => r.warning).length,
-    errors: results.filter(r => r.error).length,
-    overall: {
-      faithfulness: (overall.faithfulness * 100).toFixed(1) + '%',
-      answer_relevancy: (overall.answer_relevancy * 100).toFixed(1) + '%',
-      context_precision: (overall.context_precision * 100).toFixed(1) + '%',
-      context_recall: (overall.context_recall * 100).toFixed(1) + '%',
-      overall: (overall.overall * 100).toFixed(1) + '%'
-    },
-    byCategory,
-    byDifficulty
-  };
+    child.on('error', err => {
+      rejectPromise(new Error(`无法启动 Python RAGAS: ${err.message}\n请先执行: python -m pip install -r scripts/rag-eval/requirements.txt`));
+    });
 
-  // 输出结果
-  console.log('\n\n📊 RAGAS 生成质量评测结果');
+    child.on('close', code => {
+      if (code === 0) {
+        resolvePromise();
+      } else {
+        rejectPromise(new Error(`Python RAGAS 评测失败，退出码: ${code}\n请确认已安装依赖: python -m pip install -r scripts/rag-eval/requirements.txt`));
+      }
+    });
+  });
+}
+
+function printRagasSummary(output) {
+  const summary = output?.summary;
+  if (!summary) return;
+
+  console.log('\n📊 RAGAS 生成质量评测结果');
   console.log('─────────────────────────────────');
-  console.log(`  有效样本: ${validResults.length} / ${testSet.length}`);
-  console.log(`  警告(无上下文): ${summary.warnings}`);
+  console.log(`  有效样本: ${summary.evaluated} / ${summary.total}`);
+  console.log(`  跳过: ${summary.skipped}`);
   console.log(`  错误: ${summary.errors}`);
   console.log('─────────────────────────────────');
   console.log('  整体指标:');
@@ -253,27 +347,56 @@ export async function runRagasEval(options = {}) {
   console.log(`    Context Precision:  ${summary.overall.context_precision}`);
   console.log(`    Context Recall:     ${summary.overall.context_recall}`);
   console.log(`    Overall:            ${summary.overall.overall}`);
-  console.log('─────────────────────────────────');
-  console.log('  按类别:');
-  for (const [cat, stats] of Object.entries(byCategory)) {
-    console.log(`    ${cat}: F=${stats.avg.faithfulness} A=${stats.avg.answer_relevancy} CP=${stats.avg.context_precision} CR=${stats.avg.context_recall} (n=${stats.count})`);
-  }
-  console.log('─────────────────────────────────');
-  console.log('  按难度:');
-  for (const [diff, stats] of Object.entries(byDifficulty)) {
-    console.log(`    ${diff}: overall=${stats.avg.overall} F=${stats.avg.faithfulness} A=${stats.avg.answer_relevancy} (n=${stats.count})`);
+}
+
+export async function runRagasEval(options = {}) {
+  const cliOptions = process.argv[1]?.includes('eval-ragas') ? parseCliArgs() : {};
+  const mergedOptions = { ...cliOptions, ...options };
+  const {
+    inputPath = '',
+    outputPath = RAGAS_OUTPUT_PATH,
+    pythonCommand = process.env.RAGAS_PYTHON || 'python',
+    metrics = process.env.RAGAS_METRICS || '',
+    exportOnly = false,
+    verbose = true,
+  } = mergedOptions;
+
+  console.log('\n========================================');
+  console.log('  RAGAS 离线生成质量评测');
+  console.log('========================================\n');
+
+  let samplesPath = inputPath ? resolve(inputPath) : SAMPLES_JSON_PATH;
+  let exportResult = null;
+
+  if (!inputPath) {
+    exportResult = await exportRagasSamples(mergedOptions);
+    samplesPath = SAMPLES_JSON_PATH;
   }
 
-  // 保存结果
-  const output = { summary, results, timestamp: new Date().toISOString() };
-  const outputPath = resolve(RESULTS_DIR, 'ragas-results.json');
-  writeFileSync(outputPath, JSON.stringify(output, null, 2));
-  console.log(`\n💾 结果已保存: ${outputPath}`);
+  if (exportOnly) {
+    console.log('\n✅ 已完成样本导出，跳过 Python RAGAS 评分');
+    return {
+      summary: exportResult?.summary || null,
+      results: exportResult?.samples || [],
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  console.log('\n🐍 正在调用 Python RAGAS 官方库评分...');
+  await runPythonRagas({ inputPath: samplesPath, outputPath, pythonCommand, metrics, verbose });
+
+  const output = JSON.parse(readFileSync(outputPath, 'utf-8'));
+  printRagasSummary(output);
+  console.log(`\n💾 RAGAS 结果已保存: ${outputPath}`);
 
   return output;
 }
 
-// 直接运行
 if (process.argv[1] && process.argv[1].includes('eval-ragas')) {
-  runRagasEval().catch(console.error);
+  runRagasEval().catch(err => {
+    console.error('\n❌ RAGAS 评测失败:', err.message);
+    process.exit(1);
+  });
 }
+
+

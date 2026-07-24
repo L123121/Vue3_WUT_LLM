@@ -1,13 +1,9 @@
 <script setup>
 import { ref, watch, nextTick, onMounted, onUnmounted, computed } from 'vue';
+// 改用普通滚动容器，避免 DynamicScroller 虚拟滚动导致的流式跳动
 import { RefreshCw } from 'lucide-vue-next';
 import { useChatStore } from '../../stores/chat.store.js';
-import LazyMessage from './LazyMessage.vue';
 import MessageBubble from './MessageBubble.vue';
-
-// Messages older than this threshold use lazy loading
-const LAZY_THRESHOLD = 5;
-const shouldLazyLoad = (index) => index < props.messages.length - LAZY_THRESHOLD;
 
 const props = defineProps({
   messages: { type: Array, default: () => [] },
@@ -21,69 +17,42 @@ const scrollerRef = ref(null);
 
 const AUTO_SCROLL_THRESHOLD = 150;
 const shouldAutoScroll = ref(true);
-let isUserScrolling = false;
 
 const getScrollContainer = () => scrollerRef.value || null;
 
 const isNearBottom = () => {
-  const container = getScrollContainer();
-  if (!container) return true;
-  const { scrollTop, scrollHeight, clientHeight } = container;
+  const el = getScrollContainer();
+  if (!el) return true;
+  const { scrollTop, scrollHeight, clientHeight } = el;
   return scrollHeight - scrollTop - clientHeight <= AUTO_SCROLL_THRESHOLD;
 };
 
 const scrollToBottom = async (force = false) => {
   if (!force && !shouldAutoScroll.value) return;
   await nextTick();
-  const container = getScrollContainer();
-  if (container && props.messages.length > 0) {
-    container.scrollTop = container.scrollHeight;
+  const el = getScrollContainer();
+  if (el) {
+    el.scrollTop = el.scrollHeight;
   }
 };
 
 const handleScroll = () => {
-  const container = getScrollContainer();
-  if (!container) return;
   if (isNearBottom()) {
     shouldAutoScroll.value = true;
-  } else if (isUserScrolling) {
+  } else {
     shouldAutoScroll.value = false;
   }
 };
 
-const handleScrollStart = () => {
-  isUserScrolling = true;
-};
-
-const handleScrollEnd = () => {
-  isUserScrolling = false;
-  handleScroll();
-};
-
-let scrollHandler = null;
-let scrollStartHandler = null;
-
-const setupScrollListeners = () => {
-  const container = getScrollContainer();
-  if (!container) return;
-  scrollHandler = handleScroll;
-  scrollStartHandler = handleScrollStart;
-  container.addEventListener('scroll', scrollHandler, { passive: true });
-  container.addEventListener('wheel', scrollStartHandler, { passive: true });
-  container.addEventListener('touchmove', scrollStartHandler, { passive: true });
-};
-
-const removeScrollListeners = () => {
-  const container = getScrollContainer();
-  if (!container) return;
-  if (scrollHandler) container.removeEventListener('scroll', scrollHandler);
-  if (scrollStartHandler) {
-    container.removeEventListener('wheel', scrollStartHandler);
-    container.removeEventListener('touchmove', scrollStartHandler);
-  }
-};
-
 const handleCopy = (text) => emit('copy', text);
+
+const getPreviousUserMessage = (index) => {
+  for (let messageIndex = index - 1; messageIndex >= 0; messageIndex -= 1) {
+    const candidate = props.messages[messageIndex];
+    if (candidate?.role === 'user') return candidate;
+  }
+  return null;
+};
 
 // Reconnection state
 const reconnectProgress = computed(() => {
@@ -91,69 +60,52 @@ const reconnectProgress = computed(() => {
   return Math.min((chatStore.reconnectAttempt / 3) * 100, 100);
 });
 
-// 流式进行中、但 AI 消息尚未收到第一个 chunk（内容为空）时显示 typing 占位，
-// 避免首字节延迟期间没有任何反馈
+// 流式进行中、但 AI 消息尚未收到第一个 chunk（内容为空）时显示 typing 占位
 const showTypingIndicator = computed(() => {
   if (!props.isLoading || !props.currentStreamingId) return false;
   const msg = props.messages.find((item) => item.id === props.currentStreamingId);
-  return !msg || !(msg.content || msg.text);
+  if (msg) return false;
+  return true;
 });
 
+// 新消息时自动滚到底
 watch(() => props.messages.length, () => {
   scrollToBottom();
 });
 
+// 流式内容变化时自动滚底 + 通知 DynamicScroller 重新计算高度
 watch(() => {
   if (props.currentStreamingId) {
     const msg = props.messages.find((item) => item.id === props.currentStreamingId);
     return [
       msg?.text?.length || 0,
-      msg?.toolCalls?.length || 0,
-      msg?.thinkingSteps?.length || 0,
       msg?.sources?.length || 0,
     ];
   }
-  return [0, 0, 0, 0];
+  return [0, 0];
 }, () => {
   scrollToBottom();
 });
 
 onMounted(() => {
   scrollToBottom(true);
-  nextTick(() => setupScrollListeners());
 });
-
-onUnmounted(() => removeScrollListeners());
 
 defineExpose({ scrollToBottom, shouldAutoScroll });
 </script>
 
 <template>
   <div class="flex-1 min-h-0 flex flex-col overflow-hidden">
-    <!-- Messages -->
+    <!-- Messages with simple scroll (no virtual scrolling) -->
     <div
       v-if="messages.length > 0"
       ref="scrollerRef"
-      class="flex-1 min-h-0 overflow-y-auto p-4"
-      style="scroll-behavior: auto;"
+      class="flex-1 min-h-0 overflow-y-auto p-4 space-y-4"
       @scroll="handleScroll"
-      @wheel="handleScrollStart"
-      @touchmove="handleScrollStart"
-      @touchend="handleScrollEnd"
-      @mouseleave="handleScrollEnd"
     >
-      <TransitionGroup name="msg" tag="div">
-        <div
-          v-for="(msg, index) in messages" :key="msg.id"
-          v-memo="[msg.content, msg.text, msg.isError, msg.sources, msg.canRetry, msg.toolCalls?.length, msg.thinkingSteps?.length, msg.id === currentStreamingId]"
-          class="mb-4"
-        >
-          <LazyMessage v-if="shouldLazyLoad(index)" root-margin="400px">
-            <MessageBubble :message="msg" @copy="handleCopy" />
-          </LazyMessage>
-          <MessageBubble v-else :message="msg" @copy="handleCopy" />
-        </div>
-      </TransitionGroup>
+      <div v-for="(item, index) in messages" :key="item.id" :data-index="index">
+        <MessageBubble :message="item" :question-message="getPreviousUserMessage(index)" @copy="handleCopy" />
+      </div>
     </div>
 
     <!-- Skeleton: initial loading state -->
@@ -215,16 +167,6 @@ defineExpose({ scrollToBottom, shouldAutoScroll });
 </template>
 
 <style scoped>
-/* Message enter animation */
-.msg-enter-active {
-  transition: all 0.3s ease-out;
-}
-
-.msg-enter-from {
-  opacity: 0;
-  transform: translateY(10px);
-}
-
 /* Skeleton shimmer effect */
 .skeleton-shimmer {
   position: relative;
@@ -272,15 +214,5 @@ defineExpose({ scrollToBottom, shouldAutoScroll });
 .reconnect-leave-to {
   opacity: 0;
   transform: translate(-50%, 20px);
-}
-
-/* Thinking dots */
-@keyframes bounce {
-  0%, 80%, 100% {
-    transform: translateY(0);
-  }
-  40% {
-    transform: translateY(-4px);
-  }
 }
 </style>

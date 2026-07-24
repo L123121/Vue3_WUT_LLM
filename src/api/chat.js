@@ -235,28 +235,11 @@ export const sendMessageStream = async (message, history = [], callbacks, option
               callbacks.onChunk(content);
             }
             if (json.sources) callbacks.onSources?.(json.sources);
+            if (json.rag || json.trace || json.retrieval) callbacks.onTrace?.(json);
             if (json.error) {
               clearInterval(stallCheck);
               callbacks.onError(new Error(json.error));
               return;
-            }
-
-            // Agent 模式事件（默认开启）
-            if (json.thinking) {
-              console.log('[Stream] thinking:', json.thinking.substring(0, 50));
-              callbacks.onThinking?.(json.thinking);
-            }
-            if (json.tool_call) {
-              console.log('[Stream] tool_call:', json.tool_call.name);
-              callbacks.onToolCall?.(json.tool_call);
-            }
-            if (json.tool_result) {
-              console.log('[Stream] tool_result:', json.tool_result.name);
-              callbacks.onToolResult?.(json.tool_result);
-            }
-            if (json.trace) {
-              console.log('[Stream] trace:', JSON.stringify(json.trace));
-              callbacks.onTrace?.(json.trace);
             }
           } catch (err) {
             console.warn('[Stream] SSE 数据解析失败:', err.message, 'data:', data.substring(0, 100));
@@ -271,6 +254,7 @@ export const sendMessageStream = async (message, history = [], callbacks, option
     connectionManager.setConnected(false);
 
     if (error.name === 'AbortError') {
+      console.warn('[Stream] 流式请求被正常中止:', error.message);
       connectionManager.removePendingMessage(messageId);
       callbacks.onAbort?.();
       return;

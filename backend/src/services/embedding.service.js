@@ -1,75 +1,209 @@
 "use strict";
 
+const path = require('path');
 const config = require('../config');
-const { request } = require('../utils/httpClient');
-const { metrics } = require('./metrics.service');
+
+const DEFAULT_DENSE_DIM = 512;   // BGE-small-zh 输出 512 维
+const DEFAULT_SPARSE_DIM = 250002;
+const DEFAULT_MODEL = 'Xenova/bge-small-zh-v1.5';
+const DEFAULT_CACHE_DIR = path.resolve(__dirname, '../../../.model-cache');
 
 /**
- * Embedding 服务 — 调用讯飞/通义千问 Embedding API
+ * BGE-small-zh Embedding 服务
  *
- * 配置来源：
- *   1. config.xunfei.apiKey（优先）
- *   2. config.ai.apiKey（同平台 fallback）
- *
- * API 格式：OpenAI-compatible POST /v2/embeddings
+ * 本地 BGE-small-zh (ONNX) 作为唯一 embedding 模型，确保入库和查询使用同一语义空间。
+ * 模型不可用时自动降级到 n-gram fallback。
  */
 class EmbeddingService {
   constructor() {
-    this.apiKey = config.xunfei.apiKey || config.ai.apiKey || '';
-    this.host = config.embedding.host || 'maas-api.cn-huabei-1.xf-yun.com';
-    this.path = config.embedding.path || '/v2/embeddings';
-    this.model = config.embedding.model || 'emb-text-001';
-    this.timeout = 15000;
-    this._cache = new Map(); // 文本 → embedding 向量缓存
+    this.model = config.embedding.model || DEFAULT_MODEL;
+    this.cacheDir = config.embedding.cacheDir || DEFAULT_CACHE_DIR;
+    this.localFilesOnly = config.embedding.localFilesOnly !== false;
+    this.sparseDim = config.embedding.sparseDim || DEFAULT_SPARSE_DIM;
+    this._cache = new Map();
+    this._localModel = null;      // 本地 ONNX BGE 模型实例
+    this._modelLoading = null;    // 加载中的 promise（防重复加载）
   }
 
   /**
-   * 判断服务是否可用
+   * 懒加载本地 BGE ONNX 模型
    */
-  get isAvailable() {
-    return !!this.apiKey;
+  async _ensureLocalModel() {
+    if (this._localModel) return this._localModel;
+    if (this._modelLoading) return this._modelLoading;
+
+    this._modelLoading = (async () => {
+      try {
+        const { env, pipeline } = require('@xenova/transformers');
+        env.cacheDir = this.cacheDir;
+        env.allowLocalModels = true;
+        env.allowRemoteModels = !this.localFilesOnly;
+
+        const extractor = await pipeline('feature-extraction', this.model, {
+          quantized: true,
+          cache_dir: this.cacheDir,
+          local_files_only: this.localFilesOnly,
+        });
+        console.log(`[Embedding] 本地 BGE-small-zh 模型加载完成: ${this.model} (${DEFAULT_DENSE_DIM}-dim)`);
+        this._localModel = extractor;
+        return extractor;
+      } catch (err) {
+        console.warn(`[Embedding] 本地模型加载失败: ${err.message}`);
+        this._localModel = null;
+        return null;
+      }
+    })();
+
+    return this._modelLoading;
   }
 
   /**
-   * 生成单个文本的 embedding 向量
-   * @param {string} text - 输入文本
-   * @returns {number[]|null} 1536 维向量，失败返回 null
+   * 使用本地 BGE-small-zh 生成 dense + sparse 混合向量
    */
-  async embed(text) {
-    if (!this.isAvailable) return null;
-    if (!text || !text.trim()) return null;
+  async embedHybrid(text) {
+    if (!text || !String(text).trim()) return null;
 
-    // 缓存命中
-    const cacheKey = text.slice(0, 500);
+    const cacheKey = this._cacheKey(text);
     if (this._cache.has(cacheKey)) return this._cache.get(cacheKey);
 
-    try {
-      const vector = await this._callApi(text);
-      if (vector) this._cache.set(cacheKey, vector);
-      return vector;
-    } catch (err) {
-      console.warn(`[Embedding] 调用失败: ${err.message}`);
-      return null;
-    }
+    const localResult = await this._localHybridEmbed(text);
+    this._cache.set(cacheKey, localResult);
+    return localResult;
   }
 
   /**
-   * 批量生成 embedding
-   * @param {string[]} texts
-   * @returns {number[][]} 向量数组，与输入一一对应
+   * 批量 embedding：优先本地 BGE 模型，其次 n-gram fallback
    */
   async embedBatch(texts) {
-    if (!this.isAvailable) return texts.map(() => null);
-    const results = await Promise.all(texts.map(t => this.embed(t)));
+    if (!Array.isArray(texts) || texts.length === 0) return [];
+
+    const results = new Array(texts.length).fill(null);
+    const pending = [];
+
+    texts.forEach((text, index) => {
+      if (!text || !String(text).trim()) return;
+      const cacheKey = this._cacheKey(text);
+      if (this._cache.has(cacheKey)) {
+        results[index] = this._cache.get(cacheKey);
+      } else {
+        pending.push({ text, index, cacheKey });
+      }
+    });
+
+    if (pending.length === 0) return results;
+
+    // 批量走本地 BGE 模型
+    for (const item of pending) {
+      const embedding = await this._localHybridEmbed(item.text);
+      this._cache.set(item.cacheKey, embedding);
+      results[item.index] = embedding;
+    }
+
     return results;
   }
 
   /**
-   * 计算两个向量的余弦相似度
-   * @param {number[]} a
-   * @param {number[]} b
-   * @returns {number} 0~1 之间的相似度
+   * 本地 BGE-small-zh dense + n-gram sparse 混合向量
    */
+  async _localHybridEmbed(text) {
+    const dense = await this._localDense(text);
+    return {
+      dense,
+      sparse: this._localSparse(text),
+      model: 'BGE-small-zh:local-onnx',
+      dimensions: dense.length,
+    };
+  }
+
+  /**
+   * 本地 BGE-small-zh 生成 dense 向量（512 维）
+   */
+  async _localDense(text) {
+    if (!text) return new Array(DEFAULT_DENSE_DIM).fill(0);
+
+    try {
+      const model = await this._ensureLocalModel();
+      if (model) {
+        const result = await model(text, { pooling: 'cls', normalize: true });
+        return Array.from(result.data);
+      }
+    } catch (err) {
+      console.warn(`[Embedding] BGE 推理失败，降级 n-gram: ${err.message}`);
+    }
+
+    // n-gram fallback
+    return this._fallbackDense(text);
+  }
+
+  /**
+   * n-gram 哈希 dense（512 维）——仅作为 fallback
+   */
+  _fallbackDense(text) {
+    const normalized = String(text).toLowerCase().trim();
+    const vec = new Float64Array(DEFAULT_DENSE_DIM);
+
+    for (let i = 0; i < normalized.length - 1; i++) {
+      const hash = this._hashStr(normalized.substring(i, i + 2)) % DEFAULT_DENSE_DIM;
+      vec[hash] += 1;
+    }
+    for (let i = 0; i < normalized.length - 2; i++) {
+      const hash = this._hashStr(normalized.substring(i, i + 3)) % DEFAULT_DENSE_DIM;
+      vec[hash] += 1.5;
+    }
+    for (const ch of normalized) {
+      const hash = this._hashStr(ch) % DEFAULT_DENSE_DIM;
+      vec[hash] += 0.5;
+    }
+
+    // L2 归一化
+    let norm = 0;
+    for (let i = 0; i < vec.length; i++) norm += vec[i] * vec[i];
+    norm = Math.sqrt(norm);
+    if (norm > 0) for (let i = 0; i < vec.length; i++) vec[i] /= norm;
+
+    return Array.from(vec);
+  }
+
+  /**
+   * n-gram 词项权重 sparse 向量（BM25 风格）
+   */
+  _localSparse(text) {
+    const normalized = String(text || '').toLowerCase().trim();
+    const tokens = {};
+    const stopWords = new Set(['的', '了', '是', '在', '和', '与', '及', '有', '也', '都', '这', '那', '个', '就', '而', '但', '或', '被', '把', '对', '从', '以', '到', '让', '为', '所', '得', '着', '过', '吧', '呢', '啊', '吗', '嘛']);
+
+    for (let i = 0; i < normalized.length - 1; i++) {
+      const bigram = normalized.substring(i, i + 2);
+      if (stopWords.has(bigram)) continue;
+      const key = (this._hashStr(`b:${bigram}`) >>> 0) % 0xFFFFFE;
+      tokens[key] = (tokens[key] || 0) + 1;
+    }
+
+    for (let i = 0; i < normalized.length - 2; i++) {
+      const trigram = normalized.substring(i, i + 3);
+      const key = (this._hashStr(`t:${trigram}`) >>> 0) % 0xFFFFFE;
+      tokens[key] = (tokens[key] || 0) + 1;
+    }
+
+    return tokens;
+  }
+
+  _cacheKey(text) {
+    return `emb:${this.model}:${String(text).trim().substring(0, 200)}`;
+  }
+
+  _hashStr(str) {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      const char = str.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash |= 0;
+    }
+    return Math.abs(hash);
+  }
+
+  // ==================== 静态工具方法 ====================
+
   static cosineSimilarity(a, b) {
     if (!a || !b || a.length !== b.length) return 0;
     let dot = 0, normA = 0, normB = 0;
@@ -82,37 +216,29 @@ class EmbeddingService {
     return denom > 0 ? dot / denom : 0;
   }
 
-  // ==================== 内部方法 ====================
+  static sparseSimilarity(a, b) {
+    if (!a || !b) return 0;
+    const entriesA = Object.entries(a);
+    if (!entriesA.length) return 0;
 
-  async _callApi(text) {
-    const startedAt = Date.now();
-    const payload = JSON.stringify({
-      model: this.model,
-      input: text.slice(0, 8000), // 限制长度
-    });
-
-    const host = this.host.replace(/^https?:\/\//, '');
-    const options = {
-      hostname: host,
-      path: this.path,
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.apiKey}`,
-        'Content-Length': Buffer.byteLength(payload, 'utf8'),
-      },
-      timeout: this.timeout,
-    };
-
-    const result = await request(options, payload);
-    metrics.recordLatency('embedding', Date.now() - startedAt);
-
-    const vector = result.data?.data?.[0]?.embedding;
-    if (vector && Array.isArray(vector)) {
-      return vector;
+    let dot = 0, normA = 0, normB = 0;
+    for (const [key, valA] of entriesA) {
+      const valB = b[key] || 0;
+      dot += valA * valB;
+      normA += valA * valA;
     }
-    throw new Error('响应中无 embedding 数据');
+    for (const valB of Object.values(b)) {
+      normB += valB * valB;
+    }
+    const denom = Math.sqrt(normA) * Math.sqrt(normB);
+    return denom > 0 ? dot / denom : 0;
+  }
+
+  get isAvailable() {
+    return true;
   }
 }
 
 module.exports = { EmbeddingService };
+
+

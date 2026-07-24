@@ -8,6 +8,14 @@ FROM node:20-slim AS frontend-builder
 
 WORKDIR /app
 
+# 安装 Chromium（用于预渲染登录页）
+RUN apt-get update && apt-get install -y \
+    chromium \
+    --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+
 # 安装前端依赖（--ignore-scripts 避免触发 postinstall 安装后端）
 COPY package.json package-lock.json ./
 RUN npm ci --ignore-scripts
@@ -16,9 +24,10 @@ RUN npm ci --ignore-scripts
 COPY vite.config.js index.html ./
 COPY src/ src/
 COPY public/ public/
+COPY scripts/ scripts/
 
-# 构建（输出到 /app/dist）
-RUN npm run build
+# 构建 + 预渲染登录页
+RUN npm run build:full
 
 # ---- Stage 2: 后端运行环境 ----
 FROM node:20-slim

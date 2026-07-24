@@ -1,0 +1,13 @@
+{
+  "name": "rag-eval",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "eval:ragas": "node eval-ragas.js",
+    "eval:ragas:discrete": "node eval-ragas.js --mode discrete",
+    "eval:ragas:export": "node eval-ragas.js --export"
+  },
+  "dependencies": {
+    "axios": "^1.15.2"
+  }
+}

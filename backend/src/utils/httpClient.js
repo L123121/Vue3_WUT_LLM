@@ -1,6 +1,7 @@
 "use strict";
 
 const https = require('https');
+const { StringDecoder } = require('string_decoder');
 const { metrics } = require('../services/metrics.service');
 
 // ==================== 共享 HTTPS 客户端 ====================
@@ -126,9 +127,11 @@ async function requestStream(options, body, signal) {
 function _sendRequest(options, body) {
   return new Promise((resolve, reject) => {
     const req = https.request(options, (res) => {
+      const decoder = new StringDecoder('utf8');
       let data = '';
-      res.on('data', chunk => { data += chunk; });
+      res.on('data', chunk => { data += decoder.write(chunk); });
       res.on('end', () => {
+        data += decoder.end();
         if (res.statusCode < 200 || res.statusCode >= 300) {
           const err = new Error(`HTTP ${res.statusCode}: ${data.slice(0, 200)}`);
           err.statusCode = res.statusCode;

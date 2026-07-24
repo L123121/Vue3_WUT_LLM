@@ -12,21 +12,8 @@ const props = defineProps({
   getScoreBg: { type: Function, required: true },
 });
 
-const emit = defineEmits(['setScore', 'prev', 'next']);
+const emit = defineEmits(['setScore', 'prev', 'next', 'updateComment']);
 
-function getScoreColor(score) {
-  if (score >= 0.8) return 'text-green-600';
-  if (score >= 0.6) return 'text-yellow-600';
-  if (score >= 0.4) return 'text-orange-600';
-  return 'text-red-600';
-}
-
-function getScoreBg(score) {
-  if (score >= 0.8) return 'bg-green-50 dark:bg-green-900/20';
-  if (score >= 0.6) return 'bg-yellow-50 dark:bg-yellow-900/20';
-  if (score >= 0.4) return 'bg-orange-50 dark:bg-orange-900/20';
-  return 'bg-red-50 dark:bg-red-900/20';
-}
 </script>
 
 <template>
@@ -148,9 +135,13 @@ function getScoreBg(score) {
           </span>
         </div>
       </div>
-      <textarea v-model="comments[currentItem.id]"
+      <textarea
+        :value="comments[currentItem.id] || ''"
         class="w-full p-3 border border-gray-200 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-sm resize-none"
-        rows="2" placeholder="评语（可选）..."></textarea>
+        rows="2"
+        placeholder="评语（可选）..."
+        @input="$emit('updateComment', currentItem.id, $event.target.value)"
+      ></textarea>
     </div>
 
     <!-- 快捷操作 -->

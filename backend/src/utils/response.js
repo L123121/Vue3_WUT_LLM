@@ -3,6 +3,7 @@ const successResponse = (res, data, message = 'Success') => {
     success: true,
     message,
     data,
+    ...(res.locals?.traceId ? { traceId: res.locals.traceId } : {}),
   });
 };
 
@@ -10,7 +11,9 @@ const errorResponse = (res, message = 'Error', statusCode = 500) => {
   return res.status(statusCode).json({
     success: false,
     message,
+    ...(res.locals?.traceId ? { traceId: res.locals.traceId } : {}),
   });
 };
 
 module.exports = { successResponse, errorResponse };
+

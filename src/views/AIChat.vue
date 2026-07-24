@@ -1,5 +1,5 @@
 <script setup>
-import { ref, watch, nextTick, onMounted, computed } from 'vue';
+import { ref, watch, nextTick, computed, onMounted } from 'vue';
 import { useChatStore } from '../stores/chat.store.js';
 import { useToastStore } from '../stores/toast.store.js';
 import { useLanguageStore } from '../stores/language.store.js';
@@ -17,14 +17,11 @@ const currentTitle = computed(() => chatStore.currentConversation?.title || text
 const effectiveMessageCount = computed(() => chatStore.messages.filter((msg) => msg.id !== 'welcome' && msg.text?.trim()).length);
 const canClear = computed(() => effectiveMessageCount.value > 0 && !chatStore.isLoading);
 
-// 当前激活的模式
-const activeMode = computed(() => {
-  // 从 ChatBox 传来的状态需要从消息或全局状态推断
-  // 这里通过检查最新消息是否有 Agent 数据来判断
-  const lastMsg = [...chatStore.messages].reverse().find(m => m.id !== 'welcome' && m.toolCalls?.length > 0);
-  if (lastMsg?.toolCalls?.length > 0) return 'agent';
-  return 'chat';
-});
+// 当前对话模式（已移除 Agent，始终为 chat）
+const activeMode = ref('chat');
+const onModeChange = (mode) => {
+  activeMode.value = mode;
+};
 
 const handleSend = async (message, fileData = null) => {
   await chatStore.sendMessage(message, null, fileData);
@@ -151,7 +148,7 @@ onMounted(() => {
     <div class="absolute inset-0 opacity-[0.03] dark:opacity-[0.05] pointer-events-none" style="background-image: radial-gradient(circle at 2px 2px, gray 1px, transparent 0); background-size: 24px 24px;"></div>
 
     <!-- 顶部标题栏 -->
-    <div class="bg-white/90 dark:bg-gray-900/90 backdrop-blur-sm p-4 border-b border-slate-100 dark:border-gray-800 flex items-center justify-between z-10 gap-3 shrink-0">
+    <div class="bg-white/90 dark:bg-gray-900/90 backdrop-blur-sm p-4 border-b border-slate-200 dark:border-gray-700 flex items-center justify-between z-10 gap-3 shrink-0">
       <div class="flex items-center min-w-0">
         <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-blue-500 to-indigo-400 flex items-center justify-center mr-3 shadow-lg shadow-blue-500/20 text-white">
           <Bot :size="20" />
@@ -163,11 +160,6 @@ onMounted(() => {
             <span class="text-[10px] font-medium text-slate-500 dark:text-gray-400 uppercase tracking-wide">{{ text.model }}</span>
             <span class="mx-1 text-slate-300 dark:text-gray-600">·</span>
             <span class="text-[10px] text-slate-500 dark:text-gray-400">{{ effectiveMessageCount }} 条消息</span>
-            <!-- Agent 模式指示器 -->
-            <span v-if="activeMode === 'agent'" class="ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
-              <Bot :size="8" />
-              AGENT
-            </span>
           </div>
         </div>
       </div>
@@ -196,9 +188,11 @@ onMounted(() => {
       :is-connected="chatStore.isConnected"
       :is-reconnecting="chatStore.isReconnecting"
       :reconnect-attempt="chatStore.reconnectAttempt"
+      :active-mode="activeMode"
       @send="handleSend"
       @error="handleError"
       @command="handleCommand"
+      @mode-change="onModeChange"
     />
   </div>
 </template>

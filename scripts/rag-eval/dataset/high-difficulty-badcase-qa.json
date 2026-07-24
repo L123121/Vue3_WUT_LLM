@@ -1,0 +1,340 @@
+[
+  {
+    "id": "H1",
+    "question": "武汉理工大学的材料学科这么强，它的历史渊源是什么？为什么材料学科能成为全国第一？",
+    "ground_truth": "材料学科前身可追溯至湖北工艺学堂（1898年）；2000年三校合并，武汉工业大学在材料领域已有深厚积累；硅酸盐建筑材料国家重点实验室、材料复合新技术国家重点实验室提供支撑；材料科学与工程在全国第四轮学科评估中为 A+，位列全国第一。",
+    "category": "",
+    "domain": "武汉理工大学",
+    "difficulty": "hard",
+    "test_type": "implicit_reasoning",
+    "core_focus": "多段落拼凑 + 因果推理",
+    "expected_answer_points": [
+      "材料学科前身可追溯至湖北工艺学堂（1898年）",
+      "2000年三校合并，武汉工业大学在材料领域已有深厚积累",
+      "硅酸盐建筑材料国家重点实验室、材料复合新技术国家重点实验室支撑",
+      "全国第四轮学科评估 A+，全国第一"
+    ],
+    "badcase_signals": [
+      "只回答历史，没回答为什么强",
+      "找不到实验室信息",
+      "把硅酸盐和复合新技术两个实验室混为一谈"
+    ],
+    "relevant_doc_ids": []
+  },
+  {
+    "id": "H2",
+    "question": "南湖校区的图书馆和余家头校区的图书馆，哪个更好？",
+    "ground_truth": "文档没有直接给出两个图书馆的显式排名；但南湖校区是最新建设，图书馆、体育馆、学生公寓等硬件条件为全校最优，因此可推断南湖校区图书馆硬件条件更好。图书馆总建筑面积约 7.7 万平方米、三校区共享馆藏 370 万册，不能把共享馆藏误当作单个图书馆数据。",
+    "category": "",
+    "domain": "武汉理工大学",
+    "difficulty": "hard",
+    "test_type": "implicit_reasoning",
+    "core_focus": "推断 + 比较",
+    "expected_answer_points": [
+      "南湖校区是最新建设，硬件条件为全校最优",
+      "图书馆总建筑面积约 7.7 万㎡，三校区共享馆藏 370 万册",
+      "没有直接对比哪个更好，需要从现代化设施和硬件条件推断"
+    ],
+    "badcase_signals": [
+      "直接回答没有比较信息而拒绝",
+      "没有进行南湖校区硬件最优的推断",
+      "把馆藏总量当作单个图书馆数据"
+    ],
+    "relevant_doc_ids": []
+  },
+  {
+    "id": "H3",
+    "question": "武汉理工大学的校园文化里有没有提到“卓越”两个字？和校训有什么关系？",
+    "ground_truth": "有。校训是“厚德博学、追求卓越”，包含“卓越”；校园文化体系以“卓越精神”为核心。两者关系是：校训提出“追求卓越”，校园精神则将卓越作为校园文化核心。",
+    "category": "",
+    "domain": "武汉理工大学",
+    "difficulty": "hard",
+    "test_type": "implicit_reasoning",
+    "core_focus": "概念关联",
+    "expected_answer_points": [
+      "校训全文：厚德博学、追求卓越",
+      "校园精神：以卓越精神为核心的校园文化体系",
+      "校训包含追求卓越，校园精神核心是卓越精神"
+    ],
+    "badcase_signals": [
+      "只在校训里找到卓越，没在校园文化里找到",
+      "没区分校训和校园精神两个概念"
+    ],
+    "relevant_doc_ids": []
+  },
+  {
+    "id": "H4",
+    "question": "武汉理工大学的“双一流”建设学科是什么？它在全国排第几？",
+    "ground_truth": "武汉理工大学的“双一流”建设学科是材料科学与工程；该学科在全国第四轮学科评估中获 A+ 等级，位列全国第一。",
+    "category": "",
+    "domain": "武汉理工大学",
+    "difficulty": "hard",
+    "test_type": "implicit_reasoning",
+    "core_focus": "精确事实",
+    "expected_answer_points": [
+      "材料科学与工程入选双一流建设学科",
+      "全国第四轮学科评估 A+，位列全国第一"
+    ],
+    "badcase_signals": [
+      "回答材料科学与工程但漏掉全国第一",
+      "误答为双一流建设高校而不是具体学科"
+    ],
+    "relevant_doc_ids": []
+  },
+  {
+    "id": "H5",
+    "question": "离散数学里那个“甲乙丙丁围棋比赛”的逻辑题，如果用软件工程里的“用例图”来分析，应该怎么建模？",
+    "ground_truth": "离散数学题目涉及甲乙丙丁四个人，有且仅有两人参加，并根据四种判断的真假推断参赛者。若用用例图类比，可把“参加比赛”作为用例，把甲乙丙丁作为参与者，规则约束用前置条件、约束说明或包含/扩展关系表达。但这类逻辑约束并不适合直接用用例图表达，更适合用状态图、活动图或形式逻辑建模。",
+    "category": "",
+    "domain": "离散数学 + 软件工程",
+    "difficulty": "hard",
+    "test_type": "cross_document",
+    "core_focus": "离散 + 软件工程跨文档建模",
+    "expected_answer_points": [
+      "四个人有且仅有两人参加，四种判断正确并推断哪两人参加",
+      "将参加比赛作为用例，甲乙丙丁作为 actor",
+      "约束条件可用包含/扩展关系或前置条件表示",
+      "规则约束不适合直接用用例图，更适合状态图或活动图"
+    ],
+    "badcase_signals": [
+      "只检索到离散数学题目，没检索到用例图内容",
+      "只讲用例图定义，没做具体建模",
+      "强行用用例图建模而不指出不合适"
+    ],
+    "relevant_doc_ids": []
+  },
+  {
+    "id": "H6",
+    "question": "Agent 学习笔记里说的“ReAct 范式”和软件工程里的“敏捷开发”在迭代思路上有什么异同？",
+    "ground_truth": "相同点是二者都强调快速反馈、持续迭代和响应变化。不同点是 ReAct 是 LLM Agent 的思考-行动-观察循环交互协议，偏微观步骤级迭代；敏捷开发是软件项目管理方法，偏 sprint 等宏观周期迭代。",
+    "category": "",
+    "domain": "Agent + 软件工程",
+    "difficulty": "hard",
+    "test_type": "cross_document",
+    "core_focus": "Agent + 软件工程概念对比",
+    "expected_answer_points": [
+      "相同：快速反馈、持续迭代、响应变化",
+      "ReAct 是 LLM Agent 的思考-行动-观察循环",
+      "敏捷开发是软件项目管理方法",
+      "ReAct 是微观迭代，敏捷是宏观迭代"
+    ],
+    "badcase_signals": [
+      "只找到 ReAct 定义，没找到敏捷开发定义",
+      "回答它们没关系而拒绝跨文档关联",
+      "混淆迭代和循环"
+    ],
+    "relevant_doc_ids": []
+  },
+  {
+    "id": "H7",
+    "question": "CodeTop 里的“反转链表”和离散数学里的“递归定义”有什么关系？",
+    "ground_truth": "反转链表可以用递归实现：递归到链表末尾，回溯时逐步反转指针。离散数学中的递归定义是用对象自身来定义对象，例如斐波那契数列。反转链表的递归解法本质上是递归结构在编程中的应用。",
+    "category": "",
+    "domain": "CodeTop + 离散数学",
+    "difficulty": "hard",
+    "test_type": "cross_document",
+    "core_focus": "CodeTop + 离散数学数理关联",
+    "expected_answer_points": [
+      "反转链表可以用递归实现",
+      "离散数学递归定义是对象用自身定义",
+      "反转链表递归解法是递归结构在编程中的应用"
+    ],
+    "badcase_signals": [
+      "找到两个文档内容但没建立关联",
+      "只讲算法实现，不讲数学原理"
+    ],
+    "relevant_doc_ids": []
+  },
+  {
+    "id": "H8",
+    "question": "软件工程里说“软件会逐渐退化”，能不能用 Agent 学习笔记里提到的“上下文腐烂”来解释？",
+    "ground_truth": "可以作类比，但不能混同。软件退化指不断变更使组件和接口之间更容易产生错误；上下文腐烂指上下文 Token 增加后模型回忆和推理能力下降，并受到 Transformer O(n²) 复杂度影响。二者共同点是系统复杂度增加导致质量或性能下降，一个发生在软件演化，一个发生在 LLM 推理上下文中。",
+    "category": "",
+    "domain": "软件工程 + Agent",
+    "difficulty": "hard",
+    "test_type": "cross_document",
+    "core_focus": "软件工程 + Agent 概念类比",
+    "expected_answer_points": [
+      "软件退化：不断变更使组件接口之间引起错误",
+      "上下文腐烂：Token 数增加导致回忆和推理能力下降，Transformer O(n²) 复杂度",
+      "关联：复杂度增加导致性能或质量下降，但领域不同"
+    ],
+    "badcase_signals": [
+      "找到两个概念但没建立类比关系",
+      "混淆上下文 Token 增加和软件变更"
+    ],
+    "relevant_doc_ids": []
+  },
+  {
+    "id": "H9",
+    "question": "武汉理工大学南湖校区有没有游泳馆？",
+    "ground_truth": "文档没有明确说明南湖校区有游泳馆。文档只说全校三校区有游泳池 2 个；南湖校区体育设施列举了综合体育馆、标准化田径场、篮球场等，没有提到游泳池。因此不能断言南湖校区有游泳馆，只能说全校有 2 个游泳池，具体位置需进一步确认。",
+    "category": "",
+    "domain": "武汉理工大学",
+    "difficulty": "hard",
+    "test_type": "boundary_pressure",
+    "core_focus": "不存在信息的正确处理",
+    "expected_answer_points": [
+      "文档没明确说南湖校区有游泳馆",
+      "文档说三校区有游泳池 2 个",
+      "南湖校区体育设施列举没有提到游泳池",
+      "结论应保持不确定，不把全校游泳池归到南湖"
+    ],
+    "badcase_signals": [
+      "直接回答有或没有而不说明推理过程",
+      "把 2 个游泳池当作南湖校区有",
+      "拒绝回答而没有给出推断"
+    ],
+    "relevant_doc_ids": []
+  },
+  {
+    "id": "H10",
+    "question": "武汉理工大学 2024 年的录取分数线是多少？",
+    "ground_truth": "文档只提到年招收本科生约 9,200 人、录取分数线稳居同类院校前列，没有给出 2024 年具体录取分数线。应说明知识库没有具体数据，并建议查询武汉理工大学招生信息网 zs.whut.edu.cn。",
+    "category": "",
+    "domain": "武汉理工大学",
+    "difficulty": "hard",
+    "test_type": "boundary_pressure",
+    "core_focus": "过期/缺失信息处理",
+    "expected_answer_points": [
+      "没有具体 2024 年录取分数线数据",
+      "不能把约 9,200 人误答为分数线",
+      "建议查阅招生信息网 zs.whut.edu.cn"
+    ],
+    "badcase_signals": [
+      "编造分数线",
+      "只回答没找到而不给建议",
+      "将约 9,200 人误答为分数线"
+    ],
+    "relevant_doc_ids": []
+  },
+  {
+    "id": "H11",
+    "question": "武汉理工大学的校医院晚上开门吗？",
+    "ground_truth": "文档只提供校医院联系电话：马房山 027-87652003、余家头 027-86551120，没有说明营业时间或夜间门诊。应回答知识库没有明确夜间开门信息，并建议拨打电话咨询。",
+    "category": "",
+    "domain": "武汉理工大学",
+    "difficulty": "hard",
+    "test_type": "boundary_pressure",
+    "core_focus": "文档外具体信息处理",
+    "expected_answer_points": [
+      "文档只有校医院联系电话",
+      "没有营业时间或夜间门诊信息",
+      "建议拨打电话咨询"
+    ],
+    "badcase_signals": [
+      "根据常识编造 24 小时营业",
+      "直接回答不清楚而没有给出电话建议"
+    ],
+    "relevant_doc_ids": []
+  },
+  {
+    "id": "H12",
+    "question": "Agent 学习笔记里有提到“多模态”吗？具体在哪一页？",
+    "ground_truth": "有相关内容。Agent 学习笔记在第八章“记忆与检索”的 Perceptual（感知记忆）部分提到 CLIP（图像）、CLAP（音频）等多模态数据。由于文档是 Markdown，不应编造页码，应定位为第八章·记忆与检索。",
+    "category": "",
+    "domain": "Agent",
+    "difficulty": "hard",
+    "test_type": "boundary_pressure",
+    "core_focus": "间接信息定位",
+    "expected_answer_points": [
+      "第八章记忆与检索中的 Perceptual 感知记忆",
+      "提到 CLIP 图像、CLAP 音频等多模态数据",
+      "Markdown 没有页码，应回答章节而不是编造页码"
+    ],
+    "badcase_signals": [
+      "找不到多模态关键词就回答没有",
+      "忽略感知记忆和 CLIP/CLAP",
+      "编造页码"
+    ],
+    "relevant_doc_ids": []
+  },
+  {
+    "id": "H13",
+    "question": "理工大学的“材料”是什么？",
+    "ground_truth": "这个问题有歧义。“材料”更可能指武汉理工大学的材料科学与工程王牌学科，它是双一流建设学科，第四轮学科评估 A+、全国第一；也可能指校园资料中的材料/资料信息。应优先回答学科含义，同时提示如果用户问的是校园资料或办事材料，需要进一步说明。",
+    "category": "",
+    "domain": "武汉理工大学",
+    "difficulty": "hard",
+    "test_type": "ambiguous_query",
+    "core_focus": "Query 歧义处理",
+    "expected_answer_points": [
+      "指出材料可能指材料科学与工程学科，也可能指校园资料/办事材料",
+      "优先回答材料科学与工程是王牌学科，A+、全国第一",
+      "提示用户若问校园资料或办事材料需进一步说明"
+    ],
+    "badcase_signals": [
+      "直接回答材料科学与工程而没有处理歧义",
+      "检索到校园资料手册但没理解材料语境",
+      "没有主动澄清歧义"
+    ],
+    "relevant_doc_ids": []
+  },
+  {
+    "id": "H14",
+    "question": "那个“最长上升子序列”在离散数学里有吗？",
+    "ground_truth": "离散数学文档里没有“最长上升子序列”；这道题出现在《CodeTop60 面试复习》中，是 [300] 最长上升子序列，通常用动态规划求解。应说明它不在离散数学里，而在 CodeTop 文档中，并给出简要解法。",
+    "category": "",
+    "domain": "CodeTop + 离散数学",
+    "difficulty": "hard",
+    "test_type": "ambiguous_query",
+    "core_focus": "跨文档定位",
+    "expected_answer_points": [
+      "离散数学里没有最长上升子序列",
+      "CodeTop 里有 [300] 最长上升子序列",
+      "简要说明动态规划解法"
+    ],
+    "badcase_signals": [
+      "在离散数学里搜不到就拒绝",
+      "没有跨文档检索 CodeTop",
+      "找到但没指出文档来源"
+    ],
+    "relevant_doc_ids": []
+  },
+  {
+    "id": "H15",
+    "question": "武汉理工大学的“校训”在校园手册里出现了几次？都在哪些地方？",
+    "ground_truth": "校训是“厚德博学、追求卓越”。校园手册中至少出现 3 次：第一章·学校概况中的校训字段，第七章·校园文化中的校训详解和出处解释，文档末尾的“厚德博学 · 追求卓越”。如果把“追求卓越”单独出现也计入，应明确说明计数口径。",
+    "category": "",
+    "domain": "武汉理工大学",
+    "difficulty": "hard",
+    "test_type": "order_priority",
+    "core_focus": "多位置聚合",
+    "expected_answer_points": [
+      "校训：厚德博学、追求卓越",
+      "第一章学校概况的校训字段",
+      "第七章校园文化的校训详解和出处解释",
+      "文档末尾厚德博学 · 追求卓越",
+      "至少 3 次，并说明计数口径"
+    ],
+    "badcase_signals": [
+      "只找到一次",
+      "遗漏文档末尾出现",
+      "把追求卓越单独出现也算但未说明口径"
+    ],
+    "relevant_doc_ids": []
+  },
+  {
+    "id": "H16",
+    "question": "Agent 学习笔记、软件工程、离散数学，这三份文档里，哪一份提到“递归”最多？",
+    "ground_truth": "应跨文档对比“递归”的出现情况。离散数学中有递归定义，如斐波那契数列等，提到较多；CodeTop 中算法题也可能多次使用递归解法，如反转链表、二叉树遍历等，但该 Query 指定的三份文档中重点应比较 Agent 学习笔记、软件工程和离散数学。Agent 学习笔记和软件工程基本较少或没有明显递归内容，结论倾向于离散数学提到最多。若纳入 CodeTop，应单独说明口径。",
+    "category": "",
+    "domain": "Agent + 软件工程 + 离散数学",
+    "difficulty": "hard",
+    "test_type": "cross_document",
+    "core_focus": "多文档对比统计",
+    "expected_answer_points": [
+      "离散数学提到递归定义，如斐波那契数列等",
+      "Agent 学习笔记基本没有明显递归内容",
+      "软件工程基本没有明显递归内容",
+      "结论倾向于离散数学最多",
+      "如果纳入 CodeTop，需要说明统计口径变化"
+    ],
+    "badcase_signals": [
+      "只在一个文档里搜索递归，没有跨文档对比",
+      "没有理解数学定义与算法实现中的递归含义差异",
+      "给出不完整或口径混乱的统计数字"
+    ],
+    "relevant_doc_ids": []
+  }
+]

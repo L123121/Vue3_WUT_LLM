@@ -10,66 +10,152 @@ describe('RagService', () => {
     vi.clearAllMocks();
   });
 
-  it('按 chatdocFileId 精确映射父文档和引用片段', async () => {
+  it('融合向量召回和关键词召回，并保留召回通道信息', () => {
     const RagService = getRagService();
     const rag = new RagService({ getCompletion: vi.fn() });
+    rag.vectorWeight = 0.6;
+    rag.keywordWeight = 0.4;
 
-    rag.documentService = {
-      getDocumentsByChatdocFileIds: vi.fn().mockResolvedValue(new Map([
-        ['file-b', {
-          id: 'doc-b',
-          title: 'B 文档',
-          category: 'library',
-          content: 'B 内容',
-          chunkCount: 5,
-          chatdocFileId: 'file-b',
-          metadata: {}
-        }],
-        ['file-a', {
-          id: 'doc-a',
-          title: 'A 文档',
-          category: 'academic',
-          content: 'A 内容',
-          chunkCount: 3,
-          chatdocFileId: 'file-a',
-          metadata: {}
-        }]
-      ]))
-    };
+    const fused = rag.fuseRetrievalResults(
+      [{ id: 'doc-a_chunk_0', docId: 'doc-a', title: 'A', text: '语义相关', score: 0.6, chunkIndex: 0 }],
+      [{ id: 'doc-b_chunk_0', docId: 'doc-b', title: '学生证补办', text: '学生证补办流程', score: 1, _keywordScore: 1, chunkIndex: 0 }],
+      5
+    );
 
-    const result = await rag.assembleParentContext({
-      'file-a': [2],
-      'file-b': [1, 3]
-    });
-
-    expect(rag.documentService.getDocumentsByChatdocFileIds).toHaveBeenCalledWith(['file-a', 'file-b']);
-    expect(result.sources.map(s => s.title)).toEqual(['A 文档', 'B 文档']);
-    expect(result.sources.map(s => s.matchedChunkIds)).toEqual([[2], [1, 3]]);
-    expect(result.context).toContain('【文档 1】A 文档');
-    expect(result.context).toContain('【文档 2】B 文档');
+    expect(fused[0].docId).toBe('doc-b');
+    expect(fused[0]._retrievalChannels).toContain('keyword');
+    expect(fused.map(item => item.docId)).toEqual(['doc-b', 'doc-a']);
   });
 
-  it('查询 ChatDoc 文件时透传 category 并在无来源时返回明确提示', async () => {
+  it('同一切片被多路召回时会合并分数和通道', () => {
     const RagService = getRagService();
     const rag = new RagService({ getCompletion: vi.fn() });
 
-    rag.rerankEnabled = false;
-    rag.documentService = {
-      getAllChatdocFileIds: vi.fn().mockResolvedValue(['file-library'])
-    };
-    rag.chatdocService = {
-      chat: vi.fn().mockResolvedValue({ content: '不应直接采信的回答', fileRefer: {} })
-    };
-
-    const result = await rag.chatdocChat('图书馆几点开门？', [], { category: 'library' });
-
-    expect(rag.documentService.getAllChatdocFileIds).toHaveBeenCalledWith({ category: 'library' });
-    expect(rag.chatdocService.chat).toHaveBeenCalledWith(
-      ['file-library'],
-      [{ role: 'user', content: '图书馆几点开门？' }],
-      { category: 'library' }
+    const fused = rag.fuseRetrievalResults(
+      [{ id: 'doc-a_chunk_0', docId: 'doc-a', title: 'A', text: '内容', score: 0.8, chunkIndex: 0 }],
+      [{ id: 'doc-a_chunk_0', docId: 'doc-a', title: 'A', text: '内容', score: 1, _keywordScore: 1, chunkIndex: 0 }],
+      5
     );
-    expect(result.sources).toEqual([]);
+
+    expect(fused).toHaveLength(1);
+    expect(fused[0]._vectorScore).toBeCloseTo(0.8);
+    expect(fused[0]._keywordScore).toBeCloseTo(1);
+    expect(fused[0]._retrievalChannels).toEqual(['vector', 'keyword']);
+  });
+
+  it('按 docId 聚合子块并组装父文档上下文', async () => {
+    const RagService = getRagService();
+    const rag = new RagService({ getCompletion: vi.fn() });
+
+    rag.documentService = {
+      getDocument: vi.fn().mockImplementation(async docId => ({
+        id: docId,
+        title: docId === 'doc-a' ? '学生证补办流程' : '图书馆开放时间',
+        category: '教务相关',
+        content: `${docId} 的完整父文档内容`,
+        chunkCount: 3,
+        metadata: {}
+      }))
+    };
+
+    const result = await rag.assembleParentContext([
+      { docId: 'doc-a', score: 0.9, chunkIndex: 2, _retrievalChannels: ['keyword'] },
+      { docId: 'doc-a', score: 0.7, chunkIndex: 1, _retrievalChannels: ['vector'] },
+      { docId: 'doc-b', score: 0.5, chunkIndex: 0, _retrievalChannels: ['vector'] }
+    ]);
+
+    expect(result.sources.map(source => source.id)).toEqual(['doc-a', 'doc-b']);
+    expect(result.sources[0].matchedChunks).toBe(2);
+    expect(result.sources[0].matchedChunkIds.sort()).toEqual([1, 2]);
+    expect(result.sources[0].retrievalChannels.sort()).toEqual(['keyword', 'vector']);
+    expect(result.context).toContain('【文档 1】学生证补办流程');
+  });
+
+  it('无可靠候选时返回明确拒答，不调用大模型生成', async () => {
+    const RagService = getRagService();
+    const aiService = { getCompletion: vi.fn() };
+    const rag = new RagService(aiService);
+
+    rag.documentService = {
+      listDocuments: vi.fn().mockResolvedValue({ documents: [{ id: 'doc-a' }] })
+    };
+    rag.retrieveCandidates = vi.fn().mockResolvedValue({
+      candidates: [],
+      trace: { mode: 'hybrid_vector_bm25_rrf', vector: { count: 0 }, keyword: { count: 0 }, fused: { count: 0, topScore: 0 } }
+    });
+
+    const result = await rag.localSearchChat('不存在的问题');
+
     expect(result.reply).toContain('没有检索到足够可靠的来源');
+    expect(result.sources).toEqual([]);
+    expect(aiService.getCompletion).not.toHaveBeenCalled();
+  });
+
+  describe('classifyQuestion', () => {
+    it('教务政策类识别为 authoritative', () => {
+      const RagService = getRagService();
+      const rag = new RagService({ getCompletion: vi.fn() });
+      expect(rag.classifyQuestion('转专业需要什么条件')).toBe('authoritative');
+      expect(rag.classifyQuestion('补考和重修的学分怎么算')).toBe('authoritative');
+      expect(rag.classifyQuestion('毕业设计成绩如何评定')).toBe('authoritative');
+    });
+
+    it('事实查询类识别为 factual', () => {
+      const RagService = getRagService();
+      const rag = new RagService({ getCompletion: vi.fn() });
+      expect(rag.classifyQuestion('武汉理工大学有几个校区')).toBe('factual');
+      expect(rag.classifyQuestion('图书馆在哪里')).toBe('factual');
+      expect(rag.classifyQuestion('学校电话多少')).toBe('factual');
+    });
+
+    it('知识点解释类识别为 knowledge', () => {
+      const RagService = getRagService();
+      const rag = new RagService({ getCompletion: vi.fn() });
+      expect(rag.classifyQuestion('什么是多态')).toBe('knowledge');
+      expect(rag.classifyQuestion('解释一下二分查找算法')).toBe('knowledge');
+      expect(rag.classifyQuestion('说说面向对象和面向过程的区别')).toBe('knowledge');
+    });
+
+    it('其他问题默认为 general', () => {
+      const RagService = getRagService();
+      const rag = new RagService({ getCompletion: vi.fn() });
+      expect(rag.classifyQuestion('你好')).toBe('general');
+      expect(rag.classifyQuestion('今天天气')).toBe('general');
+      expect(rag.classifyQuestion('你会做什么')).toBe('general');
+    });
+  });
+
+  describe('shouldRewriteQuery', () => {
+    it('无历史时不需要改写', () => {
+      const RagService = getRagService();
+      const rag = new RagService({ getCompletion: vi.fn() });
+      expect(rag.shouldRewriteQuery('它怎么配置', [])).toBe(false);
+      expect(rag.shouldRewriteQuery('它怎么配置', null)).toBe(false);
+    });
+
+    it('含代词时需要改写', () => {
+      const RagService = getRagService();
+      const rag = new RagService({ getCompletion: vi.fn() });
+      const history = [{ role: 'user', content: '语音输入怎么配置' }, { role: 'assistant', content: '在设置里打开' }];
+      expect(rag.shouldRewriteQuery('它怎么配置', history)).toBe(true);
+      expect(rag.shouldRewriteQuery('这个怎么用', history)).toBe(true);
+      expect(rag.shouldRewriteQuery('那费用呢', history)).toBe(true);
+    });
+
+    it('短 query 需要改写', () => {
+      const RagService = getRagService();
+      const rag = new RagService({ getCompletion: vi.fn() });
+      const history = [{ role: 'user', content: '补考怎么报名' }, { role: 'assistant', content: '在教务系统' }];
+      expect(rag.shouldRewriteQuery('条件呢', history)).toBe(true);
+      expect(rag.shouldRewriteQuery('费用呢', history)).toBe(true);
+    });
+
+    it('完整 query 不需要改写', () => {
+      const RagService = getRagService();
+      const rag = new RagService({ getCompletion: vi.fn() });
+      const history = [{ role: 'user', content: '补考怎么报名' }, { role: 'assistant', content: '在教务系统' }];
+      expect(rag.shouldRewriteQuery('补考的条件是什么', history)).toBe(false);
+      expect(rag.shouldRewriteQuery('转专业需要什么条件', history)).toBe(false);
+    });
   });
 });

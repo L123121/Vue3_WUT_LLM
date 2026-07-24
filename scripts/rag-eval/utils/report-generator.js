@@ -5,12 +5,6 @@
 
 import { writeFileSync } from 'fs';
 
-/**
- * 生成 Markdown 格式的评测报告
- * @param {Object} retrievalResult - 检索评测结果
- * @param {Object} ragasResult - RAGAS 评测结果
- * @returns {string}
- */
 export function generateMarkdownReport(retrievalResult, ragasResult) {
   const now = new Date().toLocaleString('zh-CN');
   let md = '';
@@ -19,7 +13,6 @@ export function generateMarkdownReport(retrievalResult, ragasResult) {
   md += `> 生成时间: ${now}\n\n`;
   md += `---\n\n`;
 
-  // ===== 检索质量 =====
   if (retrievalResult) {
     const s = retrievalResult.summary;
     md += `## 1. 检索质量评测\n\n`;
@@ -30,40 +23,45 @@ export function generateMarkdownReport(retrievalResult, ragasResult) {
     md += `| MRR | ${s.overall.mrr} |\n`;
     md += `| Hit Rate | ${s.overall.hitRate} |\n`;
 
-    // Recall@K
-    for (const [k, v] of Object.entries(s.overall)) {
-      if (k.startsWith('recall@')) {
-        md += `| ${k.toUpperCase()} | ${v} |\n`;
+    for (const [key, value] of Object.entries(s.overall)) {
+      if (key.startsWith('recall@') || key.startsWith('ndcg@')) {
+        md += `| ${key.toUpperCase()} | ${value} |\n`;
       }
     }
 
     md += `\n### 按类别\n\n`;
-    md += `| 类别 | Recall | Precision | MRR | 样本数 |\n|------|--------|-----------|-----|--------|\n`;
-    for (const [cat, stats] of Object.entries(s.byCategory)) {
-      md += `| ${cat} | ${stats.recall} | ${stats.precision} | ${stats.mrr} | ${stats.count} |\n`;
+    md += `| 类别 | Recall | Precision | MRR | nDCG@5 | 样本数 |\n|------|--------|-----------|-----|--------|--------|\n`;
+    for (const [category, stats] of Object.entries(s.byCategory || {})) {
+      md += `| ${category} | ${stats.recall} | ${stats.precision} | ${stats.mrr} | ${stats.ndcg5 || '-'} | ${stats.count} |\n`;
     }
 
     md += `\n### 按难度\n\n`;
-    md += `| 难度 | Recall | Hit Rate | 样本数 |\n|------|--------|----------|--------|\n`;
-    for (const [diff, stats] of Object.entries(s.byDifficulty)) {
-      md += `| ${diff} | ${stats.recall} | ${stats.hitRate} | ${stats.count} |\n`;
+    md += `| 难度 | Recall | Hit Rate | MRR | nDCG@5 | 样本数 |\n|------|--------|----------|-----|--------|--------|\n`;
+    for (const [difficulty, stats] of Object.entries(s.byDifficulty || {})) {
+      md += `| ${difficulty} | ${stats.recall} | ${stats.hitRate} | ${stats.mrr || '-'} | ${stats.ndcg5 || '-'} | ${stats.count} |\n`;
     }
 
-    // 失败案例
-    const failures = retrievalResult.results.filter(r => r.metrics && r.metrics.hitRate === 0);
-    if (failures.length > 0) {
-      md += `\n### 未命中案例\n\n`;
-      md += `| ID | 问题 | 类别 | 难度 |\n|----|------|------|------|\n`;
-      for (const f of failures.slice(0, 10)) {
-        md += `| ${f.id} | ${f.question.substring(0, 40)}... | ${f.category} | ${f.difficulty} |\n`;
+    if (s.byBadCase) {
+      md += `\n### Bad Case 分类\n\n`;
+      md += `| 类型 | 数量 |\n|------|------|\n`;
+      for (const [type, count] of Object.entries(s.byBadCase)) {
+        md += `| ${type} | ${count} |\n`;
       }
-      if (failures.length > 10) md += `\n> 共 ${failures.length} 条未命中，仅显示前 10 条\n`;
+    }
+
+    const badCases = retrievalResult.badCases || retrievalResult.results.filter(result => result.badCase && result.badCase.type !== 'pass');
+    if (badCases.length > 0) {
+      md += `\n### Bad Case 示例\n\n`;
+      md += `| ID | 类型 | 原因 | 问题 |\n|----|------|------|------|\n`;
+      for (const item of badCases.slice(0, 10)) {
+        md += `| ${item.id} | ${item.badCase?.type || 'unknown'} | ${item.badCase?.reason || '-'} | ${item.question.substring(0, 40)}... |\n`;
+      }
+      if (badCases.length > 10) md += `\n> 共 ${badCases.length} 条 Bad Case，仅显示前 10 条\n`;
     }
 
     md += `\n---\n\n`;
   }
 
-  // ===== RAGAS 生成质量 =====
   if (ragasResult) {
     const s = ragasResult.summary;
     md += `## 2. RAGAS 生成质量评测\n\n`;
@@ -77,91 +75,84 @@ export function generateMarkdownReport(retrievalResult, ragasResult) {
 
     md += `\n### 按类别\n\n`;
     md += `| 类别 | Faith. | Ans.Rel. | Ctx.Prec. | Ctx.Rec. | 样本数 |\n|------|--------|----------|-----------|----------|--------|\n`;
-    for (const [cat, stats] of Object.entries(s.byCategory)) {
-      md += `| ${cat} | ${stats.avg.faithfulness} | ${stats.avg.answer_relevancy} | ${stats.avg.context_precision} | ${stats.avg.context_recall} | ${stats.count} |\n`;
+    for (const [category, stats] of Object.entries(s.byCategory || {})) {
+      md += `| ${category} | ${stats.avg.faithfulness} | ${stats.avg.answer_relevancy} | ${stats.avg.context_precision} | ${stats.avg.context_recall} | ${stats.count} |\n`;
     }
 
     md += `\n### 按难度\n\n`;
     md += `| 难度 | Overall | Faithfulness | Ans.Rel. | 样本数 |\n|------|---------|-------------|----------|--------|\n`;
-    for (const [diff, stats] of Object.entries(s.byDifficulty)) {
-      md += `| ${diff} | ${stats.avg.overall} | ${stats.avg.faithfulness} | ${stats.avg.answer_relevancy} | ${stats.count} |\n`;
+    for (const [difficulty, stats] of Object.entries(s.byDifficulty || {})) {
+      md += `| ${difficulty} | ${stats.avg.overall} | ${stats.avg.faithfulness} | ${stats.avg.answer_relevancy} | ${stats.count} |\n`;
     }
 
-    // 低分案例
     const lowScores = ragasResult.results
-      .filter(r => r.metrics && r.metrics.overall < 0.5)
+      .filter(result => result.metrics && result.metrics.overall < 0.5)
       .sort((a, b) => a.metrics.overall - b.metrics.overall);
 
     if (lowScores.length > 0) {
       md += `\n### 低分案例（Overall < 50%）\n\n`;
       md += `| ID | 问题 | Overall | Faith. | Ans.Rel. |\n|----|------|---------|--------|----------|\n`;
-      for (const f of lowScores.slice(0, 10)) {
-        md += `| ${f.id} | ${f.question.substring(0, 30)}... | ${(f.metrics.overall * 100).toFixed(0)}% | ${(f.metrics.faithfulness * 100).toFixed(0)}% | ${(f.metrics.answer_relevancy * 100).toFixed(0)}% |\n`;
+      for (const item of lowScores.slice(0, 10)) {
+        md += `| ${item.id} | ${item.question.substring(0, 30)}... | ${(item.metrics.overall * 100).toFixed(0)}% | ${(item.metrics.faithfulness * 100).toFixed(0)}% | ${(item.metrics.answer_relevancy * 100).toFixed(0)}% |\n`;
       }
     }
 
     md += `\n---\n\n`;
   }
 
-  // ===== 综合分析 =====
   md += `## 3. 综合分析\n\n`;
 
   if (retrievalResult && ragasResult) {
     const rSum = retrievalResult.summary;
     const aSum = ragasResult.summary;
-
-    md += `### 关键发现\n\n`;
-
-    // 检索 vs 生成对比
     const recall = parseFloat(rSum.overall.recall) / 100;
     const faithfulness = parseFloat(aSum.overall.faithfulness) / 100;
 
+    md += `### 关键发现\n\n`;
     if (recall < 0.5) {
-      md += `- ⚠️ **检索召回率偏低** (${rSum.overall.recall})：大量相关文档未被检索到，建议优化文档上传策略或增加知识库覆盖\n`;
+      md += `- ⚠️ **检索召回率偏低** (${rSum.overall.recall})：建议检查文档覆盖、切片策略、TopK 和混合召回权重\n`;
     }
     if (faithfulness < 0.7) {
-      md += `- ⚠️ **忠实度偏低** (${aSum.overall.faithfulness})：AI 回答存在幻觉风险，建议降低 temperature 或加强 prompt 约束\n`;
+      md += `- ⚠️ **忠实度偏低** (${aSum.overall.faithfulness})：建议加强 prompt 约束、引用校验和拒答阈值\n`;
     }
-    if (recall >= 0.7 && faithfulness >= 0.8) {
+    if ((rSum.badCaseCount || 0) > 0) {
+      md += `- ⚠️ **存在 Bad Case** (${rSum.badCaseCount} 条)：优先按 recall_miss、ranking_error、generation_refusal 分类处理\n`;
+    }
+    if (recall >= 0.7 && faithfulness >= 0.8 && (rSum.badCaseCount || 0) === 0) {
       md += `- ✅ 检索和生成质量均表现良好\n`;
     }
 
     md += `\n### 改进建议\n\n`;
-    md += `1. **检索优化**: 增加文档分块质量，优化 chunk 大小和 overlap\n`;
-    md += `2. **生成优化**: 调整 system prompt，约束 AI 只基于检索内容回答\n`;
-    md += `3. **知识库扩充**: 覆盖更多校园信息维度，减少"无答案"情况\n`;
-    md += `4. **持续评测**: 定期运行评测，跟踪指标变化趋势\n`;
+    md += `1. **召回优化**：对比纯向量、BM25、混合召回和 RRF 融合效果\n`;
+    md += `2. **排序优化**：关注 MRR 与 nDCG@K，针对 ranking_error 调整 rerank 策略\n`;
+    md += `3. **生成优化**：对 generation_refusal 和幻觉样例单独复盘 prompt 与阈值\n`;
+    md += `4. **持续评测**：每次修改 chunk、TopK、权重、模型后固定跑 Golden Set\n`;
+  } else {
+    md += `请同时运行检索评测和生成质量评测，形成完整 RAG 闭环。\n`;
   }
 
   md += `\n---\n\n`;
   md += `## 4. 人工评测说明\n\n`;
-  md += `自动化评测指标（RAGAS）存在局限性，建议结合人工评测：\n\n`;
+  md += `自动化评测指标存在局限性，建议结合人工评测：\n\n`;
   md += `1. 访问 \`http://localhost:5173/eval\` 打开人工打分页面\n`;
-  md += `2. 对每个回答从 **准确性**、**完整性**、**相关性** 三个维度打 1-5 分\n`;
-  md += `3. 对比人工分数与 RAGAS 自动分数，分析差异原因\n`;
-  md += `4. 将人工评测结果作为 RAG 系统优化的最终参考\n\n`;
+  md += `2. 对每个回答从 **准确性**、**完整性**、**相关性**、**引用正确性** 四个维度打分\n`;
+  md += `3. 对 Bad Case 填写失败原因和修复动作，形成优化记录\n`;
+  md += `4. 将人工评测结果作为上线前验收的最终参考\n\n`;
 
   return md;
 }
 
-/**
- * 保存综合评测报告
- * @param {Object} retrievalResult
- * @param {Object} ragasResult
- * @param {string} outputDir
- */
 export function saveReport(retrievalResult, ragasResult, outputDir) {
-  // Markdown 报告
   const mdReport = generateMarkdownReport(retrievalResult, ragasResult);
   const mdPath = `${outputDir}/eval-report.md`;
   writeFileSync(mdPath, mdReport);
 
-  // JSON 综合结果
   const jsonReport = {
     timestamp: new Date().toISOString(),
     retrieval: retrievalResult?.summary || null,
     ragas: ragasResult?.summary || null,
     retrievalDetails: retrievalResult?.results || [],
+    badCases: retrievalResult?.badCases || [],
     ragasDetails: ragasResult?.results || []
   };
   const jsonPath = `${outputDir}/eval-report.json`;

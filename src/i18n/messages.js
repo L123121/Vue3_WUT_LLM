@@ -4,7 +4,8 @@ const messages = {
       titles: {
         Home: '首页概览',
         Todo: '任务管理',
-        Chat: 'AI Agent',
+        Chat: '校园AI助手',
+        Feedback: 'RAG反馈收集',
         Settings: '系统设置',
         About: '系统信息',
         Dashboard: '控制台',

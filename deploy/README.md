@@ -1,141 +1,332 @@
-# 武理小精灵 — 部署指南
+# 武理小精灵部署指南
 
-## 架构概览
+本文档说明如何把当前项目部署到云服务器。当前生产方案基于 **Docker Compose + nginx + Express + Milvus**，文档存储使用 **SQLite**（持久化 volume），无需额外数据库服务。
 
+---
+
+## 架构
+
+```text
+用户浏览器
+   │
+   ▼
+nginx:80/443
+   │  SSL 终止、反向代理、静态缓存策略
+   ▼
+backend:3000
+   │  Express API + 前端 dist 托管 + uploads 访问
+   │
+   ├── SQLite (/app/data/store.db)  ← 文档原文 + 元数据 + 会话
+   │
+   └── Milvus:19530                 ← 512d 稠密 + 稀疏向量
 ```
-用户 → 域名 → 阿里云 ECS
-                  │
-            ┌─────┴─────┐
-            │   nginx   │  (SSL 终止 + 反向代理)
-            └─────┬─────┘
-                  │
-            ┌─────┴─────┐
-            │  backend  │  (Express API + SPA 静态资源)
-            └─────┬─────┘
-                  │
-            ┌─────┴─────┐
-            │   redis   │  (会话缓存)
-            └───────────┘
-```
+
+相关文件：
+
+| 文件 | 作用 |
+| --- | --- |
+| `Dockerfile` | 多阶段构建：先构建 Vue 前端，再打包 Express 运行环境 |
+| `docker-compose.yml` | 编排 nginx、backend、milvus 和持久化 volume |
+| `deploy/.env.production.example` | 生产环境变量模板 |
+| `deploy/nginx.conf` | HTTPS 域名部署配置 |
+| `deploy/nginx.http.conf` | 纯 HTTP / IP 测试配置 |
+| `deploy/deploy.sh` | 服务器侧部署脚本 |
+| `deploy/init-server.sh` | 服务器初始化辅助脚本 |
+| `.github/workflows/deploy.yml` | GitHub Actions 自动部署流水线 |
+
+---
 
 ## 前置条件
 
-- 阿里云 ECS（推荐 2C4G）
-- 已备案域名（可选，纯 IP 也能用）
-- 服务器已安装 Docker 和 Docker Compose V2
+- Linux 云服务器，推荐 **2C4G** 及以上（Milvus 建议 4G 内存）。
+- 已安装 Docker 和 Docker Compose V2。
+- 已开放安全组端口：`22`、`80`、`443`。
+- 可选：已备案域名和 SSL 证书。
+- 已准备模型服务、JWT、教务加密等生产环境变量。
 
-## 快速开始
+> 不建议把 `3000` 端口暴露到公网。当前 `docker-compose.yml` 仅绑定 `127.0.0.1:3000:3000`，由 nginx 访问后端。
 
-### 1. 克隆代码并配置环境变量
+---
+
+## 快速部署
+
+### 1. 上传代码
 
 ```bash
-# 在服务器上
-git clone https://github.com/your-org/wuli-elf.git /opt/wuli-elf
+git clone https://github.com/L123121/Vue3_WUT_LLM.git /opt/wuli-elf
 cd /opt/wuli-elf
+```
 
-# 复制并编辑生产环境变量
+如果服务器使用的是私有镜像，也可以只保留 `docker-compose.yml`、`deploy/` 和生产环境变量文件，由 CI/CD 负责推送镜像。
+
+### 2. 配置生产环境变量
+
+```bash
 cp deploy/.env.production.example deploy/.env.production
 vim deploy/.env.production
 ```
 
-> ⚠️ 必须填写的变量：
-> - `AI_API_KEY` — 阶跃星辰 / 通义千问 API 密钥
-> - `JWT_SECRET` — 随机 64 位字符串（`openssl rand -hex 32`）
-> - `SCHOOL_ENC_KEY` — 教务密码加密密钥
-> - `REDIS_URL` — Redis 连接串
+必须填写：
 
-### 2. 配置 SSL 证书（域名部署）
+| 变量 | 说明 |
+| --- | --- |
+| `AI_API_KEY` | OpenAI-compatible 模型服务 Key |
+| `JWT_SECRET` | JWT 签名密钥，建议 `openssl rand -hex 32` |
+| `SCHOOL_ENC_KEY` | 教务密码加密密钥 |
+| `CORS_ORIGIN` | 前端访问域名，例如 `https://your-domain.com` |
 
-**方式 A：阿里云免费证书（推荐）**
-1. 在阿里云控制台 → SSL证书 → 免费证书，申请证书
-2. 下载 nginx 版证书
-3. 上传到服务器 `/etc/letsencrypt/live/your-domain.com/`
+按需填写：
 
-**方式 B：Let's Encrypt**
+| 变量 | 说明 |
+| --- | --- |
+| `AI_BASE_URL` / `AI_MODEL` | 模型服务地址和模型名 |
+| `JUDGE_API_KEY` / `JUDGE_MODEL` | LLM-as-judge 独立 Key（可选，默认同 AI_API_KEY） |
+| `MILVUS_ADDRESS` | Milvus 连接地址，默认 `milvus:19530` |
+| `MILVUS_COLLECTION` | 向量集合名，默认 `wuli_elf_chunks` |
+| `PUPPETEER_EXECUTABLE_PATH` | 容器内默认 `/usr/bin/chromium` |
+
+> `deploy/.env.production` 包含敏感信息，不要提交到 Git。SQLite 无需额外配置，数据自动持久化到 `backend-data` volume。
+
+### 3. 配置 nginx
+
+#### HTTPS 域名部署
+
+默认 `docker-compose.yml` 使用 `deploy/nginx.conf`，并把 Compose volume `ssl-certs` 挂载到 nginx 容器的 `/etc/letsencrypt`。使用 `docker compose -p wuli-elf` 时，实际 Docker volume 名称通常是 `wuli-elf_ssl-certs`。
+
+常见方式：
+
 ```bash
+# 示例：使用 certbot 申请证书，按实际域名替换 your-domain.com
+# 需要先确保 80 端口未被 nginx 占用；如已启动 nginx，请先 docker compose -p wuli-elf stop nginx
 docker run --rm \
-  -v /opt/wuli-elf/ssl:/etc/letsencrypt \
-  certbot/certbot \
-  certonly --standalone -d your-domain.com
+  -v wuli-elf_ssl-certs:/etc/letsencrypt \
+  -p 80:80 \
+  certbot/certbot certonly --standalone -d your-domain.com
 ```
 
-**方式 C：纯 IP 测试**
-- 使用 `deploy/nginx.http.conf` 代替默认 nginx 配置
-- 修改 `docker-compose.yml` 中 nginx 的 `volumes`，使用 HTTP 配置
+如使用阿里云免费证书，下载 nginx 版证书后也需要写入同一个 volume 中，使容器内存在：
 
-### 3. 启动服务
+```text
+/etc/letsencrypt/live/your-domain.com/fullchain.pem
+/etc/letsencrypt/live/your-domain.com/privkey.pem
+```
+
+如果更习惯使用服务器目录，也可以把 `docker-compose.yml` 中的 `ssl-certs:/etc/letsencrypt:ro` 改成类似 `./ssl:/etc/letsencrypt:ro`，然后把证书放到 `/opt/wuli-elf/ssl/live/your-domain.com/`。
+
+#### 纯 HTTP / IP 测试
+
+如果暂时没有域名或证书，把 `docker-compose.yml` 中 nginx 配置挂载从：
+
+```yaml
+- ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+```
+
+改为：
+
+```yaml
+- ./deploy/nginx.http.conf:/etc/nginx/conf.d/default.conf:ro
+```
+
+然后只通过 `http://服务器IP` 访问。
+
+### 4. 启动服务
 
 ```bash
-# 构建并启动所有服务
 docker compose -p wuli-elf up -d --build
-
-# 查看启动日志
+docker compose -p wuli-elf ps
 docker compose -p wuli-elf logs -f
+```
 
-# 检查后端健康状态
+首次启动 Milvus 需要拉取镜像和初始化，`start_period` 为 120s，请耐心等待。
+
+健康检查：
+
+```bash
 curl http://localhost:3000/api/health
 ```
 
-### 4. 验证
+浏览器访问：
 
-打开浏览器访问 `https://your-domain.com` 或 `http://your-ecs-ip`。
+- HTTPS：`https://your-domain.com`
+- HTTP 测试：`http://your-server-ip`
+
+---
 
 ## 日常运维
 
+### 查看状态与日志
+
 ```bash
-# 查看服务状态
 docker compose -p wuli-elf ps
-
-# 查看实时日志
 docker compose -p wuli-elf logs -f backend
+docker compose -p wuli-elf logs --tail=100 nginx
+docker compose -p wuli-elf logs --tail=50 milvus
+```
 
-# 重启服务
+### 重启服务
+
+```bash
 docker compose -p wuli-elf restart
+docker compose -p wuli-elf restart backend
+```
 
-# 更新服务（拉取最新镜像后）
+### 更新部署
+
+源码构建模式：
+
+```bash
+git pull
+docker compose -p wuli-elf up -d --build
+docker image prune -f
+```
+
+镜像拉取模式：
+
+```bash
+export BACKEND_IMAGE=your-dockerhub-username/wuli-elf-backend:latest
 docker compose -p wuli-elf pull backend
 docker compose -p wuli-elf up -d --no-deps backend
-
-# 查看日志（最近 100 行）
-docker compose -p wuli-elf logs --tail=100 backend
-
-# 备份数据
-docker run --rm -v wuli-elf_backend-data:/data -v $(pwd):/backup alpine \
-  tar czf /backup/backend-data-$(date +%Y%m%d).tar.gz -C /data .
+docker image prune -f
 ```
 
-## 镜像构建与推送
-
-### 方式一：CI/CD（推荐）
-
-见 `.github/workflows/deploy.yml`，配置 GitHub Secrets 后自动部署。
-
-### 方式二：手动
+### 备份数据
 
 ```bash
-# 构建
-docker build -t your-dockerhub-username/wuli-elf-backend:latest .
+mkdir -p backups
 
-# 推送
-docker push your-dockerhub-username/wuli-elf-backend:latest
+# 备份 SQLite 数据库（文档原文 + 元数据 + 会话）
+docker run --rm \
+  -v wuli-elf_backend-data:/data \
+  -v "$PWD/backups":/backup \
+  alpine tar czf /backup/backend-data-$(date +%Y%m%d).tar.gz -C /data .
 
-# 在服务器上拉取
-ssh root@your-ecs "cd /opt/wuli-elf && docker compose pull backend && docker compose up -d --no-deps backend"
+# 备份 Milvus 向量数据
+docker run --rm \
+  -v wuli-elf_milvus-data:/data \
+  -v "$PWD/backups":/backup \
+  alpine tar czf /backup/milvus-data-$(date +%Y%m%d).tar.gz -C /data .
+
+# 备份上传文件
+docker run --rm \
+  -v wuli-elf_uploads-data:/data \
+  -v "$PWD/backups":/backup \
+  alpine tar czf /backup/uploads-data-$(date +%Y%m%d).tar.gz -C /data .
 ```
 
-## 阿里云 ECS 安全组配置
+> SQLite 备份时建议先停掉 backend 容器，或使用 `.backup` 命令确保一致性。
+
+### 恢复数据
+
+```bash
+# 恢复 SQLite 数据库
+docker run --rm \
+  -v wuli-elf_backend-data:/data \
+  -v "$PWD/backups":/backup \
+  alpine tar xzf /backup/backend-data-20250718.tar.gz -C /data
+
+# 恢复后重启后端
+docker compose -p wuli-elf restart backend
+```
+
+---
+
+## CI/CD 部署
+
+`.github/workflows/deploy.yml` 当前流程：
+
+1. 安装前后端依赖。
+2. 执行 `npm run lint:check`。
+3. 执行 `npm test`。
+4. 构建并推送 Docker 镜像。
+5. 通过 SSH 到 ECS 拉取镜像并重启后端。
+
+需要配置的 GitHub Secrets：
+
+| Secret | 说明 |
+| --- | --- |
+| `DOCKER_USERNAME` / `DOCKER_PASSWORD` | Docker Hub 登录信息 |
+| `ECS_HOST` | ECS 公网地址 |
+| `ECS_USER` | SSH 用户 |
+| `ECS_SSH_KEY` | SSH 私钥 |
+
+如果改用阿里云 ACR，请在 workflow 中启用 ACR 登录步骤并设置对应 Secret。
+
+---
+
+## 安全组建议
 
 | 端口 | 用途 | 建议 |
-|------|------|------|
-| 22 | SSH | 仅允许你的 IP |
-| 80 | HTTP | 全开（用于 Let's Encrypt 验证） |
-| 443 | HTTPS | 全开 |
-| 3000 | Backend API | **不要对外开放**，仅 nginx 内部访问 |
+| --- | --- | --- |
+| `22` | SSH | 仅允许固定管理 IP |
+| `80` | HTTP | 开放，用于访问或证书签发 |
+| `443` | HTTPS | 开放，生产访问入口 |
+| `3000` | Backend | 不对公网开放 |
+| `19530` | Milvus gRPC | 不对公网开放（仅 `127.0.0.1` 监听） |
+
+---
+
+## 启用 CDN 加速
+
+CDN 可以显著降低静态资源（JS/CSS/图片）的加载延迟，适合多地域用户访问的场景。
+
+### 推荐方案：阿里云 OSS + CDN
+
+1. **创建 OSS Bucket**（与 ECS 同地域以降低回源费用）
+2. **配置 CDN 加速**：在阿里云 CDN 控制台添加域名，源站设为 OSS Bucket 或 ECS 公网 IP
+3. **设置 CNAME**：将 CDN 域名（如 `static.your-domain.com`）CNAME 到阿里云 CDN 分配的域名
+4. **配置回源**：如果使用 OSS，配置 OSS 回源到 ECS（`http://your-ecs-ip/assets/*` → 读取 `dist/assets/`）
+
+### 构建时启用 CDN
+
+```bash
+# 在构建服务器或 CI 中设置：
+VITE_CDN_URL=https://static.your-domain.com npm run build
+```
+
+构建产物中所有静态资源（JS/CSS/图片/字体）的引用路径会自动加上 CDN 域名前缀，例如：
+- `/assets/index-abc123.js` → `https://static.your-domain.com/assets/index-abc123.js`
+- `/assets/index-xyz789.css` → `https://static.your-domain.com/assets/index-xyz789.css`
+
+### nginx 同步配置
+
+如果 CDN 需要回源到 ECS，确认 nginx 的 `Access-Control-Allow-Origin` 头允许 CDN 域名访问：
+```nginx
+location /assets {
+    add_header Access-Control-Allow-Origin "https://static.your-domain.com";
+    # ... 其余配置
+}
+```
+
+### 缓存刷新
+
+更新部署后，需要在 CDN 控制台刷新缓存：
+```bash
+# 阿里云 CLI 示例
+aliyun cdn RefreshObjectCaches --ObjectPath https://static.your-domain.com/assets/ --ObjectType Directory
+```
+
+---
+
+## 排障清单
+
+- **后端启动失败**：检查 `AI_API_KEY`、`JWT_SECRET`、`SCHOOL_ENC_KEY` 是否存在。
+- **生产环境 CORS 报错**：检查 `CORS_ORIGIN` 是否包含当前访问域名。
+- **nginx 证书错误**：检查证书文件路径是否与 `deploy/nginx.conf` 一致。
+- **登录超时**：确认服务器能访问 `SCHOOL_TP_HOST` 和 `SCHOOL_JW_HOST`。
+- **Puppeteer 启动失败**：确认镜像中存在 `/usr/bin/chromium`，或设置 `PUPPETEER_EXECUTABLE_PATH`。
+- **Milvus 连接失败**：检查 `MILVUS_ADDRESS` 是否指向 `milvus:19530`，及 milvus 容器是否完成初始化（`start_period=120s`）。
+- **Milvus 集合未加载**：首次启动后需在 RAG 接口中触发一次检索，自动加载集合。
+- **上传文件丢失**：确认 `uploads-data` volume 未被删除。
+- **文档数据丢失**：确认 `backend-data` volume 未被删除；SQLite 数据文件位于 `/app/data/store.db`。
+
+---
 
 ## 注意事项
 
-1. **密钥安全**：`deploy/.env.production` 包含敏感信息，不要提交到 git
-2. **数据持久化**：Docker volumes `backend-data` 和 `uploads-data` 是持久化存储，不要轻易删除
-3. **Puppeteer 内存**：Chromium 可能占用较多内存，ECS 建议 4GB 以上
-4. **Redis 密码**：生产环境务必给 Redis 设置密码
-5. **日志轮转**：Docker Compose 已配置日志大小限制（每个服务 3 个文件，每个 10MB）
+1. `deploy/.env.production`、SSL 私钥、教务加密密钥不要提交到仓库。
+2. 生产环境必须配置 `CORS_ORIGIN`，否则后端会拒绝启动。
+3. `backend-data`、`milvus-data`、`uploads-data` 是关键持久化 volume，删除前务必备份。
+4. 教务系统依赖 Puppeteer 和外部站点稳定性，登录或查询失败时优先看后端日志。
+5. nginx 日志和容器日志已配置轮转上限，但仍建议定期清理旧镜像和备份文件。
+6. Milvus Standalone 包含嵌入式 etcd，单机部署无需额外安装 etcd / minio。
+7. SQLite 是单写者模型，仅适合单后端实例部署。如需水平扩展，需改用 PostgreSQL / Redis 等网络数据库。

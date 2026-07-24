@@ -19,6 +19,9 @@ const createSchoolError = (code, message, cause) => {
   return error;
 };
 
+const CAS_NETWORK_BLOCKED_MESSAGE =
+  '学校统一身份认证拒绝当前服务器网络访问：外部网络访问内网资源需要通过 VPN 或校园网。请将后端部署到校园网/VPN 环境，或为服务器配置学校 VPN 后再试。';
+
 class SchoolSessionService {
   constructor() {
     // userId -> { cookies: string, expiresAt: number }
@@ -262,6 +265,11 @@ class SchoolSessionService {
       const finalUrl = page.url();
       console.log(`[SchoolSession] CAS 登录页最终 URL: ${finalUrl.substring(0, 100)}`);
 
+      const blockedMessage = await this._detectAccessBlocked(page);
+      if (blockedMessage) {
+        throw createSchoolError('SERVICE_UNAVAILABLE', blockedMessage);
+      }
+
       if (!finalUrl.includes('tpass/login')) {
         // 如果没有跳转到 CAS 登录页，可能是直接进了 jwxt（已有登录态）
         console.log('[SchoolSession] 未进入 CAS 登录页，可能已有登录态');
@@ -272,7 +280,9 @@ class SchoolSessionService {
           await page.waitForSelector('#un', { timeout: 20000 });
           console.log('[SchoolSession] #un 输入框已就绪');
         } catch (e) {
-          console.warn('[SchoolSession] #un 输入框等待超时:', e.message);
+          const message = await this._getCasInputMissingMessage(page);
+          console.warn('[SchoolSession] #un 输入框等待超时:', e.message, message);
+          throw createSchoolError('SERVICE_UNAVAILABLE', message, e);
         }
         await new Promise(r => setTimeout(r, 1000));
 
@@ -396,6 +406,42 @@ class SchoolSessionService {
   _getEncKey() {
     const raw = config.school.encKey;
     return crypto.createHash('sha256').update(raw).digest();
+  }
+
+  async _getCasPageInfo(page) {
+    try {
+      return await page.evaluate(() => ({
+        title: document.title || '',
+        text: ((document.body && document.body.innerText) || '')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 500),
+      }));
+    } catch {
+      return { title: '', text: '' };
+    }
+  }
+
+  async _detectAccessBlocked(page) {
+    const { title, text } = await this._getCasPageInfo(page);
+    const content = title + ' ' + text;
+    if (
+      content.includes('访问请求已被阻断') ||
+      content.includes('当前请求未通过安全策略校验') ||
+      content.includes('外部网络访问内网资源')
+    ) {
+      return CAS_NETWORK_BLOCKED_MESSAGE;
+    }
+    return '';
+  }
+
+  async _getCasInputMissingMessage(page) {
+    const blockedMessage = await this._detectAccessBlocked(page);
+    if (blockedMessage) return blockedMessage;
+
+    const { title, text } = await this._getCasPageInfo(page);
+    const pageSummary = title || text.slice(0, 80) || '页面无可读内容';
+    return '统一身份认证页面结构可能已变更，未找到账号输入框（当前页面：' + pageSummary + '）';
   }
 
   _normalizeLoginError(error) {

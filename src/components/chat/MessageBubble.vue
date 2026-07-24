@@ -1,21 +1,26 @@
 <script setup>
-import { computed } from 'vue';
-import { User, Bot, Copy, RotateCcw, FileText, BookOpen, Tag, Hash, Cpu } from 'lucide-vue-next';
+import { ref, computed } from 'vue';
+import { useRouter } from 'vue-router';
+import { User, Bot, Copy, RotateCcw, FileText, BookOpen, Tag, Hash, X, ThumbsUp, ThumbsDown } from 'lucide-vue-next';
 import { useLanguageStore } from '../../stores/language.store.js';
 import { useChatStore } from '../../stores/chat.store.js';
 import { useAuthStore } from '../../stores/auth.store.js';
+import { submitRagFeedback } from '../../api/rag.js';
 import MarkdownRenderer from './MarkdownRenderer.vue';
-import AgentThinking from './AgentThinking.vue';
-import AgentToolCall from './AgentToolCall.vue';
 
 const props = defineProps({
   message: {
     type: Object,
     required: true,
   },
+  questionMessage: {
+    type: Object,
+    default: null,
+  },
 });
 
 const emit = defineEmits(['copy']);
+const router = useRouter();
 const languageStore = useLanguageStore();
 const chatStore = useChatStore();
 const authStore = useAuthStore();
@@ -27,44 +32,30 @@ const isModel = computed(() => props.message.role === 'model');
 const isError = computed(() => props.message.isError === true);
 const canRetry = computed(() => props.message.canRetry === true);
 
-const hasAgentData = computed(() =>
-  (props.message.toolCalls?.length > 0) || (props.message.thinkingSteps?.length > 0)
-);
-
-// 使用 store 维护的 _timeline（精确事件顺序）
-const timeline = computed(() => {
-  const rawTimeline = props.message._timeline || [];
-
-  return rawTimeline.map((evt, i) => {
-    const isLast = i === rawTimeline.length - 1;
-    if (evt.type === 'tool') {
-      const tc = (props.message.toolCalls || []).find(t => t.id === evt.id);
-      return { ...evt, status: tc?.status || 'running', result: tc?.result || '', arguments: tc?.arguments, isLast };
-    }
-    return { ...evt, isLast, id: `evt_${i}` };
-  });
-});
-
 const isStreaming = computed(() => chatStore.currentStreamingId === props.message.id);
 
-// 推理总览（trace 摘要）：routeLabel 由后端 toSummary() 下发（中文），
-// 旧 trace 无该字段时回退到 route 英文 key。耗时格式化 + 步数 + 置信度。
-const traceSummary = computed(() => {
-  const t = props.message.trace;
-  if (!t) return null;
-  const routeLabel = t.routeLabel || t.route || '推理';
-  const ms = t.totalMs;
-  const totalText = ms == null ? '' : (ms >= 1000 ? (ms / 1000).toFixed(1) + 's' : Math.round(ms) + 'ms');
-  // 步数：优先用 stepCount（实际工具调用数），回退 iterations（推理轮数）
-  const stepNum = t.stepCount != null ? t.stepCount : t.iterations;
-  const parts = [routeLabel];
-  if (stepNum != null) parts.push(`${stepNum}步`);
-  if (totalText) parts.push(totalText);
-  if (t.confidence != null) parts.push(`置信${Number(t.confidence).toFixed(2)}`);
-  return parts.join(' · ');
-});
-
 const hasSources = computed(() => props.message.sources && props.message.sources.length > 0);
+const feedbackState = ref('idle');
+const selectedFeedback = computed(() => props.message.feedback?.rating || '');
+const isRagAnswer = computed(() => (
+  isModel.value
+  && !isError.value
+  && !!messageText.value
+  && !isStreaming.value
+  && (props.message.usedRag === true || props.message.answerMode === 'rag' || hasSources.value)
+));
+const questionText = computed(() => props.questionMessage?.content ?? props.questionMessage?.text ?? '');
+
+// 行内引用弹窗
+const citationPopup = ref(null); // { source: {...}, index: number } | null
+const showCitation = (index) => {
+  const sources = props.message.sources || [];
+  const source = sources[index - 1];
+  if (source) {
+    citationPopup.value = { source, index };
+  }
+};
+const closeCitation = () => { citationPopup.value = null; };
 
 const messageText = computed(() => props.message.content ?? props.message.text ?? '');
 
@@ -87,6 +78,52 @@ const formatTime = (timestamp) => languageStore.formatTime(timestamp);
 
 const copyMessage = (text) => {
   navigator.clipboard.writeText(text).then(() => emit('copy', text));
+};
+
+const buildFeedbackSources = () => (props.message.sources || []).map((source) => ({
+  id: source.id || source.parentId || source.docId || '',
+  title: source.title || '',
+  category: source.category || '',
+  score: source.score ?? source.maxScore ?? null,
+}));
+
+const submitFeedback = async (rating) => {
+  if (!isRagAnswer.value || feedbackState.value === 'submitting') return;
+  if (selectedFeedback.value === rating) return;
+
+  feedbackState.value = 'submitting';
+  try {
+    const submittedAt = new Date().toISOString();
+    await submitRagFeedback({
+      rating,
+      messageId: props.message.id,
+      conversationId: chatStore.currentConversationId,
+      questionMessageId: props.questionMessage?.id || '',
+      question: questionText.value,
+      answer: messageText.value,
+      traceId: props.message.traceId || props.message.ragTrace?.traceId || '',
+      sources: buildFeedbackSources(),
+    });
+    chatStore.setMessageFeedback(props.message.id, { rating, submittedAt });
+    feedbackState.value = 'done';
+  } catch (error) {
+    console.error('[RAG Feedback] 提交失败:', error);
+    feedbackState.value = 'error';
+  }
+};
+
+const feedbackButtonClasses = (rating) => {
+  const isActive = selectedFeedback.value === rating;
+  const activeClasses = rating === 'like'
+    ? 'bg-emerald-50 text-emerald-600 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:border-emerald-700'
+    : 'bg-rose-50 text-rose-600 border-rose-200 dark:bg-rose-900/30 dark:text-rose-300 dark:border-rose-700';
+
+  return [
+    'inline-flex h-7 w-7 items-center justify-center rounded-full border transition-all duration-200 disabled:cursor-wait disabled:opacity-60',
+    isActive
+      ? activeClasses
+      : 'border-transparent text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:text-gray-500 dark:hover:bg-gray-700 dark:hover:text-gray-200',
+  ];
 };
 
 const retryMessage = (msgId) => {
@@ -170,72 +207,73 @@ const timeClasses = computed(() => {
           </div>
         </div>
 
-        <!-- Agent 时间线（思考 + 工具调用按顺序混排，放在回答上方） -->
-        <div v-if="hasAgentData && isModel" class="mb-3 space-y-1.5">
-          <template v-for="event in timeline" :key="event.id">
-            <AgentThinking v-if="event.type === 'thinking'" :step="event" :has-reply="!!messageText" :timeline="timeline" />
-            <AgentToolCall v-if="event.type === 'tool'" :tool-call="event" />
-          </template>
-        </div>
-
-        <!-- 推理总览小条：流式结束后 trace 到达自动出现 -->
-        <div v-if="isModel && traceSummary" class="flex items-center gap-1.5 mb-2.5 text-[10px] text-slate-400 dark:text-gray-500">
-          <Cpu :size="11" class="shrink-0" />
-          <span class="font-mono">{{ traceSummary }}</span>
-        </div>
-
         <!-- Message text -->
-        <MarkdownRenderer v-if="isModel && !isError" :content="messageText" />
+        <MarkdownRenderer v-if="isModel && !isError" :content="messageText" :sources="message.sources || []" @citation-click="showCitation" @copy-code="(code) => copyMessage(code)" />
         <div v-if="isUser || isError" class="whitespace-pre-wrap leading-relaxed">{{ messageText }}</div>
 
-        <!-- RAG 知识库引用来源 -->
-        <div v-if="hasSources && isModel" class="mt-3 border-t border-slate-100 dark:border-gray-700 pt-2.5">
-          <div class="flex items-center gap-1.5 mb-2">
-            <BookOpen :size="12" class="text-indigo-500 dark:text-indigo-400" />
-            <span class="text-[10px] font-bold text-slate-500 dark:text-gray-400 uppercase tracking-wider">知识库引用</span>
-            <span class="text-[10px] text-slate-400 dark:text-gray-600 font-mono">{{ message.sources.length }} 篇文档</span>
-          </div>
-          <div class="space-y-1.5">
-            <div
-              v-for="source in message.sources"
-              :key="source.id"
-              class="flex items-center gap-2 p-2 rounded-lg bg-slate-50/80 dark:bg-gray-700/40 border border-slate-100 dark:border-gray-600/50"
-            >
-              <FileText :size="13" class="text-indigo-400 dark:text-indigo-500 shrink-0" />
-              <div class="flex-1 min-w-0">
-                <div class="flex items-center gap-1.5">
-                  <span class="text-xs font-medium text-slate-700 dark:text-gray-200 truncate">{{ source.title }}</span>
-                  <span
-                    v-if="source.category"
-                    class="shrink-0 text-[10px] px-1.5 py-0.5 rounded-md font-medium"
-                    :class="getCategoryColor(source.category)"
-                  >
-                    <Tag :size="9" class="inline mr-0.5" />{{ source.category }}
-                  </span>
+        <!-- 行内引用弹窗 -->
+        <Teleport to="body">
+          <Transition name="popup">
+            <div v-if="citationPopup" class="fixed inset-0 z-50 flex items-center justify-center p-4" @click.self="closeCitation">
+              <div class="absolute inset-0 bg-black/30 backdrop-blur-sm" @click="closeCitation"></div>
+              <div class="relative bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-gray-700 max-w-lg w-full max-h-[60vh] overflow-hidden flex flex-col">
+                <!-- Header -->
+                <div class="flex items-center justify-between px-5 py-3 border-b border-slate-100 dark:border-gray-800 shrink-0">
+                  <div class="flex items-center gap-2 min-w-0">
+                    <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 text-xs font-bold shrink-0">{{ citationPopup.index }}</span>
+                    <div class="min-w-0">
+                      <span class="text-sm font-semibold text-slate-800 dark:text-white truncate block">{{ citationPopup.source.title }}</span>
+                      <span v-if="citationPopup.source.category" class="text-[10px] text-slate-500 dark:text-gray-400">{{ citationPopup.source.category }}</span>
+                    </div>
+                  </div>
+                  <button @click="closeCitation" class="shrink-0 p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-gray-800 text-slate-400 hover:text-slate-600 dark:hover:text-gray-200 transition-colors cursor-pointer">
+                    <X :size="16" />
+                  </button>
                 </div>
-                <div class="flex items-center gap-2 mt-0.5 text-[10px] text-slate-400 dark:text-gray-500">
-                  <span v-if="source.chunkCount" class="flex items-center gap-0.5">
-                    <Hash :size="9" /> {{ source.chunkCount }} 段
-                  </span>
-                  <span v-if="source.matchedChunks" class="flex items-center gap-0.5 text-indigo-500">
-                    匹配 {{ source.matchedChunks }} 段
-                  </span>
+                <!-- Content -->
+                <div class="p-5 overflow-y-auto flex-1">
+                  <MarkdownRenderer :content="citationPopup.source.snippet || '（无原文内容）'" :sources="[]" />
                 </div>
               </div>
             </div>
-          </div>
-        </div>
+          </Transition>
+        </Teleport>
 
         <!-- 流式状态指示器 -->
-        <div v-if="isStreaming && isModel && !messageText && !hasAgentData" class="flex items-center gap-1.5 mt-1">
+        <div v-if="isStreaming && isModel && !messageText" class="flex items-center gap-1.5 mt-1">
           <span class="w-1.5 h-1.5 rounded-full bg-blue-500 animate-bounce" style="animation-delay: 0s"></span>
           <span class="w-1.5 h-1.5 rounded-full bg-blue-500 animate-bounce" style="animation-delay: 0.15s"></span>
           <span class="w-1.5 h-1.5 rounded-full bg-blue-500 animate-bounce" style="animation-delay: 0.3s"></span>
+          <span class="text-xs text-slate-500 dark:text-gray-400 ml-0.5">思考中...</span>
         </div>
 
         <!-- Footer with time and actions -->
         <div :class="['flex items-center justify-end gap-2 mt-1.5', timeClasses]">
           <span class="text-sm opacity-60">{{ formatTime(message.timestamp) }}</span>
+          <div v-if="isRagAnswer" class="flex items-center gap-1 rounded-full bg-slate-50/80 dark:bg-gray-900/40 px-1 py-0.5" aria-label="RAG 回答评价">
+            <button
+              type="button"
+              :class="feedbackButtonClasses('like')"
+              :disabled="feedbackState === 'submitting'"
+              :aria-pressed="selectedFeedback === 'like'"
+              title="回答有帮助"
+              @click="submitFeedback('like')"
+            >
+              <ThumbsUp :size="14" :class="{ 'fill-current': selectedFeedback === 'like' }" />
+            </button>
+            <button
+              type="button"
+              :class="feedbackButtonClasses('dislike')"
+              :disabled="feedbackState === 'submitting'"
+              :aria-pressed="selectedFeedback === 'dislike'"
+              title="回答需改进"
+              @click="submitFeedback('dislike')"
+            >
+              <ThumbsDown :size="14" :class="{ 'fill-current': selectedFeedback === 'dislike' }" />
+            </button>
+          </div>
+          <span v-if="isRagAnswer && (selectedFeedback || feedbackState === 'done')" class="text-xs opacity-60">已反馈</span>
+          <span v-else-if="isRagAnswer && feedbackState === 'error'" class="text-xs text-red-400 dark:text-red-300">提交失败</span>
           <button
             v-if="isModel && !isError && messageText"
             class="flex items-center gap-1 hover:text-blue-500 transition-all duration-200 cursor-pointer px-1.5 py-0.5 rounded hover:bg-blue-50 dark:hover:bg-gray-700 text-sm opacity-60 hover:opacity-100"
@@ -250,3 +288,28 @@ const timeClasses = computed(() => {
     </div>
   </div>
 </template>
+
+<style scoped>
+/* 引用弹窗动画 */
+.popup-enter-active { transition: all 0.2s ease-out; }
+.popup-leave-active { transition: all 0.15s ease-in; }
+.popup-enter-from { opacity: 0; }
+.popup-enter-from > div:last-child { transform: scale(0.95) translateY(10px); }
+.popup-leave-to { opacity: 0; }
+.popup-leave-to > div:last-child { transform: scale(0.95); }
+
+/* 行内引用深色模式 */
+:deep(.citation:hover) {
+  background: #c7d2fe !important;
+  box-shadow: 0 1px 3px rgba(79, 70, 229, 0.3);
+}
+:root.dark :deep(.citation) {
+  background: #1e1b4b !important;
+  color: #a5b4fc !important;
+  border-color: #312e81 !important;
+}
+:root.dark :deep(.citation:hover) {
+  background: #312e81 !important;
+  box-shadow: 0 1px 3px rgba(99, 102, 241, 0.3);
+}
+</style>

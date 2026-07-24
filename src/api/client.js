@@ -1,6 +1,9 @@
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
 const API_URL = API_BASE.endsWith('/') ? API_BASE.slice(0, -1) : API_BASE;
 
+// 默认请求超时（毫秒），流式请求可通过 options.timeout 覆盖
+const DEFAULT_TIMEOUT = 30000;
+
 const fetchOpts = {
   method: 'GET',
   headers: {
@@ -40,14 +43,18 @@ export const handleAuthError = async () => {
     // 登出请求失败不影响本地清理
   }
   localStorage.removeItem('user');
-  window.location.href = '/login';
+  // 动态 import 避免循环依赖（client → router → auth.store → client）
+  const { default: router } = await import('../router/index.js');
+  if (router.currentRoute.value.path !== '/login') {
+    router.push({ path: '/login', query: { redirect: router.currentRoute.value.fullPath } });
+  }
 };
 
 /**
- * 构建 fetch options，合并默认凭据配置
+ * 构建 fetch options，合并默认凭据配置 + 超时控制
  */
 const buildFetchOptions = (method, extraHeaders = {}, body, options = {}) => {
-  const { headers: _ignored, ...rest } = options;
+  const { headers: _ignored, timeout, signal, ...rest } = options;
   return {
     ...fetchOpts,
     method,
@@ -56,6 +63,7 @@ const buildFetchOptions = (method, extraHeaders = {}, body, options = {}) => {
       ...extraHeaders,
     },
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    signal: signal || AbortSignal.timeout(timeout || DEFAULT_TIMEOUT),
     ...rest,
   };
 };
@@ -86,19 +94,20 @@ export const apiDelete = async (path, options = {}) => {
 
 // 无 JSON 序列化的 POST（用于流式请求等自定义场景）
 export const apiPostRaw = async (path, body, options = {}) => {
-  const { headers: _ignored, ...rest } = options;
-  const fetchOpts = {
+  const { headers: _ignored, timeout, signal, ...rest } = options;
+  const requestOptions = {
     ...fetchOpts,
     method: 'POST',
     headers: {
       ...fetchOpts.headers,
       ...(options.headers || {}),
     },
+    signal: signal || AbortSignal.timeout(timeout || DEFAULT_TIMEOUT),
     ...rest,
   };
-  if (body !== undefined) fetchOpts.body = JSON.stringify(body);
-  const response = await fetch(`${API_URL}${path}`, fetchOpts);
+  if (body !== undefined) requestOptions.body = JSON.stringify(body);
+  const response = await fetch(`${API_URL}${path}`, requestOptions);
   return handleResponse(response);
 };
 
-export { API_BASE, API_URL, fetchOpts };
+export { API_BASE, API_URL, fetchOpts, DEFAULT_TIMEOUT };

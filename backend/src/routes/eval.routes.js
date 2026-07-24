@@ -2,6 +2,7 @@ const { Router } = require('express');
 const { requireAuth } = require('../middleware/auth.middleware');
 const { RagService } = require('../services/rag.service');
 const { aiService } = require('../services/ai.service');
+const { JudgeService } = require('../services/judge.service');
 const { metrics } = require('../services/metrics.service');
 
 const router = Router();
@@ -30,7 +31,7 @@ router.get('/metrics', (req, res) => {
 
 /**
  * POST /api/eval/run
- * 真实 RAGAS 评测 — 调用实际 RAG 管道 + 基于关键词的指标计算
+ * 真实 RAG 评测 — 调用实际 RAG 管道 + LLM-as-judge（独立 Key，不抢生产配额）
  */
 router.post('/run', async (req, res) => {
   const { datasetSize = 5, enableRag = true } = req.body;
@@ -44,30 +45,64 @@ router.post('/run', async (req, res) => {
     res.write(`data: ${JSON.stringify({ type: 'log', text, timestamp: new Date().toISOString() })}\n\n`);
   };
 
-  sendLog('🎨 [Eval] 初始化真实评测管道...');
+  sendLog('🎨 [Eval] 初始化评测管道...');
 
   try {
-    // 加载内置评测数据集（或使用前端传来的数据）
     const testCases = req.body.testCases || getDefaultTestCases();
     const totalCases = Math.min(datasetSize, testCases.length);
 
     sendLog(`📦 [Eval] 加载评测数据集: ${totalCases} 条 ground-truth pairs`);
 
     const ragService = new RagService(aiService);
+    const judge = new JudgeService();
     const results = [];
 
     for (let i = 0; i < totalCases; i++) {
       const tc = testCases[i];
-      sendLog(`🔄 [Eval Task #${i + 1}/${totalCases}] 问题: ${tc.question.substring(0, 30)}...`);
+      sendLog(`🔄 [Eval #${i + 1}/${totalCases}] 问题: ${tc.question.substring(0, 30)}...`);
 
       try {
-        const evalResults = await metrics.runRealEvaluation([tc], enableRag);
-        results.push(evalResults[0]);
+        // 1. 走 RAG 管道检索并生成回答
+        const start = Date.now();
+        const ragResult = await ragService.chat(tc.question, [], { enableRag });
+        const latency = Date.now() - start;
 
-        const m = evalResults[0].metrics;
-        sendLog(`✔️ [Eval #${i + 1}] faithfulness=${(m.faithfulness * 100).toFixed(0)}% ` +
-                `relevancy=${(m.answer_relevancy * 100).toFixed(0)}% ` +
-                `recall=${(m.context_recall * 100).toFixed(0)}% (${evalResults[0].latency}ms)`);
+        const answer = ragResult.reply || ragResult.answer || '';
+        const context = (ragResult.sources || []).map(s => s.snippet || s.content || s.text || '').join('\n');
+
+        // 2. LLM-as-judge 评测（独立 Key，不抢生产配额）
+        const judgeResult = await judge.evaluate({
+          question: tc.question,
+          answer,
+          context,
+          ground_truth: tc.ground_truth,
+        });
+
+        const metrics = {
+          faithfulness: judgeResult.faithfulness ?? 0,
+          answer_relevancy: judgeResult.answer_relevancy ?? 0,
+          context_precision: judgeResult.context_precision ?? 0,
+          context_recall: judgeResult.context_recall ?? 0,
+          overall: (judgeResult.faithfulness + judgeResult.answer_relevancy + judgeResult.context_precision + judgeResult.context_recall) / 4,
+        };
+
+        results.push({
+          id: tc.id,
+          question: tc.question,
+          answer,
+          ground_truth: tc.ground_truth,
+          context,
+          metrics,
+          judgeModel: judgeResult.model,
+          judgeLatency: judgeResult.latency,
+          latency,
+          reason: judgeResult.reason || '',
+        });
+
+        sendLog(`✔️ [Eval #${i + 1}] faithful=${(metrics.faithfulness * 100).toFixed(0)}% ` +
+                `relevancy=${(metrics.answer_relevancy * 100).toFixed(0)}% ` +
+                `recall=${(metrics.context_recall * 100).toFixed(0)}% ` +
+                `(${latency}ms, judge=${judgeResult.model})`);
       } catch (err) {
         sendLog(`❌ [Eval #${i + 1}] 失败: ${err.message}`);
         results.push({
@@ -77,7 +112,7 @@ router.post('/run', async (req, res) => {
           ground_truth: tc.ground_truth,
           metrics: { faithfulness: 0, answer_relevancy: 0, context_precision: 0, context_recall: 0, overall: 0 },
           latency: 0,
-          error: err.message
+          error: err.message,
         });
       }
     }
@@ -92,7 +127,7 @@ router.post('/run', async (req, res) => {
       ? Math.round(results.reduce((s, r) => s + r.latency, 0) / results.length)
       : 0;
 
-    sendLog(`📊 [Eval] 计算汇总: ${results.length} 条, 平均延迟 ${avgLatency}ms`);
+    sendLog(`📊 [Eval] 汇总: ${results.length} 条, 平均延迟 ${avgLatency}ms, 综合得分 ${(overallScore * 100).toFixed(0)}%`);
 
     const avgMetrics = validMetrics.length > 0 ? {
       faithfulness: validMetrics.reduce((s, r) => s + r.metrics.faithfulness, 0) / validMetrics.length,
@@ -106,7 +141,7 @@ router.post('/run', async (req, res) => {
       overallScore,
       avgLatency,
       metrics: avgMetrics,
-      results
+      results,
     })}\n\n`);
 
     res.end();

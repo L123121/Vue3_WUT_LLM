@@ -27,23 +27,29 @@ class RedisStore {
 
   pipeline() {
     const pipe = this._redis.pipeline();
+    const commands = [];
+    const track = (command, enqueue) => {
+      commands.push(command);
+      return enqueue();
+    };
+
     return {
-      sadd: (k, v) => pipe.sadd(k, v),
-      srem: (k, v) => pipe.srem(k, v),
-      smembers: (k) => pipe.smembers(k),
-      scard: (k) => pipe.scard(k),
-      hset: (k, ...args) => pipe.hset(k, ...args),
-      hdel: (k, f) => pipe.hdel(k, f),
-      hgetall: (k) => pipe.hgetall(k),
-      hget: (k, f) => pipe.hget(k, f),
-      rpush: (k, v) => pipe.rpush(k, v),
-      lrange: (k, start, end) => pipe.lrange(k, start, end),
-      llen: (k) => pipe.llen(k),
-      ltrim: (k, start, end) => pipe.ltrim(k, start, end),
-      del: (k) => pipe.del(k),
-      expire: (k, ttl) => pipe.expire(k, ttl),
+      sadd: (k, v) => track('sadd', () => pipe.sadd(k, v)),
+      srem: (k, v) => track('srem', () => pipe.srem(k, v)),
+      smembers: (k) => track('smembers', () => pipe.smembers(k)),
+      scard: (k) => track('scard', () => pipe.scard(k)),
+      hset: (k, ...args) => track('hset', () => pipe.hset(k, ...args)),
+      hdel: (k, f) => track('hdel', () => pipe.hdel(k, f)),
+      hgetall: (k) => track('hgetall', () => pipe.hgetall(k)),
+      hget: (k, f) => track('hget', () => pipe.hget(k, f)),
+      rpush: (k, v) => track('rpush', () => pipe.rpush(k, v)),
+      lrange: (k, start, end) => track('lrange', () => pipe.lrange(k, start, end)),
+      llen: (k) => track('llen', () => pipe.llen(k)),
+      ltrim: (k, start, end) => track('ltrim', () => pipe.ltrim(k, start, end)),
+      del: (k) => track('del', () => pipe.del(k)),
+      expire: (k, ttl) => track('expire', () => pipe.expire(k, ttl)),
       exec: () => pipe.exec().then(results =>
-        results.map(([err, val]) => [err, val])
+        results.map(([err, val], index) => [err, err ? val : this._deserializePipelineValue(commands[index], val)])
       ),
     };
   }
@@ -92,19 +98,32 @@ class RedisStore {
 
   async hgetall(key) {
     const result = await this._redis.hgetall(key);
-    if (!result || Object.keys(result).length === 0) return null;
-    // 反序列化所有值
-    const decoded = {};
-    for (const [k, v] of Object.entries(result)) {
-      try { decoded[k] = JSON.parse(v); } catch { decoded[k] = v; }
-    }
-    return decoded;
+    return this._deserializeHash(result);
   }
 
   async hget(key, field) {
     const val = await this._redis.hget(key, field);
-    if (val === null || val === undefined) return null;
-    try { return JSON.parse(val); } catch { return val; }
+    return this._deserializeValue(val);
+  }
+
+  _deserializePipelineValue(command, value) {
+    if (command === 'hgetall') return this._deserializeHash(value);
+    if (command === 'hget') return this._deserializeValue(value);
+    return value;
+  }
+
+  _deserializeHash(result) {
+    if (!result || Object.keys(result).length === 0) return null;
+    const decoded = {};
+    for (const [key, value] of Object.entries(result)) {
+      decoded[key] = this._deserializeValue(value);
+    }
+    return decoded;
+  }
+
+  _deserializeValue(value) {
+    if (value === null || value === undefined) return null;
+    try { return JSON.parse(value); } catch { return value; }
   }
 
   async hdel(key, field) {
@@ -153,3 +172,4 @@ class RedisStore {
 }
 
 module.exports = { RedisStore };
+
