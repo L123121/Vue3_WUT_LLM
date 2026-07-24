@@ -6,6 +6,7 @@ import {
   fetchConversation,
   renameConversation as apiRenameConversation,
   deleteConversation as apiDeleteConversation,
+  saveConversationMessages as apiSaveMessages,
 } from '../api/conversations.js';
 import { useAuthStore } from './auth.store.js';
 import {
@@ -29,6 +30,51 @@ const CURRENT_CONVERSATION_KEY = 'chat_current_conversation_id';
 // 增量保存：300ms 防抖，只写发生变更的会话
 
 let saveTimer = null;
+let backendSyncTimer = null;
+let loadingPromise = null; // loadConversations 并发保护：缓存 in-flight promise
+
+// ==================== 后端消息同步 ====================
+// 在每次 localStorage 保存时，连带将消息推送到后端 API，
+// 实现多端同步 + 安全存储（敏感内容不在 localStorage 停留）。
+//
+// 设计原则：
+// - 非阻塞：后端同步失败不影响本地使用（localStorage 兜底）
+// - 防抖：500ms 合并连续写入，避免流式每帧都发请求
+// - 静默失败：catch 不弹 toast，仅 console.warn 留痕
+// - 仅同步会话消息，不覆盖 title（title 由 renameConversation 单独管理）
+const _triggerBackendSync = async () => {
+  // 从模块变量读取最新 store 状态（兼容定时器/外部调用场景）
+  const store = latestStoreRef.value;
+  if (!store) return;
+  const convId = store.currentConversationId;
+  // 本地会话不推后端
+  if (!convId || convId.startsWith('local_') || convId === 'local') return;
+
+  // 检查认证状态（直接调用 light 版本避免创建 auth store 实例竞争）
+  try {
+    const authStore = useAuthStore();
+    if (!authStore.isAuthenticated) return;
+  } catch {
+    return; // 未初始化
+  }
+
+  const conv = store.conversations.find((c) => c.id === convId);
+  if (!conv || !conv.messages || conv.messages.length === 0) return;
+
+  try {
+    await apiSaveMessages(convId, conv.messages);
+  } catch (e) {
+    console.warn('[BackendSync] 消息同步失败，下次再试:', e.message);
+  }
+};
+
+const _scheduleBackendSync = (delay = 500) => {
+  if (backendSyncTimer) clearTimeout(backendSyncTimer);
+  backendSyncTimer = setTimeout(() => {
+    _triggerBackendSync();
+    backendSyncTimer = null;
+  }, delay);
+};
 
 const scheduleSave = (conversations, currentId, dirtyConvId) => {
   if (saveTimer) clearTimeout(saveTimer);
@@ -41,6 +87,14 @@ const scheduleSave = (conversations, currentId, dirtyConvId) => {
 const flushSave = (conversations, currentId) => {
   if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
   saveCache(conversations, currentId);
+};
+
+const ensureLocalFallback = (conversationsRef, currentConversationIdRef) => {
+  const localConv = createLocalConversation('新会话');
+  conversationsRef.value = [localConv];
+  currentConversationIdRef.value = localConv.id;
+  localStorage.setItem(CURRENT_CONVERSATION_KEY, localConv.id);
+  flushSave(conversationsRef.value, currentConversationIdRef.value);
 };
 
 // 模块级单例：beforeunload 监听 + 自动保存定时器
@@ -62,6 +116,7 @@ const beforeUnloadHandler = () => {
 // 供测试 / 应用卸载调用：清理模块级定时器与监听
 export const disposeConversationStore = () => {
   if (autoSaveTimer) { clearInterval(autoSaveTimer); autoSaveTimer = null; }
+  if (backendSyncTimer) { clearTimeout(backendSyncTimer); backendSyncTimer = null; }
   if (beforeUnloadRegistered && typeof window !== 'undefined') {
     window.removeEventListener('beforeunload', beforeUnloadHandler);
     beforeUnloadRegistered = false;
@@ -97,6 +152,10 @@ export const useConversationStore = defineStore('conversation', () => {
   };
 
   const loadConversations = async () => {
+    // 并发保护：如果已有正在加载的请求，复用同一个 promise
+    if (loadingPromise) return loadingPromise;
+
+    loadingPromise = (async () => {
     if (!isBackendAvailable()) {
       if (conversations.value.length === 0) {
         ensureLocalFallback(conversations, currentConversationId);
@@ -148,6 +207,16 @@ export const useConversationStore = defineStore('conversation', () => {
       isLoaded.value = true;
       // 首次加载成功后清理旧版备份
       cleanupLegacyKeys();
+
+      // 如果当前会话是后端会话且消息为空，自动从后端拉取
+      const currentId = currentConversationId.value;
+      if (currentId && !isLocalSession(currentId) && data?.length > 0) {
+        const currentConv = conversations.value.find((c) => c.id === currentId);
+        const hasRealMessages = (currentConv?.messages || []).some((m) => m.id !== 'welcome' && getMessageText(m));
+        if (!hasRealMessages) {
+          loadConversationMessages(currentId);
+        }
+      }
     } catch (error) {
       console.error('Failed to load conversations:', error);
       if (conversations.value.length === 0) {
@@ -155,6 +224,9 @@ export const useConversationStore = defineStore('conversation', () => {
       }
       isLoaded.value = true;
     }
+  })();
+  loadingPromise.finally(() => { loadingPromise = null; });
+  return loadingPromise;
   };
 
   // 从统一缓存恢复消息（兼容旧版备份迁移）
@@ -321,14 +393,17 @@ export const useConversationStore = defineStore('conversation', () => {
 
   const flushSaveCache = () => {
     flushSave(conversations.value, currentConversationId.value);
+    _triggerBackendSync(); // 同步到后端
   };
 
   const scheduleSaveCache = (immediate = false) => {
     const conv = currentConversation.value;
     if (immediate) {
       flushSave(conversations.value, currentConversationId.value);
+      _triggerBackendSync(); // 立即同步到后端（fire-and-forget）
     } else {
       scheduleSave(conversations.value, currentConversationId.value, conv?.id);
+      _scheduleBackendSync(500); // 防抖同步到后端
     }
   };
 

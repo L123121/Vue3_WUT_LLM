@@ -3,16 +3,16 @@
  */
 const express = require('express');
 const path = require('path');
+const fs = require('fs');
 const config = require('../config');
 
 function applyRoutes(app, chatLimiter) {
-  const { router: apiRoutes, memoryService } = require('./index');
-  const { chatHandler, streamHandler, setMemoryService } = require('../controllers/chat.controller');
-  const { chatUpload, parseFile, cleanupFile } = require('../services/file-upload.service');
-  const { COOKIE_NAME } = require('../middleware/auth.middleware');
-
-  // 启动时显式注入 memoryService，避免 controller 反向 require routes 造成循环依赖
-  setMemoryService(memoryService);
+  const { router: apiRoutes } = require('./index');
+  const { chatHandler, streamHandler } = require('../controllers/chat.controller');
+  const { chatUpload, parseFile } = require('../services/file-upload.service');
+  const { requireAuth } = require('../middleware/auth.middleware');
+  const { router: authRoutes } = require('./auth.routes');
+  const { router: metricsRoutes } = require('./metrics.routes');
 
   const isProduction = process.env.NODE_ENV === 'production';
 
@@ -26,10 +26,10 @@ function applyRoutes(app, chatLimiter) {
       ai_service: {
         enabled: hasApiConfig,
         provider: 'StepFun (阶跃星辰)',
-        model: config.ai.model || 'Qwen3.6-35B-A3B',
+        model: config.ai.model || 'step-3.7-flash',
         status: hasApiConfig ? '配置正常' : '模拟模式',
       },
-      storage: 'memory',
+      storage: 'sqlite',
     });
   });
 
@@ -41,20 +41,24 @@ function applyRoutes(app, chatLimiter) {
       endpoints: [
         { method: 'GET', path: '/api/health', description: '健康检查' },
         { method: 'GET', path: '/api', description: 'API列表' },
-        { method: 'GET', path: '/api/usage', description: '已弃用' },
         { method: 'POST', path: '/api', description: '聊天接口（非流式）' },
         { method: 'POST', path: '/api/stream', description: '流式聊天接口' },
+        { method: 'POST', path: '/api/auth/login', description: '登录' },
+        { method: 'POST', path: '/api/auth/register', description: '注册' },
+        { method: 'GET', path: '/api/auth/me', description: '当前用户' },
       ],
     });
-  });
-
-  app.get('/api/usage', (req, res) => {
-    res.json({ success: true, data: { summary: { totalTokens: 0, estimatedCost: 0 } } });
   });
 
   // 聊天接口
   app.post('/api', chatLimiter, chatHandler);
   app.post('/api/chat', chatLimiter, chatHandler);
+
+  // 认证路由
+  app.use('/api/auth', authRoutes);
+
+  // 指标路由
+  app.use('/api/metrics', metricsRoutes);
 
   // 子路由（RAG、学校、评测、工具、记忆）
   app.use('/api', apiRoutes);
@@ -62,14 +66,8 @@ function applyRoutes(app, chatLimiter) {
   // SSE 流式聊天
   app.post('/api/stream', chatLimiter, streamHandler);
 
-  // 登出接口 — 清除 httpOnly cookie
-  app.post('/api/auth/logout', (req, res) => {
-    res.clearCookie(COOKIE_NAME, { httpOnly: true, sameSite: 'lax', path: '/', maxAge: 0 });
-    res.json({ success: true, message: '已退出登录' });
-  });
-
   // 聊天文件上传
-  app.post('/api/chat/upload', chatUpload.single('file'), async (req, res) => {
+  app.post('/api/chat/upload', requireAuth, chatUpload.single('file'), async (req, res) => {
     if (!req.file) {
       return res.status(400).json({ success: false, error: '请上传文件' });
     }
@@ -109,17 +107,34 @@ function applyRoutes(app, chatLimiter) {
     }
   });
 
-  // 上传目录对外可访问
-  app.use('/uploads', express.static(path.join(__dirname, '../../uploads')));
+  // 上传目录静态资源
+  const uploadStaticDir = path.join(__dirname, '../../uploads');
+  const inlineImageExtensions = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp']);
+  app.use('/uploads', express.static(uploadStaticDir, {
+    setHeaders: (res, filePath) => {
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      if (!inlineImageExtensions.has(path.extname(filePath).toLowerCase())) {
+        res.setHeader('Content-Disposition', 'attachment');
+      }
+    },
+  }));
 
   // 生产环境托管前端
   if (isProduction) {
     const frontendDist = path.join(__dirname, '../../dist');
     app.use(express.static(frontendDist));
+
+    const prerenderedLogin = path.join(frontendDist, 'login', 'index.html');
+    const hasPrerenderedLogin = fs.existsSync(prerenderedLogin);
+
     app.get('*', (req, res) => {
-      if (!req.path.startsWith('/api') && !req.path.startsWith('/uploads')) {
-        res.sendFile(path.join(frontendDist, 'index.html'));
+      if (req.path.startsWith('/api') || req.path.startsWith('/uploads')) return;
+
+      if (hasPrerenderedLogin && req.path === '/login') {
+        return res.sendFile(prerenderedLogin);
       }
+
+      res.sendFile(path.join(frontendDist, 'index.html'));
     });
   }
 }
@@ -131,8 +146,8 @@ function fixFilenameEncoding(name) {
   if (!name) return name;
   try {
     const reencoded = Buffer.from(name, 'latin1').toString('utf8');
-    const origChinese = (name.match(/[ÿ-￿]/g) || []).length;
-    const fixedChinese = (reencoded.match(/[一-鿿]/g) || []).length;
+    const origChinese = (name.match(/[\u00c0-\u00ff]/g) || []).length;
+    const fixedChinese = (reencoded.match(/[\u4e00-\u9fff]/g) || []).length;
     if (fixedChinese > origChinese) {
       return reencoded;
     }

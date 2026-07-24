@@ -1,0 +1,66 @@
+[
+  {
+    "id": "ds001",
+    "question": "《离散结构 · 6个PDF全部题目汇总》这个文件主要整理了什么内容？",
+    "ground_truth": "本文件按文件来源（6份PDF）逐题整理，不含解析，是纯题目清单；配套解析见《离散结构复习总结.md》。",
+    "category": "离散结构",
+    "difficulty": "easy",
+    "relevant_doc_ids": []
+  },
+  {
+    "id": "ds002",
+    "question": "《命题逻辑例题.pdf》中的例6是什么围棋比赛推理题？请列出题干中的四个判断。",
+    "ground_truth": "例6是甲、乙、丙、丁四个人有且仅有两人参加围棋优胜比赛的推理题。四个判断是：甲和乙只有一人参加；丙参加，丁必参加；乙或丁至多参加一人；丁不参加，甲也不参加。题目要求推出哪两人参加了围棋优胜比赛。",
+    "category": "离散结构",
+    "difficulty": "medium",
+    "relevant_doc_ids": []
+  },
+  {
+    "id": "ds003",
+    "question": "《谓词逻辑例题.pdf》例4*要求求哪个公式的前束范式？",
+    "ground_truth": "《谓词逻辑例题.pdf》例4*要求求公式 ∀x(∀y∃zP(x,y,z)→∃z∀u(Q(x,z)∨R(x,u,z))) 的前束范式。",
+    "category": "离散结构",
+    "difficulty": "medium",
+    "relevant_doc_ids": []
+  },
+  {
+    "id": "ds004",
+    "question": "《集合与关系例题.pdf》例8要求对哪些偏序集画哈斯图，并找哪些特殊元素？",
+    "ground_truth": "例8要求分别画出偏序集 <A,≼> 的哈斯图，并找出 A 的极大元、极小元、最大元和最小元。两个偏序集是：A={a,b,c,d,e}，≼={<a,d>,<a,c>,<a,b>,<a,e>,<b,e>,<c,e>,<d,e>}∪IA；以及 A={a,b,c,d,e}，≼={<c,d>}∪IA。",
+    "category": "离散结构",
+    "difficulty": "hard",
+    "relevant_doc_ids": []
+  },
+  {
+    "id": "ds005",
+    "question": "《代数系统例题.pdf》例3关于字母表 Σ 和串提出了哪两个证明任务？",
+    "ground_truth": "例3设 Σ 是字母表，Σ* 表示 Σ 上所有串的集合，并在 Σ* 上定义连接运算 *。两个证明任务是：证明 <Σ*,*> 是独异点；令 Σ+=Σ*−{ε}，即 Σ 上所有非空串的集合，证明 <Σ+,*> 是半群。",
+    "category": "离散结构",
+    "difficulty": "medium",
+    "relevant_doc_ids": []
+  },
+  {
+    "id": "ds006",
+    "question": "《离散总复习-1.pdf》第三部分图论例题中，七个人语言安排座位题给出了哪些事实？",
+    "ground_truth": "图论例题中的七个人语言事实是：a会讲英语；b会讲英语和汉语；c会讲英语、意大利语和俄语；d会讲日语和汉语；e会讲德语和意大利语；f会讲法语、日语、俄语；g会讲法语和德语。题目要求判断能否安排座位，使每个人都能和两边的人直接交谈，并给出安排或理由。",
+    "category": "离散结构",
+    "difficulty": "hard",
+    "relevant_doc_ids": []
+  },
+  {
+    "id": "ds007",
+    "question": "《离散总复习-1.pdf》第四部分代数结构的习题8.36要求证明什么？",
+    "ground_truth": "习题8.36设 <G,*> 为一群，要求证明：若对任意 a∈G 有 a²=e，则 G 为阿贝尔群；若对任意 a,b∈G 有 (a*b)²=a²*b²，则 G 为阿贝尔群。",
+    "category": "离散结构",
+    "difficulty": "medium",
+    "relevant_doc_ids": []
+  },
+  {
+    "id": "ds008",
+    "question": "这个离散结构题目汇总的总题量统计是多少？",
+    "ground_truth": "总题量统计为：命题逻辑例题.pdf 6题，谓词逻辑例题.pdf 5题，集合与关系例题.pdf 8题，函数例题.pdf 4题，代数系统例题.pdf 8题，离散总复习-1.pdf 8个例题和14个习题，合计53道，含子题拆分后约70+小题。",
+    "category": "离散结构",
+    "difficulty": "easy",
+    "relevant_doc_ids": []
+  }
+]

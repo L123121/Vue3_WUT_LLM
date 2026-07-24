@@ -75,3 +75,26 @@ export const getStats = async () => {
   const response = await apiGet('/rag/stats');
   return response.json();
 };
+
+/**
+ * 提交 RAG 回答用户评价
+ */
+export const submitRagFeedback = async (feedback) => {
+  const response = await apiPost('/rag/feedback', feedback);
+  return response.json();
+};
+
+/**
+ * 管理员获取 RAG 反馈列表
+ */
+export const getRagFeedback = async (params = {}) => {
+  const query = new URLSearchParams();
+  if (params.rating) query.append('rating', params.rating);
+  if (params.q) query.append('q', params.q);
+  if (params.page) query.append('page', params.page);
+  if (params.limit) query.append('limit', params.limit);
+
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  const response = await apiGet(`/rag/feedback${suffix}`);
+  return response.json();
+};

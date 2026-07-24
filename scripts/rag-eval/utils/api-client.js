@@ -10,27 +10,100 @@ import { fileURLToPath } from 'url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(__dirname, '../../../backend/.env') });
 config({ path: resolve(__dirname, '../../../.env') });
+config({ path: resolve(__dirname, '../.env') });
 
 const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:3000';
 const AI_BASE_URL = process.env.AI_BASE_URL || 'https://maas-api.cn-huabei-1.xf-yun.com/v2';
 const AI_API_KEY = process.env.AI_API_KEY || '';
 const AI_MODEL = process.env.AI_MODEL || 'xopqwen36v35b';
 
+let cachedCookie = null;
+
+function getCredential(name, fallbackName = '') {
+  return process.env[name] || (fallbackName ? process.env[fallbackName] : '') || '';
+}
+
+function extractCookieHeader(response) {
+  const setCookies = typeof response.headers.getSetCookie === 'function'
+    ? response.headers.getSetCookie()
+    : [response.headers.get('set-cookie')].filter(Boolean);
+
+  return setCookies
+    .map(cookie => cookie.split(';')[0])
+    .filter(Boolean)
+    .join('; ');
+}
+
+export async function loginForCookie() {
+  const explicitCookie = getCredential('RAG_EVAL_COOKIE', 'EVAL_COOKIE');
+  if (explicitCookie) {
+    cachedCookie = explicitCookie;
+    return cachedCookie;
+  }
+
+  if (cachedCookie) return cachedCookie;
+
+  const studentId = getCredential('RAG_EVAL_STUDENT_ID', 'SCHOOL_STUDENT_ID');
+  const password = getCredential('RAG_EVAL_PASSWORD', 'SCHOOL_PASSWORD');
+
+  if (!studentId || !password) return '';
+
+  const response = await fetch(`${BACKEND_URL}/api/school/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ studentId, password }),
+  });
+
+  const bodyText = await response.text();
+  if (!response.ok) {
+    throw new Error(`登录失败: ${response.status} ${bodyText.substring(0, 200)}`);
+  }
+
+  const cookie = extractCookieHeader(response);
+  if (!cookie) {
+    throw new Error('登录成功但响应中没有 Set-Cookie，请检查后端 auth_token 设置');
+  }
+
+  cachedCookie = cookie;
+  return cachedCookie;
+}
+
+export async function getAuthHeaders(extraHeaders = {}) {
+  const cookie = await loginForCookie();
+  return {
+    ...extraHeaders,
+    ...(cookie ? { Cookie: cookie } : {}),
+  };
+}
+
+async function fetchWithAuth(url, options = {}) {
+  const headers = await getAuthHeaders(options.headers || {});
+  const response = await fetch(url, { ...options, headers });
+
+  if (response.status === 401 && !cachedCookie) {
+    throw new Error('接口需要登录：请设置 RAG_EVAL_COOKIE，或设置 RAG_EVAL_STUDENT_ID/RAG_EVAL_PASSWORD 后重试');
+  }
+
+  return response;
+}
+
 /**
  * 调用 RAG 流式接口，返回完整回答和来源
  * @param {string} question - 用户问题
  * @param {Array} history - 对话历史
- * @returns {Promise<{answer: string, sources: Array}>}
+ * @param {Object} options - RAG 选项，例如 category
+ * @returns {Promise<{answer: string, sources: Array, retrieval: Object}>}
  */
-export async function ragQuery(question, history = []) {
-  const response = await fetch(`${BACKEND_URL}/api/rag/chat/stream`, {
+export async function ragQuery(question, history = [], options = {}) {
+  const response = await fetchWithAuth(`${BACKEND_URL}/api/rag/chat/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message: question, history })
+    body: JSON.stringify({ message: question, history, category: options.category })
   });
 
   if (!response.ok) {
-    throw new Error(`RAG API 请求失败: ${response.status} ${response.statusText}`);
+    const errorText = await response.text();
+    throw new Error(`RAG API 请求失败: ${response.status} ${response.statusText} ${errorText.substring(0, 200)}`);
   }
 
   const text = await response.text();
@@ -38,6 +111,7 @@ export async function ragQuery(question, history = []) {
 
   let answer = '';
   let sources = [];
+  let retrieval = null;
 
   for (const line of lines) {
     const data = line.slice(6).trim();
@@ -46,24 +120,106 @@ export async function ragQuery(question, history = []) {
     try {
       const parsed = JSON.parse(data);
       if (parsed.sources) sources = parsed.sources;
+      if (parsed.retrieval) retrieval = parsed.retrieval;
       if (parsed.content) answer += parsed.content;
       if (parsed.error) throw new Error(`RAG 返回错误: ${parsed.error}`);
     } catch (e) {
       if (e.message.includes('RAG 返回错误')) throw e;
-      // 跳过解析错误
     }
   }
 
-  return { answer, sources };
+  return { answer, sources, retrieval };
 }
 
+/**
+ * 调用 RAG 非流式接口，返回完整回答、来源和真实增强上下文
+ * @param {string} question - 用户问题
+ * @param {Array} history - 对话历史
+ * @param {Object} options - RAG 选项，例如 category
+ * @returns {Promise<{answer: string, sources: Array, context: string, retrieval: Object, model: string, raw: Object}>}
+ */
+export async function ragChat(question, history = [], options = {}) {
+  const response = await fetchWithAuth(`${BACKEND_URL}/api/rag/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message: question, history, category: options.category })
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`RAG API 请求失败: ${response.status} ${response.statusText} ${errorText.substring(0, 200)}`);
+  }
+
+  const result = await response.json();
+  const data = result.data || result;
+
+  return {
+    answer: data.reply || data.answer || '',
+    sources: data.sources || [],
+    context: data.context || '',
+    retrieval: data.retrieval || data._metrics?.retrieval || null,
+    model: data.model || '',
+    raw: data,
+  };
+}
+
+/**
+ * 调用父段候选检索接口，用于离线人工标注与 MRR 评估
+ * @param {string} question - 用户问题
+ * @param {Object} options - { category, childTopK, parentTopK, includeChildren }
+ * @returns {Promise<Object>}
+ */
+export async function retrieveParentCandidates(question, options = {}) {
+  const response = await fetchWithAuth(`${BACKEND_URL}/api/rag/retrieval/parents`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      message: question,
+      category: options.category,
+      childTopK: options.childTopK ?? 25,
+      parentTopK: options.parentTopK ?? 0,
+      includeChildren: options.includeChildren ?? true,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`父段候选检索失败: ${response.status} ${response.statusText} ${errorText.substring(0, 200)}`);
+  }
+
+  const result = await response.json();
+  return result.data || result;
+}
+/**
+ * 添加纯文本/Markdown 文档到知识库
+ * @param {{title: string, content: string, category?: string, metadata?: Object}} document
+ * @returns {Promise<Object>}
+ */
+export async function addDocument(document) {
+  const response = await fetchWithAuth(`${BACKEND_URL}/api/rag/documents`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(document),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`添加文档失败: ${response.status} ${response.statusText} ${errorText.substring(0, 200)}`);
+  }
+
+  const result = await response.json();
+  return result.data || result;
+}
 /**
  * 获取知识库文档列表
  * @returns {Promise<Array>}
  */
 export async function listDocuments() {
-  const response = await fetch(`${BACKEND_URL}/api/rag/documents`);
-  if (!response.ok) throw new Error(`获取文档列表失败: ${response.status}`);
+  const response = await fetchWithAuth(`${BACKEND_URL}/api/rag/documents`);
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`获取文档列表失败: ${response.status} ${errorText.substring(0, 200)}`);
+  }
   const result = await response.json();
   return result.data?.documents || [];
 }
@@ -74,8 +230,11 @@ export async function listDocuments() {
  * @returns {Promise<Object>}
  */
 export async function getDocument(docId) {
-  const response = await fetch(`${BACKEND_URL}/api/rag/documents/${docId}`);
-  if (!response.ok) throw new Error(`获取文档详情失败: ${response.status}`);
+  const response = await fetchWithAuth(`${BACKEND_URL}/api/rag/documents/${docId}`);
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`获取文档详情失败: ${response.status} ${errorText.substring(0, 200)}`);
+  }
   const result = await response.json();
   return result.data;
 }

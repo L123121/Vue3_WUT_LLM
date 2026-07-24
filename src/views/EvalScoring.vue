@@ -37,6 +37,10 @@ function getScoreBg(score) {
   return 'bg-red-50 dark:bg-red-900/20';
 }
 
+function updateComment(id, value) {
+  comments.value[id] = value;
+}
+
 // RAGAS 指标均值
 function getMetricAvg(metric) {
   if (!evalData.value?.results) return 0;
@@ -65,7 +69,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="min-h-screen bg-gray-50 dark:bg-gray-900 p-6">
+  <div class="min-h-screen bg-gray-50 dark:bg-gray-900 p-4 md:p-6">
     <!-- 标题栏 -->
     <div class="max-w-5xl mx-auto mb-6">
       <div class="flex items-center justify-between">
@@ -73,7 +77,7 @@ onUnmounted(() => {
           <BarChart3 :size="28" />
           RAG 人工评测
         </h1>
-        <div class="flex gap-2">
+        <div class="flex flex-wrap gap-1.5">
           <label
             class="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg cursor-pointer hover:bg-blue-700 transition">
             <Upload :size="16" />
@@ -128,7 +132,7 @@ onUnmounted(() => {
 
     <!-- 统计面板 -->
     <div v-if="showStats && stats" class="max-w-5xl mx-auto mb-6 p-4 bg-white dark:bg-gray-800 rounded-xl shadow">
-      <div class="grid grid-cols-5 gap-4 text-center">
+      <div class="grid grid-cols-2 sm:grid-cols-5 gap-2 sm:gap-4 text-center">
         <div>
           <div class="text-2xl font-bold text-blue-600">{{ stats.total }}</div>
           <div class="text-sm text-gray-500">总样本</div>
@@ -179,6 +183,7 @@ onUnmounted(() => {
       @set-score="setScore"
       @prev="prevItem"
       @next="nextItem"
+      @update-comment="updateComment"
     />
   </div>
 </template>

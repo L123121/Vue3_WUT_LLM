@@ -18,6 +18,20 @@ export function useMessageActions() {
     }
   };
 
+  const setMessageFeedback = (id, feedback) => {
+    const convStore = useConversationStore();
+    const conv = convStore.currentConversation;
+    if (!conv || id === 'welcome') return;
+    const index = conv.messages?.findIndex((m) => m.id === id);
+    if (index > -1) {
+      conv.messages[index] = {
+        ...conv.messages[index],
+        feedback,
+      };
+      convStore.scheduleSaveCache(true);
+    }
+  };
+
   const clearMessages = async () => {
     const convStore = useConversationStore();
     const conv = convStore.currentConversation;
@@ -49,6 +63,7 @@ export function useMessageActions() {
 
   return {
     deleteMessage,
+    setMessageFeedback,
     clearMessages,
     getConversationHistory,
   };

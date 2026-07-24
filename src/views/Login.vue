@@ -1,167 +1,353 @@
 <template>
-  <div class="min-h-screen relative flex items-center justify-center p-4 overflow-hidden bg-slate-50 dark:bg-gray-950">
-    <div class="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none">
-      <div class="absolute -top-[30%] -left-[10%] w-[70%] h-[70%] rounded-full bg-blue-800/20 blur-[120px] dark:bg-blue-900/20 animate-pulse"></div>
-      <div class="absolute top-[40%] -right-[10%] w-[60%] h-[60%] rounded-full bg-cyan-600/20 blur-[100px] dark:bg-cyan-900/20 animate-pulse delay-700"></div>
-    </div>
+  <div class="login-shell relative min-h-screen overflow-hidden bg-slate-950 text-slate-900 dark:text-white">
+    <div class="campus-grid absolute inset-0 opacity-70"></div>
+    <div class="absolute -left-24 top-10 h-80 w-80 rounded-full bg-blue-500/30 blur-3xl"></div>
+    <div class="absolute bottom-0 right-0 h-[30rem] w-[30rem] rounded-full bg-cyan-300/20 blur-3xl"></div>
+    <div class="absolute left-1/2 top-1/2 h-96 w-96 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/10"></div>
 
-    <div class="w-full max-w-md relative z-10">
-      <div class="bg-white/70 dark:bg-gray-900/60 backdrop-blur-xl rounded-3xl shadow-2xl dark:shadow-black/50 border border-white/50 dark:border-gray-700 overflow-hidden">
-        <div class="pt-12 pb-8 px-10 text-center">
-          <div class="flex justify-center mb-8">
-            <div class="w-44 h-44 rounded-full overflow-hidden flex items-center justify-center transform hover:scale-105 transition-all duration-500 rotate-3 hover:rotate-0 shadow-[0_0_50px_rgba(37,99,235,0.2)]">
-              <img src="/src/assets/wuhan-university-logo.png" alt="WUT Logo" class="w-full h-full object-cover scale-125 drop-shadow-2xl" />
+    <button
+      type="button"
+      class="absolute right-5 top-5 z-20 inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-white/15 bg-white/10 text-white shadow-lg shadow-black/10 backdrop-blur transition hover:-translate-y-0.5 hover:bg-white/15 focus:outline-none focus:ring-2 focus:ring-cyan-200/60"
+      :aria-label="themeStore.darkMode ? '切换到浅色模式' : '切换到深色模式'"
+      @click="themeStore.toggleDarkMode"
+    >
+      <Sun v-if="themeStore.darkMode" :size="18" />
+      <Moon v-else :size="18" />
+    </button>
+
+    <main class="relative z-10 mx-auto grid min-h-screen w-full max-w-6xl items-center gap-8 px-4 py-10 lg:grid-cols-[1.05fr_0.95fr] lg:px-8">
+      <section class="brand-card hidden lg:block">
+        <div class="relative overflow-hidden rounded-[2rem] border border-white/15 bg-white/[0.08] p-8 text-white shadow-2xl shadow-blue-950/30 backdrop-blur-2xl">
+          <div class="absolute -right-16 -top-16 h-44 w-44 rounded-full bg-cyan-300/20 blur-2xl"></div>
+          <div class="absolute bottom-10 right-10 h-24 w-24 rounded-full border border-white/15"></div>
+
+          <div class="inline-flex items-center gap-2 rounded-full border border-cyan-200/30 bg-cyan-100/10 px-4 py-2 text-sm text-cyan-50">
+            <Sparkles :size="16" />
+            WUT AI Campus Copilot
+          </div>
+
+          <div class="mt-16 max-w-xl">
+            <p class="mb-5 text-sm font-semibold uppercase tracking-[0.45em] text-cyan-100/80">武汉理工大学</p>
+            <h1 class="text-6xl font-black leading-[0.96] tracking-tight">
+              登录后，让校园信息主动找到你。
+            </h1>
+            <p class="mt-6 max-w-lg text-base leading-8 text-blue-50/80">
+              注册账号即可使用 AI 助手、知识库和校园信息查询服务。
+            </p>
+          </div>
+
+          <div class="mt-14 grid grid-cols-3 gap-3">
+            <div v-for="item in featureCards" :key="item.title" class="rounded-3xl border border-white/10 bg-white/10 p-4 backdrop-blur">
+              <component :is="item.icon" class="mb-4 h-5 w-5 text-cyan-200" />
+              <p class="text-sm font-bold">{{ item.title }}</p>
+              <p class="mt-1 text-xs leading-5 text-blue-50/65">{{ item.desc }}</p>
             </div>
           </div>
-          <h2 class="text-3xl font-extrabold text-slate-800 dark:text-white tracking-tight">武理小精灵</h2>
-          <p class="text-slate-500 dark:text-slate-400 mt-2 text-sm font-medium">使用教务系统账号登录</p>
         </div>
+      </section>
 
-        <div class="px-10 pb-12">
-          <form id="login-form" class="space-y-6" @submit.prevent="handleSubmit">
-            <div class="space-y-4">
+      <section class="login-card mx-auto w-full max-w-md">
+        <div class="rounded-[2rem] border border-white/60 bg-white/88 shadow-2xl shadow-blue-950/25 backdrop-blur-2xl dark:border-white/10 dark:bg-slate-900/82">
+          <div class="px-6 pt-7 sm:px-8">
+            <div class="flex items-start justify-between gap-4">
               <div>
-                <label for="student-id" class="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2 ml-1">学号</label>
-                <div class="relative group">
-                  <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                    <User class="h-5 w-5 text-slate-400 dark:text-slate-500 group-focus-within:text-blue-700 transition-colors duration-300" />
-                  </div>
+                <div class="inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700 dark:bg-blue-500/10 dark:text-blue-200">
+                  <ShieldCheck :size="14" />
+                  安全登录
+                </div>
+                <h2 class="mt-5 text-3xl font-black tracking-tight text-slate-950 dark:text-white">武理小精灵</h2>
+                <p class="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400">{{ modeConfig.subtitle }}</p>
+              </div>
+
+              <div class="relative h-20 w-20 shrink-0">
+                <div class="absolute inset-0 rounded-3xl bg-gradient-to-br from-blue-500 to-cyan-300 opacity-25 blur-xl"></div>
+                <div class="relative flex h-20 w-20 items-center justify-center overflow-hidden rounded-3xl border border-white/80 bg-white shadow-lg dark:border-white/10 dark:bg-slate-800">
+                  <img :src="logoUrl" alt="武汉理工大学标识" class="h-full w-full object-cover scale-125" />
+                </div>
+              </div>
+            </div>
+
+            </div>
+
+          <form id="login-form" class="space-y-5 px-6 py-7 sm:px-8" novalidate @submit.prevent="handleSubmit">
+            <div class="space-y-4">
+              <label class="block">
+                <span class="mb-2 ml-1 block text-xs font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">用户名</span>
+                <span class="relative block">
+                  <User class="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400 transition group-focus-within:text-blue-700" />
                   <input
-                    id="student-id"
-                    v-model="studentId"
+                    id="account-username"
+                    v-model.trim="accountUsername"
                     type="text"
                     autocomplete="username"
                     :disabled="loading"
-                    @keydown.enter="handleSubmit"
-                    class="block w-full pl-11 pr-4 py-3.5 bg-slate-50/50 dark:bg-gray-800/50 border border-slate-200 dark:border-gray-700 rounded-xl text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:bg-white dark:focus:bg-gray-800 focus:ring-2 focus:ring-blue-700/20 focus:border-blue-700 transition-all duration-200"
-                    placeholder="请输入学号"
+                    :aria-invalid="Boolean(accountUsernameError)"
+                    class="peer block w-full rounded-2xl border bg-white/80 py-4 pl-12 pr-4 text-slate-950 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-600 focus:bg-white focus:ring-4 focus:ring-blue-600/10 disabled:cursor-not-allowed disabled:opacity-70 dark:bg-slate-800/70 dark:text-white dark:focus:bg-slate-800"
+                    :class="accountUsernameError ? 'border-red-300 dark:border-red-500/70' : 'border-slate-200 dark:border-slate-700'"
+                    placeholder="3-32 位字母、数字或下划线"
+                    @input="clearError"
                   />
-                </div>
-              </div>
+                </span>
+                <span v-if="accountUsernameError" class="mt-2 block text-xs text-red-500">{{ accountUsernameError }}</span>
+              </label>
 
-              <div>
-                <label for="password" class="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2 ml-1">教务系统密码</label>
-                <div class="relative group">
-                  <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                    <Lock class="h-5 w-5 text-slate-400 dark:text-slate-500 group-focus-within:text-blue-700 transition-colors duration-300" />
-                  </div>
+              <label class="block">
+                <span class="mb-2 ml-1 block text-xs font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">{{ accountMode === 'register' ? '设置密码' : '密码' }}</span>
+                <span class="relative block">
+                  <Lock class="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400 transition group-focus-within:text-blue-700" />
                   <input
-                    id="password"
-                    v-model="password"
+                    id="account-password"
+                    v-model="accountPassword"
                     :type="showPassword ? 'text' : 'password'"
                     autocomplete="current-password"
                     :disabled="loading"
-                    @keydown.enter="handleSubmit"
-                    class="block w-full pl-11 pr-12 py-3.5 bg-slate-50/50 dark:bg-gray-800/50 border border-slate-200 dark:border-gray-700 rounded-xl text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:bg-white dark:focus:bg-gray-800 focus:ring-2 focus:ring-blue-700/20 focus:border-blue-700 transition-all duration-200 disabled:opacity-70"
-                    placeholder="请输入智慧理工大密码"
+                    :aria-invalid="Boolean(accountPasswordError)"
+                    class="block w-full rounded-2xl border bg-white/80 py-4 pl-12 pr-12 text-slate-950 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-600 focus:bg-white focus:ring-4 focus:ring-blue-600/10 disabled:cursor-not-allowed disabled:opacity-70 dark:bg-slate-800/70 dark:text-white dark:focus:bg-slate-800"
+                    :class="accountPasswordError ? 'border-red-300 dark:border-red-500/70' : 'border-slate-200 dark:border-slate-700'"
+                    placeholder="至少 6 位密码"
+                    @input="clearError"
                   />
                   <button
                     type="button"
                     :disabled="loading"
-                    @click="showPassword = !showPassword"
-                    class="absolute inset-y-0 right-0 pr-4 flex items-center text-slate-400 dark:text-slate-500 hover:text-blue-700 dark:hover:text-blue-400 transition-colors disabled:cursor-not-allowed"
+                    class="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 transition hover:text-blue-700 disabled:cursor-not-allowed dark:hover:text-blue-300"
                     :aria-label="showPassword ? '隐藏密码' : '显示密码'"
+                    @click="showPassword = !showPassword"
                   >
                     <EyeOff v-if="showPassword" class="h-5 w-5" />
                     <Eye v-else class="h-5 w-5" />
                   </button>
-                </div>
+                </span>
+                <span v-if="accountPasswordError" class="mt-2 block text-xs text-red-500">{{ accountPasswordError }}</span>
+              </label>
+
+              <label :class="['block', accountMode !== 'register' ? 'invisible pointer-events-none' : '']">
+                <span class="mb-2 ml-1 block text-xs font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">确认密码</span>
+                <span class="relative block">
+                  <Lock class="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400 transition group-focus-within:text-blue-700" />
+                  <input
+                    id="account-confirm-password"
+                    v-model="accountConfirmPassword"
+                    :type="showPassword ? 'text' : 'password'"
+                    autocomplete="new-password"
+                    :disabled="loading"
+                    :tabindex="accountMode !== 'register' ? -1 : 0"
+                    :aria-invalid="Boolean(accountConfirmPasswordError)"
+                    class="block w-full rounded-2xl border bg-white/80 py-4 pl-12 pr-12 text-slate-950 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-600 focus:bg-white focus:ring-4 focus:ring-blue-600/10 disabled:cursor-not-allowed disabled:opacity-70 dark:bg-slate-800/70 dark:text-white dark:focus:bg-slate-800"
+                    :class="accountConfirmPasswordError ? 'border-red-300 dark:border-red-500/70' : 'border-slate-200 dark:border-slate-700'"
+                    placeholder="再次输入密码"
+                    @input="clearError"
+                  />
+                </span>
+                <span v-if="accountConfirmPasswordError" class="mt-2 block text-xs text-red-500">{{ accountConfirmPasswordError }}</span>
+              </label>
+
+              <div class="text-center">
+                <button
+                  type="button"
+                  :disabled="loading"
+                  class="text-sm text-blue-600 transition hover:text-blue-800 disabled:opacity-50 dark:text-blue-400 dark:hover:text-blue-300"
+                  @click="toggleAccountMode"
+                >
+                  {{ accountMode === 'register' ? '已有账号？立即登录' : '没有账号？立即注册' }}
+                </button>
               </div>
             </div>
 
-            <div v-if="error" class="text-red-500 dark:text-red-400 text-sm bg-red-50 dark:bg-red-900/10 p-4 rounded-xl flex items-center">
-              <div class="w-1.5 h-1.5 rounded-full bg-red-500 mr-2.5"></div>
-              {{ error }}
+            <div v-if="loading" class="flex items-start gap-3 rounded-2xl border border-blue-100 bg-blue-50/80 p-4 text-sm text-blue-800 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-100">
+              <Clock3 class="mt-0.5 h-4 w-4 shrink-0" />
+              <p>{{ loadingHint }}</p>
+            </div>
+
+            <div v-if="error" class="flex items-start gap-3 rounded-2xl border border-red-100 bg-red-50 p-4 text-sm text-red-600 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-200" role="alert">
+              <AlertCircle class="mt-0.5 h-4 w-4 shrink-0" />
+              <p>{{ error }}</p>
             </div>
 
             <button
-              type="submit"
               id="login-submit-btn"
+              type="submit"
               :disabled="loading"
-              class="w-full flex justify-center items-center py-4 px-4 rounded-xl text-sm font-bold text-white bg-gradient-to-r from-blue-800 to-blue-600 hover:from-blue-900 hover:to-blue-700 dark:from-blue-700 dark:to-blue-600 focus:outline-none focus:ring-4 focus:ring-blue-700/20 transition-all duration-300 shadow-lg shadow-blue-900/30 transform active:scale-[0.98] disabled:opacity-70 disabled:cursor-not-allowed"
+              class="group inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-blue-800 via-blue-700 to-cyan-600 px-5 py-4 text-sm font-black text-white shadow-xl shadow-blue-900/25 transition hover:-translate-y-0.5 hover:shadow-2xl hover:shadow-blue-900/30 focus:outline-none focus:ring-4 focus:ring-blue-600/20 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-70"
             >
-              <Loader2 v-if="loading" class="animate-spin -ml-1 mr-2 h-4 w-4" />
-              {{ loading ? '验证中...' : '登录' }}
+              <Loader2 v-if="loading" class="h-4 w-4 animate-spin" />
+              <span>{{ loading ? modeConfig.loadingText : modeConfig.buttonText }}</span>
+              <ArrowRight v-if="!loading" class="h-4 w-4 transition group-hover:translate-x-1" />
             </button>
           </form>
 
-          <p class="text-center text-xs text-slate-400 dark:text-slate-500 mt-6">
-            初始密码为 "Whut@身份证后6位"，如含 X 则大写
-          </p>
+          <div class="border-t border-slate-100 px-6 py-5 dark:border-slate-800 sm:px-8">
+            <p class="text-center text-xs text-slate-400 dark:text-slate-500">
+              &copy; {{ currentYear }} 武汉理工大学 WUT
+            </p>
+          </div>
         </div>
-
-        <div class="bg-slate-50/80 dark:bg-gray-800/80 py-4 text-center border-t border-slate-100 dark:border-gray-700">
-          <p class="text-xs text-slate-400 dark:text-gray-500">
-            &copy; {{ new Date().getFullYear() }} 武汉理工大学 WUT
-          </p>
-        </div>
-      </div>
-    </div>
+      </section>
+    </main>
   </div>
 </template>
 
 <script setup>
-import { ref } from 'vue';
-import { useRouter } from 'vue-router';
+import { computed, ref, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+import {
+  AlertCircle,
+  ArrowRight,
+  Clock3,
+  Eye,
+  EyeOff,
+  GraduationCap,
+  Loader2,
+  Lock,
+  Moon,
+  ShieldCheck,
+  Sparkles,
+  Sun,
+  User,
+} from 'lucide-vue-next';
+import logoUrl from '../assets/wuhan-university-logo.png';
 import { useAuthStore } from '../stores/auth.store.js';
-import { API_BASE } from '../api/client.js';
-import { User, Lock, Eye, EyeOff, Loader2 } from 'lucide-vue-next';
+import { useThemeStore } from '../stores/theme.store.js';
+import { prefetchRoute, prefetchAll } from '../utils/prefetch.js';
+
+const ERROR_MESSAGES = {
+  INVALID_CREDENTIALS: '账号或密码错误，请重新输入',
+  MISSING_CREDENTIALS: '请完整填写账号和密码',
+  RATE_LIMIT: '登录尝试过于频繁，请稍后再试',
+  NETWORK_ERROR: '网络连接失败，请确认后端服务已启动',
+  INVALID_RESPONSE: '登录响应异常，请稍后重试',
+};
+
+const MODE_CONFIG = {
+  subtitle: '注册账号即可使用 AI 助手、知识库和校园信息查询服务。',
+  buttonText: '登录',
+  loadingText: '正在验证账号...',
+};
 
 const router = useRouter();
+const route = useRoute();
 const authStore = useAuthStore();
+const themeStore = useThemeStore();
+
+const accountMode = ref('login'); // 'login' | 'register'
+const accountUsername = ref('');
+const accountPassword = ref('');
+const accountConfirmPassword = ref('');
 const loading = ref(false);
 const error = ref('');
 const showPassword = ref(false);
-const studentId = ref('');
-const password = ref('');
+const submitted = ref(false);
+const currentYear = new Date().getFullYear();
+
+const featureCards = [
+  { title: '统一会话', desc: '登录状态由安全 Cookie 维护', icon: ShieldCheck },
+  { title: '知识库', desc: '校园文档智能检索与问答', icon: GraduationCap },
+  { title: 'AI 助手', desc: '结合知识库回答校园问题', icon: Sparkles },
+];
+const modeConfig = computed(() => ({
+  subtitle: MODE_CONFIG.subtitle,
+  buttonText: accountMode.value === 'register' ? '注册并登录' : '登录',
+  loadingText: accountMode.value === 'register' ? '正在注册...' : '正在登录...',
+}));
+const loadingHint = '正在验证账号信息，请稍候。';
+const redirectTarget = computed(() => {
+  const redirect = Array.isArray(route.query.redirect) ? route.query.redirect[0] : route.query.redirect;
+  if (typeof redirect === 'string' && redirect.startsWith('/') && !redirect.startsWith('/login')) {
+    return redirect;
+  }
+  return '/chat';
+});
+
+const accountUsernameError = computed(() => {
+  if (!submitted.value) return '';
+  if (!accountUsername.value.trim()) return '请输入用户名';
+  if (accountUsername.value.trim().length < 3) return '用户名至少 3 位';
+  return '';
+});
+const accountPasswordError = computed(() => {
+  if (!submitted.value) return '';
+  if (!accountPassword.value) return '请输入密码';
+  if (accountPassword.value.length < 6) return '密码至少 6 位';
+  return '';
+});
+const accountConfirmPasswordError = computed(() => {
+  if (!submitted.value || accountMode.value !== 'register') return '';
+  if (!accountConfirmPassword.value) return '请再次输入密码';
+  if (accountPassword.value !== accountConfirmPassword.value) return '两次密码输入不一致';
+  return '';
+});
+const isFormValid = computed(() => (
+  accountMode.value === 'register'
+    ? Boolean(accountUsername.value.trim() && accountPassword.value && accountConfirmPassword.value)
+    : Boolean(accountUsername.value.trim() && accountPassword.value)
+));
+
+const clearError = () => {
+  error.value = '';
+};
+
+const toggleAccountMode = () => {
+  accountMode.value = accountMode.value === 'register' ? 'login' : 'register';
+  submitted.value = false;
+  error.value = '';
+  showPassword.value = false;
+};
+
+const formatLoginError = (loginError) => {
+  if (loginError?.code === 'INVALID_CREDENTIALS') {
+    return '用户名或密码错误';
+  }
+  if (loginError?.code === 'USERNAME_EXISTS') {
+    return '用户名已存在，请换一个';
+  }
+  return ERROR_MESSAGES[loginError?.code] || loginError?.message || '登录失败，请稍后重试';
+};
 
 async function handleSubmit() {
   if (loading.value) return;
 
-  const sid = studentId.value.trim();
-  const pwd = password.value.trim();
+  submitted.value = true;
+  error.value = '';
 
-  if (!sid || !pwd) {
-    error.value = '请输入学号和密码';
+  if (!isFormValid.value) {
+    error.value = accountMode.value === 'register' ? '请完整填写注册信息' : '请输入用户名和密码';
     return;
   }
 
   loading.value = true;
-  error.value = '';
 
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000);
-
-    const res = await fetch(`${API_BASE}/school/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ studentId: sid, password: pwd }),
-      signal: controller.signal,
-    });
-    clearTimeout(timeoutId);
-
-    const data = await res.json().catch(() => null);
-
-    if (res.ok && data?.success) {
-      authStore.login(data.data.user);
-      router.push('/chat');
+    if (accountMode.value === 'register') {
+      await authStore.register(accountUsername.value, accountPassword.value);
     } else {
-      if (data?.code === 'INVALID_CREDENTIALS') {
-        error.value = '学号或密码错误，请重新输入';
-      } else if (data?.code === 'SERVICE_UNAVAILABLE') {
-        error.value = data?.message || '教务系统暂时不可用，请稍后重试';
-      } else if (data?.code === 'NETWORK_ERROR') {
-        error.value = '网络连接失败，暂时无法访问教务系统';
-      } else {
-        error.value = data?.message || '登录失败，请检查学号和密码是否正确';
-      }
+      await authStore.login(accountUsername.value, accountPassword.value);
     }
-  } catch (err) {
-    console.error('[Login] Network error:', err);
-    error.value = '无法连接到服务器，请确认是否已启动后端服务（在 backend 目录下运行 node src/app.js）';
+
+    prefetchRoute(redirectTarget.value);
+    prefetchAll();
+    await router.replace(redirectTarget.value);
+  } catch (loginError) {
+    console.error('[Login] failed:', loginError);
+    error.value = formatLoginError(loginError);
   } finally {
     loading.value = false;
   }
 }
 </script>
+
+<style scoped>
+.login-shell {
+  background:
+    radial-gradient(circle at 10% 10%, rgba(14, 165, 233, 0.26), transparent 34rem),
+    radial-gradient(circle at 90% 90%, rgba(37, 99, 235, 0.24), transparent 30rem),
+    linear-gradient(135deg, #061b46 0%, #0f285e 42%, #07111f 100%);
+}
+
+.campus-grid {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.08) 1px, transparent 1px);
+  background-size: 42px 42px;
+  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.9), transparent 88%);
+}
+</style>

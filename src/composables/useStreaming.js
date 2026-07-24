@@ -12,6 +12,7 @@ import {
   createMessageId,
   getMessageText,
   normalizeMessages,
+  createWelcomeMessage,
 } from '../utils/chatHelpers.js';
 
 const MAX_RETRIES = 3;
@@ -61,6 +62,34 @@ export function useStreaming() {
   let unsubscribeConnection = null;
   let rafId = null;
   let pendingContent = '';
+  let visibilityHandler = null;
+
+  // 后台 Tab RAF 兜底：visibilitychange → hidden 时，pendingContent 立即落盘
+  // 浏览器在后台 Tab 会暂停 requestAnimationFrame，导致流式内容一直堆积在
+  // pendingContent 中，直到切回前台或流结束才一次性刷新，用户体验上是"长时间无反应"
+  // 加这个监听后，只要切到后台就立即刷到消息，保证下次切回来时能看到最新内容
+  const setupVisibilityHandler = () => {
+    visibilityHandler = () => {
+      if (document.visibilityState === 'hidden' && pendingContent) {
+        // 取消待执行的 RAF（避免重复写）
+        if (rafId) {
+          cancelAnimationFrame(rafId);
+          rafId = null;
+        }
+        // 把累积的 pendingContent 立即写到消息
+        const convStore = useConversationStore();
+        if (activeStreamingConversationId.value && currentStreamingId.value) {
+          updateMessage(convStore, activeStreamingConversationId.value, currentStreamingId.value, (m) => {
+            const newText = getMessageText(m) + pendingContent;
+            return { ...m, text: newText, content: newText };
+          });
+        }
+        pendingContent = '';
+      }
+    };
+    document.addEventListener('visibilitychange', visibilityHandler);
+  };
+  setupVisibilityHandler();
 
   unsubscribeConnection = connectionManager.subscribe((event) => {
     if (event === 'connected') {
@@ -72,16 +101,29 @@ export function useStreaming() {
     }
   });
 
-  const cancelPendingRaf = () => {
+  const cancelPendingRaf = (flushToMessage = false) => {
     if (rafId) {
       cancelAnimationFrame(rafId);
       rafId = null;
-      pendingContent = '';
     }
+    if (flushToMessage && pendingContent) {
+      const convStore = useConversationStore();
+      if (activeStreamingConversationId.value && currentStreamingId.value) {
+        updateMessage(convStore, activeStreamingConversationId.value, currentStreamingId.value, (m) => {
+          const newText = getMessageText(m) + pendingContent;
+          return { ...m, text: newText, content: newText };
+        });
+      }
+    }
+    pendingContent = '';
   };
 
   const cleanup = () => {
     cancelPendingRaf();
+    if (visibilityHandler) {
+      document.removeEventListener('visibilitychange', visibilityHandler);
+      visibilityHandler = null;
+    }
     if (currentAbortController) {
       currentAbortController.abort();
       currentAbortController = null;
@@ -119,11 +161,6 @@ export function useStreaming() {
     }
     if (history.length > 0 && history[history.length - 1].role === 'user') history.pop();
     return history;
-  };
-
-  const getExponentialDelay = (attempt) => {
-    const delayMs = Math.min(INITIAL_RETRY_DELAY * Math.pow(2, attempt), MAX_RETRY_DELAY);
-    return delayMs + Math.random() * 1000;
   };
 
   const sendMessage = async (text, retryMsgId = null, fileData = null, onStreamEvent) => {
@@ -175,7 +212,7 @@ export function useStreaming() {
     const skillPrompt = useSkillStore().buildSystemPrompt();
 
     const aiMsgId = createMessageId();
-    const aiMsg = { id: aiMsgId, role: 'model', content: '', timestamp: new Date(), sources: [], toolCalls: [], thinkingSteps: [], trace: null };
+    const aiMsg = { id: aiMsgId, role: 'model', content: '', timestamp: new Date(), sources: [] };
     convStore.conversations[convIndex].messages.push(aiMsg);
     currentStreamingId.value = aiMsgId;
 
@@ -220,38 +257,18 @@ export function useStreaming() {
           onStreamEvent?.('chunk', content);
         },
         onSources: (sources) => {
-          updateMessage(convStore, conversationId, aiMsgId, (m) => ({ ...m, sources }));
+          updateMessage(convStore, conversationId, aiMsgId, (m) => ({ ...m, sources, answerMode: 'rag', usedRag: true }));
         },
-        onThinking: (content) => {
-          updateMessage(convStore, conversationId, aiMsgId, (m) => {
-            const existing = m.thinkingSteps || [];
-            if (existing.length && existing[existing.length - 1].content === content) return m;
-            const steps = [...existing, { content }];
-            const timelineEvent = { type: 'thinking', content };
-            const timeline = [...(m._timeline || []), timelineEvent];
-            return { ...m, thinkingSteps: steps, _timeline: timeline };
-          });
-        },
-        onToolCall: (toolCall) => {
-          updateMessage(convStore, conversationId, aiMsgId, (m) => {
-            const existing = m.toolCalls || [];
-            if (existing.some((tc) => tc.id === toolCall.id)) return m;
-            const calls = [...existing, { ...toolCall, status: 'running', result: '' }];
-            const timelineEvent = { type: 'tool', id: toolCall.id, name: toolCall.name };
-            const timeline = [...(m._timeline || []), timelineEvent];
-            return { ...m, toolCalls: calls, _timeline: timeline };
-          });
-        },
-        onToolResult: (toolResult) => {
-          updateMessage(convStore, conversationId, aiMsgId, (m) => {
-            const calls = (m.toolCalls || []).map((tc) =>
-              tc.id === toolResult.id ? { ...tc, result: toolResult.content, status: toolResult.status || 'done', durationMs: toolResult.durationMs } : tc
-            );
-            return { ...m, toolCalls: calls };
-          });
-        },
-        onTrace: (trace) => {
-          updateMessage(convStore, conversationId, aiMsgId, (m) => ({ ...m, trace }));
+        onTrace: (payload) => {
+          const trace = payload?.trace || null;
+          const rag = payload?.rag || trace?.outcome || {};
+          const usedRag = rag.usedRag === true;
+          updateMessage(convStore, conversationId, aiMsgId, (m) => ({
+            ...m,
+            traceId: payload?.traceId || trace?.traceId || m.traceId,
+            ragTrace: trace || m.ragTrace,
+            ...(usedRag ? { answerMode: 'rag', usedRag: true } : {}),
+          }));
         },
         onRetry: () => {
           isReconnecting.value = true;
@@ -358,11 +375,11 @@ export function useStreaming() {
     const msg = conv.messages?.find((m) => m.id === msgId);
     if (!msg || msg.role !== 'user' || !msg.canRetry) return;
     msg.canRetry = false;
-    await sendMessage(getMessageText(msg), false, msgId);
+    await sendMessage(getMessageText(msg), msgId);
   };
 
   const abortCurrentRequest = () => {
-    cancelPendingRaf();
+    cancelPendingRaf(true); // 刷新 RAF 缓冲区到消息后中止，避免内容丢失
     if (currentAbortController) {
       currentAbortController.abort();
       currentAbortController = null;

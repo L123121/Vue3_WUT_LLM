@@ -47,12 +47,17 @@ jobs:
           node-version: 20
           cache: "npm"
 
-      - name: Install dependencies
+      - name: Install frontend dependencies
         run: npm ci --ignore-scripts
 
+      - name: Install backend dependencies
+        run: npm ci --ignore-scripts
+        working-directory: backend
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: "true"
+
       - name: Lint
-        run: npm run lint
-        continue-on-error: true # lint 失败不阻断部署（视团队规范而定）
+        run: npm run lint:check
 
       - name: Run tests
         run: npm test
@@ -106,16 +111,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Create .env.production on server
+      - name: Upload deployment manifests
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.ECS_HOST }}
           username: ${{ secrets.ECS_USER }}
           key: ${{ secrets.ECS_SSH_KEY }}
           port: 22
-          source: "deploy/.env.production.example"
+          source: "docker-compose.yml,deploy/nginx.conf"
           target: "/opt/wuli-elf/"
-          strip_components: 1  # 只拷贝文件，不包含 deploy/ 目录结构
 
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.2.0
@@ -127,6 +131,13 @@ jobs:
           script: |
             set -e
             cd /opt/wuli-elf
+
+            if [ ! -f deploy/.env.production ]; then
+              echo "❌ 缺少 deploy/.env.production，请先在服务器配置生产环境变量"
+              exit 1
+            fi
+
+            export BACKEND_IMAGE="${{ env.IMAGE_NAME }}:latest"
 
             # 拉取最新镜像
             docker compose -p wuli-elf pull backend

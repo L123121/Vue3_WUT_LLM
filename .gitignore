@@ -38,3 +38,10 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Runtime / cache / volumes
+.model-cache/
+volumes/
+__pycache__/
+.claude/worktrees/
+scripts/rag-eval/results/

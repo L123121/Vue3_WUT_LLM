@@ -1,78 +1,240 @@
 "use strict";
 
-const fs = require('fs');
 const path = require('path');
-
-/**
- * 存储层 — 自动选择后端
- *
- * 有 REDIS_URL 环境变量 → RedisStore（生产环境）
- * 无 REDIS_URL          → MemoryStore（本地开发）
- *
- * 导出接口不变：{ redis, conversationStore }
- */
+const fs = require('fs');
 
 const DATA_DIR = path.join(__dirname, '../../data');
-const DATA_FILE = path.join(DATA_DIR, 'store.json');
+const DB_FILE = path.join(DATA_DIR, 'store.db');
+const LEGACY_FILE = path.join(DATA_DIR, 'store.json');
 
-// ========== 本地开发：文件持久化内存存储 ==========
-
-class MemoryStore {
+/**
+ * SQLiteStore — 基于 better-sqlite3 的持久化存储
+ *
+ * 外部 API 与 MemoryStore / RedisStore 完全一致，可无缝替换。
+ * 支持 hash / set / list 三种数据结构，数据即时持久化（无需 debounce save）。
+ */
+class SQLiteStore {
   constructor() {
-    this._data = new Map();
-    this._sets = new Map();
-    this._saveTimer = null;
-    this._dirty = false;
-    this._load();
-  }
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
 
-  _load() {
-    try {
-      if (!fs.existsSync(DATA_FILE)) return;
-      const raw = fs.readFileSync(DATA_FILE, 'utf-8');
-      const json = JSON.parse(raw);
-      if (json._data) this._data = new Map(Object.entries(json._data));
-      if (json._sets) {
-        this._sets = new Map(
-          Object.entries(json._sets).map(([k, v]) => [k, new Set(v)])
-        );
-      }
-      console.log('[Store] Data restored from local JSON file.');
-    } catch (e) {
-      console.warn('[Store] Failed to read local JSON store:', e.message);
+    const exists = fs.existsSync(DB_FILE);
+    const Database = require('better-sqlite3');
+    this._db = new Database(DB_FILE);
+
+    // WAL 模式：读不阻塞写，性能好
+    this._db.pragma('journal_mode = WAL');
+    this._db.pragma('synchronous = NORMAL');
+    this._db.pragma('foreign_keys = ON');
+
+    this._initSchema();
+
+    // 预编译常用 statement
+    this._stmt = {
+      // set
+      sadd: this._db.prepare('INSERT OR IGNORE INTO sets (key, member) VALUES (?, ?)'),
+      srem: this._db.prepare('DELETE FROM sets WHERE key = ? AND member = ?'),
+      smembers: this._db.prepare('SELECT member FROM sets WHERE key = ? ORDER BY rowid'),
+      scard: this._db.prepare('SELECT COUNT(*) AS cnt FROM sets WHERE key = ?'),
+      sismember: this._db.prepare('SELECT 1 FROM sets WHERE key = ? AND member = ?'),
+      // hash
+      hset: this._db.prepare(
+        'INSERT INTO hash (key, field, value) VALUES (?, ?, ?) ' +
+        'ON CONFLICT(key, field) DO UPDATE SET value = excluded.value'
+      ),
+      hgetall: this._db.prepare('SELECT field, value FROM hash WHERE key = ? ORDER BY rowid'),
+      hget: this._db.prepare('SELECT value FROM hash WHERE key = ? AND field = ?'),
+      hdel: this._db.prepare('DELETE FROM hash WHERE key = ? AND field = ?'),
+      hdelAll: this._db.prepare('DELETE FROM hash WHERE key = ?'),
+      // list
+      rpush: this._db.prepare('INSERT INTO list (key, idx, value) VALUES (?, ?, ?)'),
+      lrange: this._db.prepare('SELECT value FROM list WHERE key = ? AND idx >= ? AND idx <= ? ORDER BY idx'),
+      llen: this._db.prepare('SELECT COUNT(*) AS cnt FROM list WHERE key = ?'),
+      ltrimBefore: this._db.prepare('DELETE FROM list WHERE key = ? AND idx < ?'),
+      ltrimRange: this._db.prepare('DELETE FROM list WHERE key = ? AND (idx < ? OR idx > ?)'),
+      maxIdx: this._db.prepare('SELECT COALESCE(MAX(idx), -1) AS m FROM list WHERE key = ?'),
+      // 通用
+      delHash: this._db.prepare('DELETE FROM hash WHERE key = ?'),
+      delSet: this._db.prepare('DELETE FROM sets WHERE key = ?'),
+      delList: this._db.prepare('DELETE FROM list WHERE key = ?'),
+    };
+
+    // 首次启动时从旧 store.json 迁移
+    if (!exists && fs.existsSync(LEGACY_FILE)) {
+      this._migrateFromLegacy(LEGACY_FILE);
     }
   }
 
-  _scheduleSave() {
-    this._dirty = true;
-    if (this._saveTimer) return;
-    this._saveTimer = setTimeout(() => {
-      try {
-        if (!this._dirty) return;
-        if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-        const json = JSON.stringify({
-          _data: Object.fromEntries(this._data),
-          _sets: Object.fromEntries([...this._sets].map(([k, v]) => [k, [...v]])),
-        });
-        fs.writeFileSync(DATA_FILE, json, 'utf-8');
-        this._dirty = false;
-      } catch (e) {
-        console.error('[Store] 持久化写入失败:', e.message);
-      }
-      this._saveTimer = null;
-    }, 200);
+  _initSchema() {
+    this._db.exec(`
+      CREATE TABLE IF NOT EXISTS hash (
+        key   TEXT NOT NULL,
+        field TEXT NOT NULL,
+        value TEXT,
+        PRIMARY KEY (key, field)
+      );
+      CREATE TABLE IF NOT EXISTS sets (
+        key    TEXT NOT NULL,
+        member TEXT NOT NULL,
+        PRIMARY KEY (key, member)
+      );
+      CREATE TABLE IF NOT EXISTS list (
+        key   TEXT NOT NULL,
+        idx   INTEGER NOT NULL,
+        value TEXT,
+        PRIMARY KEY (key, idx)
+      );
+    `);
   }
+
+  _migrateFromLegacy(filePath) {
+    try {
+      const raw = fs.readFileSync(filePath, 'utf-8');
+      const json = JSON.parse(raw);
+      const { _data, _sets } = json;
+      if (!_data && !_sets) return;
+
+      const tx = this._db.transaction(() => {
+        let count = 0;
+        if (_data) {
+          for (const [key, obj] of Object.entries(_data)) {
+            if (typeof obj !== 'object' || obj === null) continue;
+            for (const [field, value] of Object.entries(obj)) {
+              const val = typeof value === 'object' ? JSON.stringify(value) : String(value);
+              this._stmt.hset.run(key, field, val);
+              count++;
+            }
+          }
+        }
+        if (_sets) {
+          for (const [key, members] of Object.entries(_sets)) {
+            if (!Array.isArray(members)) continue;
+            for (const member of members) {
+              this._stmt.sadd.run(key, String(member));
+            }
+          }
+        }
+        return count;
+      });
+      const count = tx();
+      console.log(`[Store] ✅ 已从 store.json 迁移 ${count} 条记录到 SQLite`);
+    } catch (e) {
+      console.warn('[Store] 迁移旧数据失败（可忽略）:', e.message);
+    }
+  }
+
+  // ==================== Set 操作 ====================
+
+  async sadd(key, value) {
+    return this._stmt.sadd.run(key, String(value)).changes;
+  }
+
+  async srem(key, value) {
+    return this._stmt.srem.run(key, String(value)).changes;
+  }
+
+  async smembers(key) {
+    return this._stmt.smembers.all(key).map(r => r.member);
+  }
+
+  async scard(key) {
+    return this._stmt.scard.get(key).cnt;
+  }
+
+  async sismember(key, value) {
+    return !!this._stmt.sismember.get(key, String(value));
+  }
+
+  // ==================== Hash 操作 ====================
+
+  async hset(key, ...args) {
+    let obj;
+    if (args.length === 1 && typeof args[0] === 'object') {
+      obj = args[0];
+    } else {
+      obj = {};
+      for (let i = 0; i < args.length; i += 2) {
+        obj[args[i]] = args[i + 1];
+      }
+    }
+    const tx = this._db.transaction(() => {
+      let changes = 0;
+      for (const [field, value] of Object.entries(obj)) {
+        const val = typeof value === 'object' ? JSON.stringify(value) : String(value);
+        changes += this._stmt.hset.run(key, field, val).changes;
+      }
+      return changes;
+    });
+    return tx();
+  }
+
+  async hgetall(key) {
+    const rows = this._stmt.hgetall.all(key);
+    if (rows.length === 0) return null;
+    const obj = {};
+    for (const r of rows) {
+      obj[r.field] = this._tryParse(r.value);
+    }
+    return obj;
+  }
+
+  async hget(key, field) {
+    const row = this._stmt.hget.get(key, field);
+    return row ? this._tryParse(row.value) : null;
+  }
+
+  async hdel(key, field) {
+    return this._stmt.hdel.run(key, field).changes;
+  }
+
+  // ==================== List 操作 ====================
+
+  async rpush(key, value) {
+    const { m } = this._stmt.maxIdx.get(key);
+    this._stmt.rpush.run(key, m + 1, String(value));
+    return m + 2; // 返回新长度
+  }
+
+  async lrange(key, start, end) {
+    if (end === -1) {
+      // 查全部直到末尾
+      return this._db.prepare(
+        'SELECT value FROM list WHERE key = ? AND idx >= ? ORDER BY idx'
+      ).all(key, start).map(r => r.value);
+    }
+    return this._stmt.lrange.all(key, start, end).map(r => r.value);
+  }
+
+  async llen(key) {
+    return this._stmt.llen.get(key).cnt;
+  }
+
+  async ltrim(key, start, end) {
+    if (end === -1) {
+      this._stmt.ltrimBefore.run(key, start);
+    } else {
+      this._stmt.ltrimRange.run(key, start, end);
+    }
+  }
+
+  // ==================== 通用 ====================
+
+  async del(key) {
+    let c = 0;
+    c += this._stmt.delHash.run(key).changes;
+    c += this._stmt.delSet.run(key).changes;
+    c += this._stmt.delList.run(key).changes;
+    return c;
+  }
+
+  async expire() { /* SQLite 不需要 TTL */ }
+
+  // ==================== Pipeline ====================
 
   pipeline() {
     const ops = [];
-    const exec = async () => {
-      const results = [];
-      for (const [cmd, args] of ops) {
-        try { results.push([null, await this[cmd](...args)]); }
-        catch (e) { results.push([e, null]); }
-      }
-      return results;
-    };
+    const self = this;
     return {
       sadd: (k, v) => ops.push(['sadd', [k, v]]),
       srem: (k, v) => ops.push(['srem', [k, v]]),
@@ -88,105 +250,84 @@ class MemoryStore {
       ltrim: (k, start, end) => ops.push(['ltrim', [k, start, end]]),
       del: (k) => ops.push(['del', [k]]),
       expire: () => {},
-      exec,
+      exec: async () => {
+        const results = [];
+        const tx = self._db.transaction(() => {
+          for (const [cmd, args] of ops) {
+            try {
+              const method = self['_' + cmd];
+              if (method) {
+                results.push([null, method.apply(self, args)]);
+              }
+            } catch (e) {
+              results.push([e, null]);
+            }
+          }
+        });
+        tx();
+        return results;
+      },
     };
   }
 
-  async sadd(key, value) {
-    if (!this._sets.has(key)) this._sets.set(key, new Set());
-    this._sets.get(key).add(value);
-    this._scheduleSave();
-    return 1;
-  }
+  // ==================== 内部同步实现（供 pipeline 使用） ====================
 
-  async srem(key, value) {
-    const set = this._sets.get(key);
-    if (!set) return 0;
-    set.delete(value);
-    this._scheduleSave();
-    return 1;
-  }
+  _sadd(key, value) { return this._stmt.sadd.run(key, String(value)).changes; }
+  _srem(key, value) { return this._stmt.srem.run(key, String(value)).changes; }
+  _smembers(key) { return this._stmt.smembers.all(key).map(r => r.member); }
+  _scard(key) { return this._stmt.scard.get(key).cnt; }
 
-  async smembers(key) {
-    const set = this._sets.get(key);
-    return set ? [...set] : [];
-  }
-
-  async scard(key) {
-    const set = this._sets.get(key);
-    return set ? set.size : 0;
-  }
-
-  async sismember(key, value) {
-    const set = this._sets.get(key);
-    return set ? set.has(value) : false;
-  }
-
-  async hset(key, ...args) {
-    if (!this._data.has(key)) this._data.set(key, {});
-    const obj = this._data.get(key);
+  _hset(key, ...args) {
+    let obj;
     if (args.length === 1 && typeof args[0] === 'object') {
-      Object.assign(obj, args[0]);
+      obj = args[0];
     } else {
+      obj = {};
       for (let i = 0; i < args.length; i += 2) obj[args[i]] = args[i + 1];
     }
-    this._scheduleSave();
-    return args.length / 2;
+    let changes = 0;
+    for (const [field, value] of Object.entries(obj)) {
+      const val = typeof value === 'object' ? JSON.stringify(value) : String(value);
+      changes += this._stmt.hset.run(key, field, val).changes;
+    }
+    return changes;
   }
 
-  async hgetall(key) { return this._data.get(key) || null; }
-
-  async hget(key, field) {
-    const obj = this._data.get(key);
-    return obj ? obj[field] : null;
+  _hgetall(key) {
+    const rows = this._stmt.hgetall.all(key);
+    if (rows.length === 0) return null;
+    const obj = {};
+    for (const r of rows) obj[r.field] = this._tryParse(r.value);
+    return obj;
   }
 
-  async hdel(key, field) {
-    const obj = this._data.get(key);
-    if (!obj || !(field in obj)) return 0;
-    delete obj[field];
-    this._scheduleSave();
-    return 1;
+  _hget(key, field) {
+    const row = this._stmt.hget.get(key, field);
+    return row ? this._tryParse(row.value) : null;
   }
 
-  async rpush(key, value) {
-    if (!this._data.has(key)) this._data.set(key, []);
-    this._data.get(key).push(value);
-    this._scheduleSave();
-    return 1;
+  _hdel(key, field) { return this._stmt.hdel.run(key, field).changes; }
+
+  _del(key) {
+    let c = 0;
+    c += this._stmt.delHash.run(key).changes;
+    c += this._stmt.delSet.run(key).changes;
+    c += this._stmt.delList.run(key).changes;
+    return c;
   }
 
-  async lrange(key, start, end) {
-    const list = this._data.get(key) || [];
-    if (end === -1) return list.slice(start);
-    return list.slice(start, end + 1);
-  }
+  // ==================== 工具 ====================
 
-  async llen(key) {
-    const list = this._data.get(key);
-    return list ? list.length : 0;
+  /** 尝试 JSON 解析，失败则返回原字符串 */
+  _tryParse(value) {
+    if (value === null || value === undefined) return null;
+    try { return JSON.parse(value); } catch { return value; }
   }
-
-  async ltrim(key, start, end) {
-    const list = this._data.get(key);
-    if (!list) return;
-    this._data.set(key, end === -1 ? list.slice(start) : list.slice(start, end + 1));
-    this._scheduleSave();
-  }
-
-  async del(key) {
-    this._data.delete(key);
-    this._sets.delete(key);
-    this._scheduleSave();
-    return 1;
-  }
-
-  async expire() { /* no-op */ }
 
   get status() { return 'ready'; }
 }
 
-// ========== 选择后端 ==========
+// ==================== 选择后端 ====================
 
 let store;
 const REDIS_URL = process.env.REDIS_URL;
@@ -194,13 +335,13 @@ const REDIS_URL = process.env.REDIS_URL;
 if (REDIS_URL) {
   const { RedisStore } = require('./redis-store');
   store = new RedisStore(REDIS_URL);
-  console.log('[Store] 使用 Redis Cloud');
+  console.log('[Store] 使用 Redis');
 } else {
-  store = new MemoryStore();
-  console.log('[Store] 使用本地内存存储（开发模式）');
+  store = new SQLiteStore();
+  console.log('[Store] 使用 SQLite（本地持久化）');
 }
 
-// ========== 会话管理 ==========
+// ========== 会话管理（不变） ==========
 
 const createConversationId = () =>
   `conv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;

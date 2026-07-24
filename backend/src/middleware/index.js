@@ -8,9 +8,33 @@ const morgan = require('morgan');
 const cookieParser = require('cookie-parser');
 const rateLimit = require('express-rate-limit');
 const config = require('../config');
+const { createTraceId, logEvent, sanitizeTraceId } = require('../services/observability.service');
 
 function applyMiddleware(app) {
   const isProduction = process.env.NODE_ENV === 'production';
+
+  app.use((req, res, next) => {
+    const incomingTraceId = req.get('x-trace-id') || req.get('x-request-id');
+    const traceId = sanitizeTraceId(incomingTraceId) || createTraceId('req');
+    req.traceId = traceId;
+    res.locals.traceId = traceId;
+    res.setHeader('X-Trace-Id', traceId);
+
+    const startedAt = Date.now();
+    res.on('finish', () => {
+      if (process.env.HTTP_TRACE_LOGS === 'false') return;
+      logEvent('info', 'http_request', {
+        traceId,
+        method: req.method,
+        path: req.originalUrl,
+        statusCode: res.statusCode,
+        durationMs: Date.now() - startedAt,
+        userId: req.userId || null,
+      });
+    });
+
+    next();
+  });
 
   // CORS — 允许前端跨域 + cookie
   // 生产环境必须显式配置 CORS_ORIGIN 白名单，缺失时 fail-fast 而非回退到 origin:true，
@@ -49,8 +73,11 @@ function applyMiddleware(app) {
     },
   }));
 
-  // 请求日志
-  app.use(morgan(isProduction ? 'combined' : 'dev'));
+  morgan.token('traceId', req => req.traceId || '-');
+  const logFormat = isProduction
+    ? ':remote-addr - :remote-user [:date[clf]] ":method :url HTTP/:http-version" :status :res[content-length] ":referrer" ":user-agent" traceId=:traceId'
+    : ':method :url :status :response-time ms traceId=:traceId';
+  app.use(morgan(logFormat));
 
   // 请求体解析
   app.use(express.json({ limit: '1mb' }));
@@ -73,3 +100,5 @@ function applyMiddleware(app) {
 }
 
 module.exports = { applyMiddleware };
+
+

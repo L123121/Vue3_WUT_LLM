@@ -18,8 +18,11 @@ class MetricsService {
   reset() {
     // 延迟记录（毫秒）
     this.latencies = {
+      embedding: [],     // Embedding 生成
       ai: [],            // LLM 直接调用
-      chatdoc: [],       // ChatDoc 检索 + 生成
+      chatdoc: [],       // ChatDoc 检索（保留，兼容旧指标）
+      vectorSearch: [],  // Milvus 向量检索
+      keywordSearch: [], // 关键词检索
       parentChild: [],   // 父子召回增强阶段
       total: [],         // 端到端总延迟
       schoolApi: [],     // 教务接口调用
@@ -46,13 +49,18 @@ class MetricsService {
 
     // 延迟分段（用于计算 p50/p95/p99）
     this.latencyBuckets = {
+      embedding: { total: 0, count: 0 },
       ai: { total: 0, count: 0 },
       chatdoc: { total: 0, count: 0 },
+      vectorSearch: { total: 0, count: 0 },
+      keywordSearch: { total: 0, count: 0 },
       parentChild: { total: 0, count: 0 },
       total: { total: 0, count: 0 },
       schoolApi: { total: 0, count: 0 },
       rerank: { total: 0, count: 0 }
     };
+
+    this.stageStats = {};
 
     this.startTime = Date.now();
   }
@@ -61,7 +69,7 @@ class MetricsService {
 
   /**
    * 记录单次延迟
-   * @param {'ai'|'chatdoc'|'parentChild'|'total'|'schoolApi'|'rerank'} type
+   * @param {'ai'|'chatdoc'|'vectorSearch'|'parentChild'|'total'|'schoolApi'|'rerank'} type
    * @param {number} ms - 毫秒
    */
   recordLatency(type, ms) {
@@ -69,6 +77,26 @@ class MetricsService {
     this.latencies[type].push(ms);
     this.latencyBuckets[type].total += ms;
     this.latencyBuckets[type].count++;
+  }
+
+  recordStage(type, durationMs = 0, success = true, errorType = null) {
+    const key = type || 'unknown';
+    if (!this.stageStats[key]) {
+      this.stageStats[key] = { success: 0, failure: 0, totalDuration: 0, errors: {} };
+    }
+
+    const stats = this.stageStats[key];
+    if (success) stats.success++;
+    else stats.failure++;
+
+    const parsedDuration = Number(durationMs);
+    if (Number.isFinite(parsedDuration) && parsedDuration >= 0) {
+      stats.totalDuration += parsedDuration;
+    }
+
+    if (!success && errorType) {
+      stats.errors[errorType] = (stats.errors[errorType] || 0) + 1;
+    }
   }
 
   /**
@@ -112,6 +140,22 @@ class MetricsService {
   _avg(arr) {
     if (!arr || arr.length === 0) return 0;
     return arr.reduce((s, v) => s + v, 0) / arr.length;
+  }
+
+  _getStageSummary() {
+    const summary = {};
+    for (const [name, stats] of Object.entries(this.stageStats)) {
+      const total = stats.success + stats.failure;
+      summary[name] = {
+        success: stats.success,
+        failure: stats.failure,
+        total,
+        successRate: total > 0 ? `${((stats.success / total) * 100).toFixed(1)}%` : '0%',
+        avgDurationMs: total > 0 ? Math.round(stats.totalDuration / total) : 0,
+        errors: stats.errors,
+      };
+    }
+    return summary;
   }
 
   getSummary() {
@@ -163,6 +207,14 @@ class MetricsService {
         ...this.cleaning,
         totalIntercepted,
         interceptRate: `${interceptRate}%`
+      },
+      observability: {
+        stages: this._getStageSummary(),
+        alertThresholds: {
+          errorRate: '>5%',
+          llmFailureRate: '>10%',
+          p95LatencyMs: 5000,
+        },
       },
       timestamp: new Date().toISOString()
     };
@@ -319,3 +371,4 @@ const { aiService } = require('./ai.service');
 }
 
 module.exports = { MetricsService, metrics: new MetricsService() };
+

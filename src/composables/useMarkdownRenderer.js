@@ -3,7 +3,7 @@ import MarkdownIt from 'markdown-it';
 import DOMPurify from 'dompurify';
 import { useCodeHighlighter } from './useCodeHighlighter.js';
 import { useMarkdownWorker } from './useMarkdownWorker.js';
-import { ALLOWED_TAGS, ALLOWED_ATTR, completeMarkdown, escapeHtml, createLinkSecurityRule } from '../utils/markdownConfig.js';
+import { ALLOWED_TAGS, ALLOWED_ATTR, completeMarkdown, createLinkSecurityRule } from '../utils/markdownConfig.js';
 
 /**
  * Markdown 渲染 composable

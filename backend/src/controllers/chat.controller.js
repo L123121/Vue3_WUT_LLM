@@ -1,130 +1,58 @@
+/**
+ * chat.controller — 精简对话控制器（替代原 agent 驱动的 chat.controller）
+ *
+ * 移除了 ReAct Agent 多步推理循环，直接使用 RAG 检索 + LLM 生成。
+ * 校园场景 80%+ 是事实查询，不需要 Agent 的多步规划。
+ * 历史：2026-07-21 移除 Agent 系统，回归 RAG 对话模式。
+ */
+
 "use strict";
 
-const { AgentService } = require('../services/agent.service');
+const { RagService } = require('../services/rag.service');
+const { ChatService } = require('../services/chat.service');
 const { aiService } = require('../services/ai.service');
-const { metrics } = require('../services/metrics.service');
 
-// 单例服务
-let _agentService = null;
-let _memoryService = null;
+const ragService = new RagService(aiService);
+const chatService = new ChatService(aiService);
 
 /**
- * 注入 memoryService（由 routes/register.js 在启动时调用）。
- * 避免 controller 反向 require routes/index 造成循环依赖。
+ * 非流式聊天接口
  */
-const setMemoryService = (ms) => {
-  _memoryService = ms;
-  if (_agentService) _agentService.memoryService = ms;
-};
-
-const getAgentService = () => {
-  if (!_agentService) {
-    _agentService = new AgentService(aiService);
-    _agentService.memoryService = _memoryService;
-  }
-  return _agentService;
-};
-
-const MAX_MESSAGE_LENGTH = 50000;
-const MAX_HISTORY_LENGTH = 50;
-
-// ==================== 非流式聊天 ====================
-
-/**
- * POST /api — 非流式聊天（默认 Agent 意图路由）
- * POST /api/chat — 兼容接口
- */
-const chatHandler = async (req, res) => {
+const chatHandler = async (req, res, next) => {
   try {
-    const { message, history = [], conversationId } = req.body;
+    const { message, history } = req.body;
 
-    if (!message || typeof message !== 'string' || message.trim() === '') {
-      return res.status(400).json({
-        success: false,
-        error: '消息内容不能为空',
-        code: 'MESSAGE_EMPTY',
-      });
-    }
-
-    if (message.length > MAX_MESSAGE_LENGTH) {
-      return res.status(400).json({
-        success: false,
-        error: `消息内容过长，最多${MAX_MESSAGE_LENGTH}个字符`,
-        code: 'MESSAGE_TOO_LONG',
-      });
-    }
-
-    if (!Array.isArray(history) || history.length > MAX_HISTORY_LENGTH) {
-      return res.status(400).json({
-        success: false,
-        error: `历史消息过多，最多${MAX_HISTORY_LENGTH}条`,
-        code: 'HISTORY_TOO_LONG',
-      });
-    }
-
-    // 默认走 Agent 意图路由
-    const userId = req.userId || null;
-    console.log(`[Chat] Agent 非流式, userId: ${userId || 'anonymous'}`);
-
-    const chunks = [];
-    for await (const chunk of getAgentService().chatStream(message.trim(), history, { userId })) {
-      if (chunk.type === 'content' && chunk.content) {
-        chunks.push(chunk.content);
-      }
-    }
-
-    const reply = chunks.join('');
-    res.json({
-      success: true,
-      data: {
-        reply,
-        timestamp: new Date().toISOString(),
-        messageId: `msg_${Date.now()}`,
-        model: getAgentService().aiService.model,
-        via: 'agent',
-      },
-    });
-  } catch (error) {
-    console.error('[Chat] request failed:', error);
-    res.status(500).json({
-      success: false,
-      error: 'AI服务处理失败',
-      code: 'SERVER_ERROR',
-    });
-  }
-};
-
-// ==================== SSE 流式聊天 ====================
-
-const streamHandler = async (req, res) => {
-  const abortController = new AbortController();
-  req.on("close", () => {
-    if (!abortController.signal.aborted) {
-      abortController.abort();
-      console.log("[Stream] 客户端断开连接，已发出 abort 信号");
-    }
-  });
-
-  try {
-    const { message, history = [], conversationId, files = [], skillPrompt = '' } = req.body;
-
-    if (!message || typeof message !== 'string' || message.trim() === '') {
+    if (!message) {
       return res.status(400).json({ success: false, error: '消息内容不能为空' });
     }
 
-    if (message.length > MAX_MESSAGE_LENGTH) {
-      return res.status(400).json({
-        success: false,
-        error: `消息内容过长，最多${MAX_MESSAGE_LENGTH}个字符`,
-      });
+    const result = await ragService.chat(message, history || [], {
+      traceId: req.traceId,
+      userId: req.userId,
+      conversationId: req.body?.conversationId || null,
+    });
+
+    res.json({ success: true, data: result });
+  } catch (error) {
+    console.error('[Chat] 非流式错误:', error);
+    next(error);
+  }
+};
+
+/**
+ * 流式聊天接口（SSE）— 直接使用 RAG 检索管道
+ */
+const streamHandler = async (req, res, next) => {
+  try {
+    const { message, history } = req.body;
+
+    if (!message) {
+      return res.status(400).json({ error: '消息内容不能为空' });
     }
 
-    if (!Array.isArray(history) || history.length > MAX_HISTORY_LENGTH) {
-      return res.status(400).json({
-        success: false,
-        error: `历史消息过多，最多${MAX_HISTORY_LENGTH}条`,
-      });
-    }
+    // 检测是否为简单问候/闲聊（不触发 RAG 检索）
+    const trimmed = message.trim();
+    const isSimpleChat = /^(你好|您好|hi|hello|嗨|hey|在吗|thanks|谢谢|bye|再见|早上好|晚上好|下午好)[!！.。]?$/i.test(trimmed);
 
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
@@ -132,144 +60,67 @@ const streamHandler = async (req, res) => {
     res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders();
 
-    // 默认走 Agent 意图路由
-    const userId = req.userId || null;
-    console.log(`[Stream] Agent 模式(默认), userId: ${userId || 'anonymous'}`);
-
-    for await (const chunk of getAgentService().chatStream(message.trim(), history, { userId, skillPrompt, files, signal: abortController.signal })) {
-      if (abortController.signal.aborted) break;
-
-      switch (chunk.type) {
-        case 'thinking':
-          res.write(`data: ${JSON.stringify({ thinking: chunk.content })}\n\n`);
-          break;
-        case 'tool_call':
-          res.write(`data: ${JSON.stringify({ tool_call: chunk.tool_call })}\n\n`);
-          break;
-        case 'tool_result':
-          res.write(`data: ${JSON.stringify({ tool_result: chunk.tool_result })}\n\n`);
-          break;
-        case 'trace':
-          // 推理总览摘要（路由/步数/总耗时/置信度），供前端展示
-          res.write(`data: ${JSON.stringify({ trace: chunk.trace })}\n\n`);
-          break;
-        case 'content':
-          if (chunk.done) {
-            res.write(`data: [DONE]\n\n`);
-          } else {
-            res.write(`data: ${JSON.stringify({ content: chunk.content })}\n\n`);
-          }
-          break;
+    if (isSimpleChat) {
+      // 简单问候直接走 LLM，不检索知识库
+      const systemPrompt = '你是一个友好的校园助手，名字叫"武理小精灵"，回答要简洁亲切。';
+      const chatHistory = [
+        { role: 'system', content: systemPrompt },
+        ...(history || []),
+      ];
+      const stream = aiService.getCompletionStream(message, chatHistory);
+      for await (const chunk of stream) {
+        if (chunk.done) {
+          res.write('data: [DONE]\n\n');
+        } else {
+          res.write(`data: ${JSON.stringify({ content: chunk.content || '' })}\n\n`);
+        }
       }
-    }
-
-    if (!abortController.signal.aborted) {
-      console.log('[Chat] /api/stream completed.');
       res.end();
-    } else {
-      console.log('[Chat] /api/stream 被客户端断开');
-    }
-  } catch (error) {
-    // 连接可能因非 abort 原因断开（TCP reset / 代理断开），此时 aborted=false
-    // 但 res 已不可写——再 res.write 会抛二次错误致连接泄漏，需先检查可写状态。
-    if (!abortController.signal.aborted && !res.writableEnded && !res.destroyed) {
-      console.error('[Chat] /api/stream failed:', error);
-      try {
-        res.write(`data: ${JSON.stringify({ error: '流式响应出错，请重试' })}\n\n`);
-        res.end();
-      } catch (writeErr) {
-        // 写失败（连接刚断）仅记录，不再尝试 end
-        console.warn('[Chat] 错误事件写入失败:', writeErr.message);
-      }
-    } else {
-      console.error('[Chat] /api/stream failed (连接已断):', error.message);
-    }
-  }
-};
-
-/**
- * 生成会话标题
- */
-const generateTitle = async (req, res) => {
-  try {
-    const { message } = req.body;
-    if (!message) {
-      res.status(400).json({ error: 'Message is required' });
       return;
     }
 
-    // 检测纯问候场景，直接返回默认标题
-    const firstLine = message.split('\n')[0].trim();
-    const greetingPattern = /^(你好|您好|hi|hello|嗨|hey|在吗|在不在|早上好|晚上好|下午好)[!！.。]?\s*$/i;
-    if (greetingPattern.test(firstLine)) {
-      return res.json({ title: '新对话' });
+    // 知识问答走 RAG 检索管道
+    for await (const chunk of ragService.chatStream(message, history || [], {
+      traceId: req.traceId,
+      userId: req.userId,
+      conversationId: req.body?.conversationId || null,
+    })) {
+      if (chunk.type === 'retrieval') {
+        // 检索细节不对前端暴露
+        continue;
+      } else if (chunk.type === 'sources') {
+        res.write(`data: ${JSON.stringify({ sources: chunk.sources })}\n\n`);
+      } else if (chunk.type === 'trace') {
+        const outcome = chunk.trace?.outcome || {};
+        res.write(`data: ${JSON.stringify({
+          traceId: chunk.trace?.traceId || req.traceId,
+          rag: {
+            usedRag: outcome.usedRag === true,
+            usedParentChild: outcome.usedParentChild === true,
+            matchedDocs: outcome.matchedDocs || 0,
+            retrievedChunks: outcome.retrievedChunks || 0,
+            fallbackReason: outcome.fallbackReason || null,
+          },
+        })}\n\n`);
+      } else if (chunk.type === 'content') {
+        if (chunk.done) {
+          res.write('data: [DONE]\n\n');
+        } else {
+          res.write(`data: ${JSON.stringify({ content: chunk.content || '' })}\n\n`);
+        }
+      }
     }
 
-    const prompt = `你是一个对话标题生成器。根据用户的问题和AI的回答，生成一个**简短、准确**的标题。
-
-要求：
-- 4-10个汉字，概括对话的核心主题
-- 用日常语言，不要机器翻译腔
-- 不要加引号、冒号、书名号等符号
-- 只输出标题本身，不要任何解释或前缀
-- 重要：用户只说"你好""谢谢"这类问候语时，直接输出"新对话"
-
-示例：
-高等数学期末考试怎么复习？
-建议先梳理教材各章知识点...
-→ 高数复习攻略
-
-Python列表和元组有什么区别？
-列表可变而元组不可变...
-→ Python列表元组区别
-
-帮我写一篇关于人工智能的论文摘要
-本文探讨了人工智能在医疗领域的应用...
-→ AI医疗应用论文
-
-对话内容：
-${message}
-
-标题：`;
-
-    const { aiService } = require('../services/ai.service');
-    const result = await aiService.getCompletion(prompt, []);
-    let title = (result.content || '')
-      .replace(/[""'']/g, '')
-      .replace(/[「」【】《》〈〉：:]/g, '')
-      .trim();
-
-    // 截断过长标题
-    if (title.length > 15) {
-      title = title.slice(0, 15);
-    }
-
-    // 过滤不合格标题（太短、纯问候、无意义）
-    const badTitles = ['你好', '您好', 'hello', 'hi', 'hey', '新对话', '标题', '无标题'];
-    if (!title || title.length < 2 || badTitles.includes(title) || /^(你好|您好|谢谢|感谢|hello|hi)\s*/.test(title)) {
-      const extracted = extractQuestion(message).slice(0, 8);
-      title = extracted || '新对话';
-    }
-
-    // 标题不能太短
-    if (title.length < 2) title = '新对话';
-
-    res.json({ title });
+    res.end();
   } catch (error) {
-    console.error('Generate title error:', error);
-    const { message = '' } = req.body || {};
-    const fallback = extractQuestion(message).slice(0, 8);
-    res.json({ title: fallback || '新会话' });
+    console.error('[Chat Stream] 错误:', error);
+    try {
+      res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
+      res.end();
+    } catch (_) {
+      // 连接已关闭，忽略
+    }
   }
 };
 
-function extractQuestion(message) {
-  if (!message) return '';
-  const match = message.match(/用户问题[：:]\s*(.+?)(?:\s*AI回答|$)/s);
-  if (match && match[1].trim()) {
-    return match[1].trim();
-  }
-  return message.slice(0, 8);
-}
-
-module.exports = { chatHandler, streamHandler, setMemoryService };
+module.exports = { chatHandler, streamHandler };

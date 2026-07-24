@@ -4,7 +4,6 @@
  * Handles large AI responses (>2000 chars) to avoid blocking the UI.
  */
 import MarkdownIt from 'markdown-it';
-import DOMPurify from 'dompurify';
 import hljs from 'highlight.js/lib/core';
 import { ALLOWED_TAGS, ALLOWED_ATTR, completeMarkdown, escapeHtml, createLinkSecurityRule } from '../utils/markdownConfig.js';
 
@@ -98,9 +97,8 @@ self.onmessage = (e) => {
 
   try {
     const raw = md.render(completeMarkdown(content));
-    const sanitized = DOMPurify.sanitize(raw, { ALLOWED_TAGS, ALLOWED_ATTR });
-    self.postMessage({ id, html: sanitized });
+    self.postMessage({ id, html: raw });
   } catch {
-    self.postMessage({ id, html: content });
+    self.postMessage({ id, html: '' });
   }
 };

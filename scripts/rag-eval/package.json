@@ -6,7 +6,15 @@
   "scripts": {
     "eval": "node eval-run.js",
     "eval:retrieval": "node eval-retrieval.js",
-    "eval:ragas": "node eval-ragas.js"
+    "eval:parent-rerank:collect": "node collect-parent-rerank-eval.js",
+    "eval:parent-rerank": "node eval-parent-rerank.js",
+    "eval:ragas": "node eval-ragas.js",
+    "docs": "node list-docs.js",
+    "eval:docs": "node list-docs.js",
+    "eval:ragas:export": "node eval-ragas.js --export-only",
+    "eval:ragas:install": "python -m pip install -r requirements.txt",
+    "docs:import-test": "node import-test-doc.js",
+    "eval:ragas:discrete": "node eval-ragas.js --dataset dataset/discrete-structure-qa.json"
   },
   "dependencies": {
     "dotenv": "^16.3.1"

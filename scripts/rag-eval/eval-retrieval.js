@@ -1,9 +1,6 @@
 /**
  * RAG 检索质量评测
- * 指标：Recall@K, Precision@K, MRR, Hit Rate
- *
- * 由于讯飞 ChatDoc 检索是黑盒，只能从 fileRefer 获取文件级引用，
- * 无法获取相似度分数，因此不做 NDCG 等需要分数的指标。
+ * 指标：Recall@K, Precision@K, MRR, Hit Rate, nDCG@K, Bad Case 分类
  */
 
 import { readFileSync, writeFileSync, mkdirSync } from 'fs';
@@ -14,77 +11,137 @@ import { ragQuery, withRetry, checkBackendHealth } from './utils/api-client.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATASET_PATH = resolve(__dirname, 'dataset/campus-qa.json');
 const RESULTS_DIR = resolve(__dirname, 'results');
+const EVAL_KS = [1, 3, 5];
 
 mkdirSync(RESULTS_DIR, { recursive: true });
 
-/**
- * 计算单条查询的检索指标
- */
-function computeQueryMetrics(retrievedIds, relevantIds) {
-  const retrievedSet = new Set(retrievedIds);
+function getValidRelevantIds(relevantIds = []) {
+  return relevantIds.filter(id => id && !id.startsWith('TODO'));
+}
+
+function computeDcg(retrievedIds, relevantSet, k) {
+  return retrievedIds.slice(0, k).reduce((score, docId, index) => {
+    if (!relevantSet.has(docId)) return score;
+    return score + 1 / Math.log2(index + 2);
+  }, 0);
+}
+
+function computeNdcgAtK(retrievedIds, relevantIds, k) {
   const relevantSet = new Set(relevantIds);
+  if (!relevantSet.size) return 0;
 
-  // 过滤掉占位符 TODO_FILL_DOC_ID
-  const validRelevantIds = relevantIds.filter(id => !id.startsWith('TODO'));
-  if (validRelevantIds.length === 0) {
-    return null; // 跳过未填写文档 ID 的条目
-  }
+  const dcg = computeDcg(retrievedIds, relevantSet, k);
+  const idealHits = Math.min(relevantSet.size, k);
+  const ideal = Array.from({ length: idealHits }).reduce((sum, _, index) => sum + 1 / Math.log2(index + 2), 0);
+  return ideal > 0 ? dcg / ideal : 0;
+}
 
+function computeQueryMetrics(rawRetrievedIds, relevantIds) {
+  const validRelevantIds = getValidRelevantIds(relevantIds);
+  if (validRelevantIds.length === 0) return null;
+
+  // 父子段落架构下，多段落返回相同 docId，按 docId 去重后再算指标
+  const retrievedIds = [...new Set(rawRetrievedIds)];
+  const retrievedSet = new Set(retrievedIds);
   const hits = validRelevantIds.filter(id => retrievedSet.has(id));
   const hitCount = hits.length;
-
-  // Recall@K: 命中的相关文档数 / 总相关文档数
-  const recall = validRelevantIds.length > 0 ? hitCount / validRelevantIds.length : 0;
-
-  // Precision@K: 命中的相关文档数 / 检索返回的文档总数
+  const recall = hitCount / validRelevantIds.length;
   const precision = retrievedIds.length > 0 ? hitCount / retrievedIds.length : 0;
 
-  // MRR: 第一个相关结果排名的倒数
   let reciprocalRank = 0;
-  for (let i = 0; i < retrievedIds.length; i++) {
-    if (validRelevantIds.includes(retrievedIds[i])) {
-      reciprocalRank = 1 / (i + 1);
+  let firstRelevantRank = null;
+  for (let index = 0; index < retrievedIds.length; index++) {
+    if (validRelevantIds.includes(retrievedIds[index])) {
+      firstRelevantRank = index + 1;
+      reciprocalRank = 1 / firstRelevantRank;
       break;
     }
   }
 
-  // Hit Rate: 是否至少命中一个相关文档
-  const hitRate = hitCount > 0 ? 1 : 0;
+  // nDCG 上限为 1.0，防止去重前的重复 docId 导致分数溢出
+  const rawNdcg = Object.fromEntries(EVAL_KS.map(k => [`ndcg@${k}`, computeNdcgAtK(retrievedIds, validRelevantIds, k)]));
+  const ndcg = Object.fromEntries(Object.entries(rawNdcg).map(([k, v]) => [k, Math.min(v, 1.0)]));
 
-  return { recall, precision, reciprocalRank, hitRate, hitCount, totalRelevant: validRelevantIds.length, totalRetrieved: retrievedIds.length };
+  const recallAtK = Object.fromEntries(EVAL_KS.map(k => {
+    const topK = retrievedIds.slice(0, k);
+    const topHits = topK.filter(id => validRelevantIds.includes(id)).length;
+    return [`recall@${k}`, topHits / validRelevantIds.length];
+  }));
+
+  return {
+    recall,
+    precision,
+    reciprocalRank,
+    hitRate: hitCount > 0 ? 1 : 0,
+    hitCount,
+    totalRelevant: validRelevantIds.length,
+    totalRetrieved: retrievedIds.length,
+    firstRelevantRank,
+    missedRelevantIds: validRelevantIds.filter(id => !retrievedSet.has(id)),
+    ...recallAtK,
+    ...ndcg,
+  };
 }
 
-/**
- * 计算 Recall@K (K = 1, 3, 5)
- */
-function computeRecallAtK(allResults) {
-  const ks = [1, 3, 5];
-  const recallAtK = {};
+function classifyBadCase({ metrics, retrievedIds, answer, error }) {
+  if (error) return { type: 'api_error', reason: error };
+  if (!metrics) return { type: 'skipped', reason: '未填写有效 relevant_doc_ids' };
+  if (retrievedIds.length === 0) return { type: 'no_retrieval', reason: '没有返回任何来源文档' };
+  if (metrics.hitRate === 0) return { type: 'recall_miss', reason: 'TopK 来源没有命中标准文档' };
+  if (metrics.firstRelevantRank && metrics.firstRelevantRank > 3) {
+    return { type: 'ranking_error', reason: `首个相关文档排在第 ${metrics.firstRelevantRank} 位` };
+  }
+  if (metrics.precision < 0.34) return { type: 'noisy_context', reason: '命中但无关来源比例偏高' };
 
-  for (const k of ks) {
-    let totalRecall = 0;
-    let count = 0;
+  const refused = /没有检索到|资料不足|知识库中没有|无法回答/.test(answer || '');
+  if (refused && metrics.hitRate > 0) return { type: 'generation_refusal', reason: '已命中来源但生成阶段拒答' };
 
-    for (const result of allResults) {
-      if (!result.metrics) continue;
-      const relevantSet = new Set(result.groundTruthDocIds.filter(id => !id.startsWith('TODO')));
-      if (relevantSet.size === 0) continue;
+  return { type: 'pass', reason: '检索命中且排序可接受' };
+}
 
-      const topK = result.retrievedIds.slice(0, k);
-      const hits = topK.filter(id => relevantSet.has(id)).length;
-      totalRecall += hits / relevantSet.size;
-      count++;
-    }
+function averageMetric(results, field) {
+  if (!results.length) return 0;
+  return results.reduce((sum, result) => sum + (result.metrics?.[field] || 0), 0) / results.length;
+}
 
-    recallAtK[`recall@${k}`] = count > 0 ? totalRecall / count : 0;
+function percent(value) {
+  return `${(value * 100).toFixed(1)}%`;
+}
+
+function buildGroupedStats(validResults, groupKey) {
+  const grouped = {};
+  for (const result of validResults) {
+    const key = result[groupKey] || 'unknown';
+    if (!grouped[key]) grouped[key] = { count: 0, recall: 0, precision: 0, mrr: 0, ndcg5: 0, hitRate: 0 };
+    grouped[key].count++;
+    grouped[key].recall += result.metrics.recall;
+    grouped[key].precision += result.metrics.precision;
+    grouped[key].mrr += result.metrics.reciprocalRank;
+    grouped[key].ndcg5 += result.metrics['ndcg@5'];
+    grouped[key].hitRate += result.metrics.hitRate;
   }
 
-  return recallAtK;
+  for (const stats of Object.values(grouped)) {
+    stats.recall = percent(stats.recall / stats.count);
+    stats.precision = percent(stats.precision / stats.count);
+    stats.hitRate = percent(stats.hitRate / stats.count);
+    stats.mrr = (stats.mrr / stats.count).toFixed(3);
+    stats.ndcg5 = (stats.ndcg5 / stats.count).toFixed(3);
+  }
+
+  return grouped;
 }
 
-/**
- * 运行检索质量评测
- */
+function buildBadCaseStats(results) {
+  const stats = {};
+  for (const result of results) {
+    const type = result.badCase?.type || 'unknown';
+    if (!stats[type]) stats[type] = 0;
+    stats[type]++;
+  }
+  return stats;
+}
+
 export async function runRetrievalEval(options = {}) {
   const { sampleSize = 0, verbose = true } = options;
 
@@ -92,7 +149,6 @@ export async function runRetrievalEval(options = {}) {
   console.log('  RAG 检索质量评测');
   console.log('========================================\n');
 
-  // 检查后端
   const healthy = await checkBackendHealth();
   if (!healthy) {
     console.error('❌ 后端服务不可用，请先启动后端: cd backend && npm run dev');
@@ -100,7 +156,6 @@ export async function runRetrievalEval(options = {}) {
   }
   console.log('✅ 后端服务正常\n');
 
-  // 加载评测集
   const dataset = JSON.parse(readFileSync(DATASET_PATH, 'utf-8'));
   const testSet = sampleSize > 0 ? dataset.slice(0, sampleSize) : dataset;
   console.log(`📋 评测集: ${testSet.length} 条（共 ${dataset.length} 条）\n`);
@@ -108,12 +163,11 @@ export async function runRetrievalEval(options = {}) {
   const results = [];
   let skipped = 0;
 
-  for (let i = 0; i < testSet.length; i++) {
-    const item = testSet[i];
-    const progress = `[${i + 1}/${testSet.length}]`;
+  for (let index = 0; index < testSet.length; index++) {
+    const item = testSet[index];
+    const progress = `[${index + 1}/${testSet.length}]`;
+    const validRelevantIds = getValidRelevantIds(item.relevant_doc_ids);
 
-    // 过滤占位符
-    const validRelevantIds = item.relevant_doc_ids.filter(id => !id.startsWith('TODO'));
     if (validRelevantIds.length === 0) {
       if (verbose) console.log(`${progress} ⏭️  ${item.id}: ${item.question.substring(0, 30)}... (未填写文档ID，跳过)`);
       skipped++;
@@ -123,12 +177,10 @@ export async function runRetrievalEval(options = {}) {
     try {
       if (verbose) process.stdout.write(`${progress} 🔍 ${item.id}: ${item.question.substring(0, 40)}...`);
 
-      const { answer, sources } = await withRetry(() => ragQuery(item.question));
-
-      // 提取检索到的文档 ID
-      const retrievedIds = sources.map(s => s.id).filter(Boolean);
-
+      const { answer, sources, retrieval } = await withRetry(() => ragQuery(item.question, [], { category: item.category }));
+      const retrievedIds = sources.map(source => source.id).filter(Boolean);
       const metrics = computeQueryMetrics(retrievedIds, item.relevant_doc_ids);
+      const badCase = classifyBadCase({ metrics, retrievedIds, answer });
 
       results.push({
         id: item.id,
@@ -137,16 +189,19 @@ export async function runRetrievalEval(options = {}) {
         difficulty: item.difficulty,
         groundTruthDocIds: item.relevant_doc_ids,
         retrievedIds,
+        sources,
         metrics,
-        answer: answer.substring(0, 200) // 只保留前 200 字用于报告
+        badCase,
+        retrieval,
+        answer: answer.substring(0, 300),
       });
 
       if (verbose) {
-        const status = metrics && metrics.hitRate ? '✅' : '❌';
-        const recall = metrics ? (metrics.recall * 100).toFixed(0) : 'N/A';
-        console.log(` ${status} recall=${recall}%`);
+        const status = badCase.type === 'pass' ? '✅' : '⚠️';
+        console.log(` ${status} recall=${percent(metrics.recall)} ndcg@5=${metrics['ndcg@5'].toFixed(3)} badCase=${badCase.type}`);
       }
     } catch (err) {
+      const badCase = classifyBadCase({ error: err.message, retrievedIds: [], answer: '' });
       console.error(` ❌ 错误: ${err.message}`);
       results.push({
         id: item.id,
@@ -156,13 +211,13 @@ export async function runRetrievalEval(options = {}) {
         groundTruthDocIds: item.relevant_doc_ids,
         retrievedIds: [],
         metrics: null,
-        error: err.message
+        badCase,
+        error: err.message,
       });
     }
   }
 
-  // 汇总统计
-  const validResults = results.filter(r => r.metrics !== null);
+  const validResults = results.filter(result => result.metrics !== null);
   if (validResults.length === 0) {
     console.log('\n⚠️  没有有效的评测结果（所有条目都缺少文档 ID）');
     console.log('   请先编辑 dataset/campus-qa.json，将 TODO_FILL_DOC_ID 替换为实际的文档 ID');
@@ -170,83 +225,56 @@ export async function runRetrievalEval(options = {}) {
     return null;
   }
 
-  const avgRecall = validResults.reduce((s, r) => s + r.metrics.recall, 0) / validResults.length;
-  const avgPrecision = validResults.reduce((s, r) => s + r.metrics.precision, 0) / validResults.length;
-  const avgMRR = validResults.reduce((s, r) => s + r.metrics.reciprocalRank, 0) / validResults.length;
-  const hitRate = validResults.filter(r => r.metrics.hitRate > 0).length / validResults.length;
-  const recallAtK = computeRecallAtK(results);
+  const overall = {
+    recall: percent(averageMetric(validResults, 'recall')),
+    precision: percent(averageMetric(validResults, 'precision')),
+    mrr: averageMetric(validResults, 'reciprocalRank').toFixed(3),
+    hitRate: percent(averageMetric(validResults, 'hitRate')),
+    ...Object.fromEntries(EVAL_KS.map(k => [`recall@${k}`, percent(averageMetric(validResults, `recall@${k}`))])),
+    ...Object.fromEntries(EVAL_KS.map(k => [`ndcg@${k}`, averageMetric(validResults, `ndcg@${k}`).toFixed(3)])),
+  };
 
-  // 按类别统计
-  const byCategory = {};
-  for (const r of validResults) {
-    if (!byCategory[r.category]) byCategory[r.category] = { count: 0, recall: 0, precision: 0, mrr: 0 };
-    byCategory[r.category].count++;
-    byCategory[r.category].recall += r.metrics.recall;
-    byCategory[r.category].precision += r.metrics.precision;
-    byCategory[r.category].mrr += r.metrics.reciprocalRank;
-  }
-  for (const [cat, stats] of Object.entries(byCategory)) {
-    stats.recall = (stats.recall / stats.count * 100).toFixed(1) + '%';
-    stats.precision = (stats.precision / stats.count * 100).toFixed(1) + '%';
-    stats.mrr = (stats.mrr / stats.count).toFixed(3);
-  }
-
-  // 按难度统计
-  const byDifficulty = {};
-  for (const r of validResults) {
-    if (!byDifficulty[r.difficulty]) byDifficulty[r.difficulty] = { count: 0, recall: 0, hitRate: 0 };
-    byDifficulty[r.difficulty].count++;
-    byDifficulty[r.difficulty].recall += r.metrics.recall;
-    byDifficulty[r.difficulty].hitRate += r.metrics.hitRate;
-  }
-  for (const [diff, stats] of Object.entries(byDifficulty)) {
-    stats.recall = (stats.recall / stats.count * 100).toFixed(1) + '%';
-    stats.hitRate = (stats.hitRate / stats.count * 100).toFixed(1) + '%';
-  }
-
+  const badCases = results.filter(result => result.badCase && result.badCase.type !== 'pass' && result.badCase.type !== 'skipped');
   const summary = {
     total: testSet.length,
     evaluated: validResults.length,
     skipped,
-    overall: {
-      recall: (avgRecall * 100).toFixed(1) + '%',
-      precision: (avgPrecision * 100).toFixed(1) + '%',
-      mrr: avgMRR.toFixed(3),
-      hitRate: (hitRate * 100).toFixed(1) + '%',
-      ...Object.fromEntries(Object.entries(recallAtK).map(([k, v]) => [k, (v * 100).toFixed(1) + '%']))
-    },
-    byCategory,
-    byDifficulty
+    overall,
+    byCategory: buildGroupedStats(validResults, 'category'),
+    byDifficulty: buildGroupedStats(validResults, 'difficulty'),
+    byBadCase: buildBadCaseStats(results),
+    badCaseCount: badCases.length,
   };
 
-  // 输出结果
   console.log('\n\n📊 检索质量评测结果');
   console.log('─────────────────────────────────');
   console.log(`  有效样本: ${validResults.length} / ${testSet.length}`);
   console.log(`  跳过(无文档ID): ${skipped}`);
-  console.log(`  错误: ${results.filter(r => r.error).length}`);
-  console.log('─────────────────────────────────');
-  console.log('  整体指标:');
-  console.log(`    Recall:     ${summary.overall.recall}`);
-  console.log(`    Precision:  ${summary.overall.precision}`);
-  console.log(`    MRR:        ${summary.overall.mrr}`);
-  console.log(`    Hit Rate:   ${summary.overall.hitRate}`);
-  for (const [k, v] of Object.entries(recallAtK)) {
-    console.log(`    ${k}: ${(v * 100).toFixed(1)}%`);
-  }
+  console.log(`  Recall: ${summary.overall.recall}`);
+  console.log(`  Precision: ${summary.overall.precision}`);
+  console.log(`  Hit Rate: ${summary.overall.hitRate}`);
+  console.log(`  MRR: ${summary.overall.mrr}`);
+  console.log(`  nDCG@5: ${summary.overall['ndcg@5']}`);
   console.log('─────────────────────────────────');
   console.log('  按类别:');
-  for (const [cat, stats] of Object.entries(byCategory)) {
-    console.log(`    ${cat}: recall=${stats.recall} precision=${stats.precision} mrr=${stats.mrr} (n=${stats.count})`);
+  for (const [category, stats] of Object.entries(summary.byCategory)) {
+    console.log(`    ${category}: recall=${stats.recall} precision=${stats.precision} mrr=${stats.mrr} ndcg@5=${stats.ndcg5} (n=${stats.count})`);
   }
   console.log('─────────────────────────────────');
-  console.log('  按难度:');
-  for (const [diff, stats] of Object.entries(byDifficulty)) {
-    console.log(`    ${diff}: recall=${stats.recall} hitRate=${stats.hitRate} (n=${stats.count})`);
+  console.log('  Bad Case 分类:');
+  for (const [type, count] of Object.entries(summary.byBadCase)) {
+    console.log(`    ${type}: ${count}`);
   }
 
-  // 保存结果
-  const output = { summary, results, timestamp: new Date().toISOString() };
+  if (badCases.length > 0) {
+    console.log('─────────────────────────────────');
+    console.log('  Bad Case 示例:');
+    for (const item of badCases.slice(0, 10)) {
+      console.log(`    ${item.id} [${item.badCase.type}] ${item.badCase.reason}`);
+    }
+  }
+
+  const output = { summary, results, badCases, timestamp: new Date().toISOString() };
   const outputPath = resolve(RESULTS_DIR, 'retrieval-results.json');
   writeFileSync(outputPath, JSON.stringify(output, null, 2));
   console.log(`\n💾 结果已保存: ${outputPath}`);
@@ -254,7 +282,6 @@ export async function runRetrievalEval(options = {}) {
   return output;
 }
 
-// 直接运行
 if (process.argv[1] && process.argv[1].includes('eval-retrieval')) {
   runRetrievalEval().catch(console.error);
 }

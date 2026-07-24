@@ -1,7 +1,9 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
+import { useRoute } from 'vue-router';
 import { getDocuments, addDocument, deleteDocument, getStats, uploadFile, getDocumentContent } from '../api/rag.js';
 import { useToastStore } from '../stores/toast.store.js';
+import MarkdownRenderer from '../components/chat/MarkdownRenderer.vue';
 import {
   Database,
   Plus,
@@ -12,10 +14,12 @@ import {
   X,
   FileUp,
   File,
-  Eye
+  Eye,
+  Shield
 } from 'lucide-vue-next';
 
 const toastStore = useToastStore();
+const route = useRoute();
 
 // 状态
 const documents = ref([]);
@@ -31,46 +35,115 @@ const previewContent = ref('');
 const previewLoading = ref(false);
 const addMode = ref('text'); // 'text' 或 'file'
 const searchQuery = ref('');
-const selectedCategory = ref('');
+const selectedGroup = ref('');           // 一级分类筛选
+const selectedSubCategory = ref('');     // 二级分类筛选
+const showAdmin = ref(false); // 管理员模式开关（默认隐藏）
+const pendingPreviewId = ref(''); // 从聊天跳转时，待打开的文档 ID
 
 // 新文档表单
 const newDoc = ref({
   title: '',
   content: '',
-  category: 'general'
+  category: ''
 });
+const newDocGroup = ref('');         // 一级分类（添加时）
+const newDocSubCategory = ref('');   // 二级分类（添加时，存复合值）
 
 // 文件上传
-const fileInputRef = ref(null);
 const selectedFile = ref(null);
-const fileCategory = ref('general');
+const fileGroup = ref('');           // 一级分类（文件上传）
+const fileSubCategory = ref('');     // 二级分类（文件上传，存复合值）
 const fileTitle = ref('');
 
-// 分类选项
-const categories = [
-  { value: 'general', label: '通用' },
-  { value: 'school_info', label: '学校概况' },
-  { value: 'cs_info', label: '计算机学院' },
-  { value: 'library', label: '图书馆' },
-  { value: 'academic', label: '教务相关' },
-  { value: 'lab', label: '实验室' },
-  { value: 'dormitory', label: '宿舍' },
-  { value: 'safety', label: '安全规范' }
+// ==================== 两级分类体系 ====================
+
+const categoryGroups = [
+  {
+    label: '课程资料', value: '课程资料',
+    children: [
+      { value: '课程资料:C语言程序设计基础', label: 'C语言程序设计基础' },
+      { value: '课程资料:Java语言程序设计', label: 'Java语言程序设计' },
+      { value: '课程资料:Python程序设计', label: 'Python程序设计' },
+      { value: '课程资料:中国近代史纲要', label: '中国近代史纲要' },
+      { value: '课程资料:马克思主义理论', label: '马克思主义理论' },
+      { value: '课程资料:大学物理', label: '大学物理' },
+      { value: '课程资料:操作系统', label: '操作系统' },
+      { value: '课程资料:数据结构', label: '数据结构' },
+      { value: '课程资料:概率论', label: '概率论' },
+      { value: '课程资料:离散数学', label: '离散数学' },
+      { value: '课程资料:电路原理', label: '电路原理' },
+    ]
+  },
+  {
+    label: '竞赛资料', value: '竞赛资料',
+    children: [
+      { value: '竞赛资料:大学生数学竞赛', label: '大学生数学竞赛' },
+      { value: '竞赛资料:大学生英语竞赛', label: '大学生英语竞赛' },
+      { value: '竞赛资料:大学生力学竞赛', label: '大学生力学竞赛' },
+    ]
+  },
+  {
+    label: '保研', value: '保研',
+    children: [
+      { value: '保研:保研准备材料', label: '保研准备材料' },
+      { value: '保研:保研政策', label: '保研政策' },
+      { value: '保研:往届推免名单', label: '往届推免名单' },
+    ]
+  },
+  {
+    label: '信息资源', value: '信息资源',
+    children: [
+      { value: '信息资源:本科培养方案', label: '本科培养方案' },
+      { value: '信息资源:转专业资料', label: '转专业资料' },
+      { value: '信息资源:免听免修文件', label: '免听免修文件' },
+      { value: '信息资源:奖助学金相关', label: '奖助学金相关' },
+      { value: '信息资源:体测相关', label: '体测相关' },
+      { value: '信息资源:本科生选课', label: '本科生选课' },
+    ]
+  }
 ];
+
+// 展平所有二级分类（用于下拉选项）
+const allSubCategories = categoryGroups.flatMap(g => g.children);
+
+// 当前一级分类下的二级分类列表
+const availableSubCategories = computed(() => {
+  if (!newDocGroup.value) return [];
+  const group = categoryGroups.find(g => g.value === newDocGroup.value);
+  return group?.children || [];
+});
+
+// 文件上传时的二级分类列表
+const fileSubCategories = computed(() => {
+  if (!fileGroup.value) return [];
+  const group = categoryGroups.find(g => g.value === fileGroup.value);
+  return group?.children || [];
+});
+
+// 筛选区的二级分类列表
+const filterSubCategories = computed(() => {
+  if (!selectedGroup.value) return [];
+  const group = categoryGroups.find(g => g.value === selectedGroup.value);
+  return group?.children || [];
+});
 
 // 过滤后的文档
 const filteredDocuments = computed(() => {
   let result = documents.value;
 
-  if (selectedCategory.value) {
-    result = result.filter(doc => doc.category === selectedCategory.value);
+  if (selectedSubCategory.value) {
+    // 精确匹配二级分类
+    result = result.filter(doc => doc.category === selectedSubCategory.value);
+  } else if (selectedGroup.value) {
+    // 按一级分类前缀匹配（如 "课程资料:" 开头的所有文档）
+    result = result.filter(doc => doc.category && doc.category.startsWith(selectedGroup.value + ':'));
   }
 
   if (searchQuery.value) {
     const query = searchQuery.value.toLowerCase();
     result = result.filter(doc =>
       doc.title.toLowerCase().includes(query) ||
-      doc.category.toLowerCase().includes(query)
+      (doc.category && doc.category.toLowerCase().includes(query))
     );
   }
 
@@ -113,10 +186,13 @@ const refresh = async () => {
 // 打开添加模态框
 const openAddModal = () => {
   addMode.value = 'text';
-  newDoc.value = { title: '', content: '', category: 'general' };
+  newDoc.value = { title: '', content: '', category: '' };
+  newDocGroup.value = '课程资料';
+  newDocSubCategory.value = '';
   selectedFile.value = null;
   fileTitle.value = '';
-  fileCategory.value = 'general';
+  fileGroup.value = '课程资料';
+  fileSubCategory.value = '';
   showAddModal.value = true;
 };
 
@@ -152,6 +228,13 @@ const submitDocument = async () => {
     toastStore.error('请输入文档内容');
     return;
   }
+  if (!newDocSubCategory.value) {
+    toastStore.error('请选择二级分类');
+    return;
+  }
+
+  // 组装复合分类值
+  newDoc.value.category = newDocSubCategory.value;
 
   try {
     const result = await addDocument(newDoc.value);
@@ -186,10 +269,14 @@ const submitFileUpload = async () => {
     toastStore.error('请选择文件');
     return;
   }
+  if (!fileSubCategory.value) {
+    toastStore.error('请选择二级分类');
+    return;
+  }
 
   uploading.value = true;
   try {
-    const result = await uploadFile(selectedFile.value, fileCategory.value, fileTitle.value);
+    const result = await uploadFile(selectedFile.value, fileSubCategory.value, fileTitle.value);
     if (result.success) {
       toastStore.success(`文件上传成功，已生成 ${result.data.chunkCount} 个片段`);
       showAddModal.value = false;
@@ -242,7 +329,26 @@ const closeDeleteConfirm = () => {
 
 // 获取分类标签
 const getCategoryLabel = (value) => {
-  return categories.find(c => c.value === value)?.label || value;
+  if (!value) return '未分类';
+  // 先查二级分类（复合值如 "课程资料:数据结构"）
+  const sub = allSubCategories.find(c => c.value === value);
+  if (sub) return sub.label;
+  // 再查一级分类
+  const group = categoryGroups.find(g => g.value === value);
+  if (group) return group.label;
+  return value;
+};
+
+// 获取一级分类名（从复合值中提取，如 "课程资料:数据结构" → "课程资料"）
+const getGroupLabel = (value) => {
+  if (!value) return '';
+  const colonIdx = value.indexOf(':');
+  if (colonIdx > 0) {
+    const groupName = value.slice(0, colonIdx);
+    const group = categoryGroups.find(g => g.value === groupName);
+    return group ? group.label : groupName;
+  }
+  return getCategoryLabel(value);
 };
 
 
@@ -287,15 +393,30 @@ const formatFileSize = (bytes) => {
 };
 
 // 支持的文件类型
-const supportedFileTypes = '.pdf, .docx, .doc, .txt, .md';
+const supportedFileTypes = '.pdf, .docx, .doc, .pptx, .txt, .md';
 
 onMounted(() => {
+  // 从聊天页跳转过来时，检查是否有待打开的文档
+  if (route.query.docId) {
+    pendingPreviewId.value = route.query.docId;
+  }
   refresh();
 });
+
+// 文档加载完成后，自动打开来自聊天跳转的预览
+watch(documents, (docs) => {
+  if (pendingPreviewId.value && docs.length > 0) {
+    const doc = docs.find(d => d.id === pendingPreviewId.value);
+    if (doc) {
+      openPreview(doc);
+    }
+    pendingPreviewId.value = '';
+  }
+}, { once: true });
 </script>
 
 <template>
-  <div class="h-full flex flex-col p-6">
+  <div class="h-full flex flex-col p-4 md:p-6">
     <!-- 头部 -->
     <div class="flex items-center justify-between mb-5">
       <div class="flex items-center gap-3">
@@ -303,8 +424,8 @@ onMounted(() => {
           <Database :size="20" />
         </div>
         <div>
-          <h1 class="text-lg font-bold text-slate-800 dark:text-white">知识库管理</h1>
-          <p class="text-xs text-slate-500 dark:text-gray-400">星火知识库文档管理</p>
+          <h1 class="text-lg font-bold text-slate-800 dark:text-white">校园知识库</h1>
+          <p class="text-xs text-slate-500 dark:text-gray-400">武汉理工大学知识文档中心</p>
         </div>
       </div>
 
@@ -317,7 +438,23 @@ onMounted(() => {
           <RefreshCw :size="14" :class="{ 'animate-spin': loading }" />
           <span>刷新</span>
         </button>
+
+        <!-- 管理员模式开关 -->
         <button
+          @click="showAdmin = !showAdmin"
+          class="h-8 px-2.5 rounded-lg inline-flex items-center gap-1.5 text-xs border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-800 transition-colors"
+          :class="showAdmin
+            ? 'text-amber-600 dark:text-amber-400 border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20'
+            : 'text-slate-400 dark:text-gray-500 hover:text-slate-600 dark:hover:text-gray-300 hover:bg-slate-50 dark:hover:bg-gray-700'"
+          :title="showAdmin ? '退出管理' : '管理知识库'"
+        >
+          <Shield :size="14" />
+          <span class="hidden sm:inline">{{ showAdmin ? '退出管理' : '管理' }}</span>
+        </button>
+
+        <!-- 管理按钮（仅在管理员模式下显示） -->
+        <button
+          v-if="showAdmin"
           @click="openAddModal"
           class="h-8 px-3 rounded-lg inline-flex items-center gap-1.5 text-xs bg-violet-600 text-white hover:bg-violet-700 transition-colors shadow-sm"
         >
@@ -325,6 +462,21 @@ onMounted(() => {
           <span>添加文档</span>
         </button>
       </div>
+    </div>
+
+    <!-- 管理员模式提示条 -->
+    <div
+      v-if="showAdmin"
+      class="mb-3 px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 flex items-center justify-between"
+    >
+      <div class="flex items-center gap-2 text-xs text-amber-700 dark:text-amber-300">
+        <Shield :size="14" />
+        <span>管理员模式 — 可添加、删除知识库文档</span>
+      </div>
+      <button
+        @click="showAdmin = false"
+        class="text-xs text-amber-600 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-200 underline"
+      >退出管理</button>
     </div>
 
     <!-- 统计卡片 -->
@@ -346,15 +498,15 @@ onMounted(() => {
             <Database :size="16" />
           </div>
           <div>
-            <p class="text-xl font-bold text-slate-800 dark:text-white">星火知识库</p>
-            <p class="text-[10px] text-slate-500 dark:text-gray-400">RAG 引擎</p>
+            <p class="text-xl font-bold text-slate-800 dark:text-white">{{ new Set(documents.map(d => d.category)).size || 0 }} 类</p>
+            <p class="text-[10px] text-slate-500 dark:text-gray-400">覆盖分类</p>
           </div>
         </div>
       </div>
     </div>
 
     <!-- 搜索和过滤 -->
-    <div class="flex items-center gap-3 mb-4">
+    <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3 mb-4">
       <div class="relative flex-1">
         <Search class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" :size="14" />
         <input
@@ -372,16 +524,25 @@ onMounted(() => {
         </button>
       </div>
       <select
-        v-model="selectedCategory"
-        class="h-9 px-3 text-sm rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-slate-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500/30"
+        v-model="selectedGroup"
+        class="w-36 h-9 px-3 text-sm rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-slate-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500/30"
+        @change="selectedSubCategory = ''"
       >
         <option value="">全部分类</option>
-        <option v-for="cat in categories" :key="cat.value" :value="cat.value">{{ cat.label }}</option>
+        <option v-for="g in categoryGroups" :key="g.value" :value="g.value">{{ g.label }}</option>
+      </select>
+      <select
+        v-model="selectedSubCategory"
+        :disabled="!selectedGroup"
+        class="w-36 h-9 px-3 text-sm rounded-lg border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-slate-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500/30 disabled:opacity-50"
+      >
+        <option value="">全部 {{ selectedGroup ? categoryGroups.find(g => g.value === selectedGroup)?.label : '' }}</option>
+        <option v-for="sub in filterSubCategories" :key="sub.value" :value="sub.value">{{ sub.label }}</option>
       </select>
     </div>
 
     <!-- 文档列表 -->
-    <div class="flex-1 min-h-0 overflow-y-auto rounded-xl border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+    <div class="flex-1 min-h-0 overflow-y-scroll rounded-xl border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-800 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-300 dark:[&::-webkit-scrollbar-thumb]:bg-gray-600">
       <div v-if="loading" class="flex items-center justify-center h-48 text-slate-500 dark:text-gray-400">
         <RefreshCw class="animate-spin mr-2" :size="16" />
         加载中...
@@ -389,8 +550,8 @@ onMounted(() => {
 
       <div v-else-if="filteredDocuments.length === 0" class="flex flex-col items-center justify-center h-48 text-slate-500 dark:text-gray-400">
         <Database :size="40" class="mb-3 opacity-30" />
-        <p class="text-sm">暂无文档</p>
-        <p class="text-xs mt-1">点击「添加文档」开始构建知识库</p>
+        <p class="text-sm">知识库暂无内容</p>
+        <p class="text-xs mt-1">知识库文档由管理员统一维护</p>
       </div>
 
       <div v-else class="divide-y divide-slate-100 dark:divide-gray-700">
@@ -406,7 +567,10 @@ onMounted(() => {
               </div>
               <div class="min-w-0 flex-1">
                 <h3 class="text-sm font-medium text-slate-800 dark:text-gray-100 truncate">{{ doc.title }}</h3>
-                <div class="flex items-center gap-2 mt-1">
+                <div class="flex items-center gap-2 mt-1 flex-wrap">
+                  <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 dark:bg-gray-700 text-slate-600 dark:text-gray-300">
+                    {{ getGroupLabel(doc.category) }}
+                  </span>
                   <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300">
                     {{ getCategoryLabel(doc.category) }}
                   </span>
@@ -418,7 +582,6 @@ onMounted(() => {
                     {{ getVectorStatusLabel(doc.vectorStatus) }}
                   </span>
                   <span class="text-[10px] text-slate-400 dark:text-gray-500">{{ formatSize(doc.contentLength) }}</span>
-                  <span class="text-[10px] text-slate-400 dark:text-gray-500">{{ doc.chunkCount }} 片段</span>
                   <span class="text-[10px] text-slate-400 dark:text-gray-500">{{ formatDate(doc.createdAt) }}</span>
                 </div>
               </div>
@@ -432,6 +595,7 @@ onMounted(() => {
                 <span>预览</span>
               </button>
               <button
+                v-if="showAdmin"
                 @click="openDeleteConfirm(doc)"
                 class="h-7 px-2 rounded-md inline-flex items-center gap-1 text-xs text-slate-500 dark:text-gray-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-colors"
               >
@@ -458,7 +622,7 @@ onMounted(() => {
             </div>
             <div>
               <h3 class="text-sm font-bold text-slate-800 dark:text-white">{{ previewDoc?.title }}</h3>
-              <p class="text-[10px] text-slate-500 dark:text-gray-400">{{ getCategoryLabel(previewDoc?.category) }} · {{ formatSize(previewDoc?.contentLength) }}</p>
+              <p class="text-[10px] text-slate-500 dark:text-gray-400">{{ getGroupLabel(previewDoc?.category) }} / {{ getCategoryLabel(previewDoc?.category) }} · {{ formatSize(previewDoc?.contentLength) }}</p>
             </div>
           </div>
           <button
@@ -473,7 +637,9 @@ onMounted(() => {
             <RefreshCw class="animate-spin mr-2" :size="16" />
             加载中...
           </div>
-          <div v-else class="text-sm text-slate-700 dark:text-gray-300 whitespace-pre-wrap leading-relaxed">{{ previewContent }}</div>
+          <div v-else class="text-sm text-slate-700 dark:text-gray-300 leading-relaxed">
+            <MarkdownRenderer :content="previewContent" />
+          </div>
         </div>
       </div>
     </div>
@@ -568,18 +734,30 @@ onMounted(() => {
             <input
               v-model="newDoc.title"
               type="text"
-              placeholder="例如：计算机学院实验室介绍"
+              placeholder="例如：数据结构期末复习笔记"
               class="w-full h-9 px-3 text-sm rounded-lg border border-slate-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-slate-900 dark:text-gray-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-500/30"
             />
           </div>
 
           <div>
-            <label class="block text-xs font-medium text-slate-700 dark:text-gray-300 mb-1">分类</label>
+            <label class="block text-xs font-medium text-slate-700 dark:text-gray-300 mb-1">一级分类</label>
             <select
-              v-model="newDoc.category"
+              v-model="newDocGroup"
+              class="w-full h-9 px-3 text-sm rounded-lg border border-slate-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-slate-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500/30"
+              @change="newDocSubCategory = ''"
+            >
+              <option v-for="g in categoryGroups" :key="g.value" :value="g.value">{{ g.label }}</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="block text-xs font-medium text-slate-700 dark:text-gray-300 mb-1">二级分类</label>
+            <select
+              v-model="newDocSubCategory"
               class="w-full h-9 px-3 text-sm rounded-lg border border-slate-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-slate-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500/30"
             >
-              <option v-for="cat in categories" :key="cat.value" :value="cat.value">{{ cat.label }}</option>
+              <option value="" disabled>请选择二级分类</option>
+              <option v-for="sub in availableSubCategories" :key="sub.value" :value="sub.value">{{ sub.label }}</option>
             </select>
           </div>
 
@@ -644,12 +822,24 @@ onMounted(() => {
           </div>
 
           <div>
-            <label class="block text-xs font-medium text-slate-700 dark:text-gray-300 mb-1">分类</label>
+            <label class="block text-xs font-medium text-slate-700 dark:text-gray-300 mb-1">一级分类</label>
             <select
-              v-model="fileCategory"
+              v-model="fileGroup"
+              class="w-full h-9 px-3 text-sm rounded-lg border border-slate-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-slate-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500/30"
+              @change="fileSubCategory = ''"
+            >
+              <option v-for="g in categoryGroups" :key="g.value" :value="g.value">{{ g.label }}</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="block text-xs font-medium text-slate-700 dark:text-gray-300 mb-1">二级分类</label>
+            <select
+              v-model="fileSubCategory"
               class="w-full h-9 px-3 text-sm rounded-lg border border-slate-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-slate-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500/30"
             >
-              <option v-for="cat in categories" :key="cat.value" :value="cat.value">{{ cat.label }}</option>
+              <option value="" disabled>请选择二级分类</option>
+              <option v-for="sub in fileSubCategories" :key="sub.value" :value="sub.value">{{ sub.label }}</option>
             </select>
           </div>
         </div>

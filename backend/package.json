@@ -10,6 +10,7 @@
     "test:watch": "node --experimental-vm-modules ../node_modules/vitest/vitest.mjs --config ../vitest.config.js"
   },
   "dependencies": {
+    "@zilliz/milvus2-sdk-node": "^3.0.3",
     "axios": "^1.15.2",
     "cookie-parser": "^1.4.6",
     "cors": "^2.8.5",
@@ -19,12 +20,15 @@
     "helmet": "^7.0.0",
     "ioredis": "^5.11.1",
     "jsonwebtoken": "^9.0.3",
+    "jszip": "^3.10.1",
     "mammoth": "^1.12.0",
     "mathjs": "^15.2.0",
     "morgan": "^1.10.0",
     "multer": "^2.1.1",
     "pdf-parse": "^1.1.1",
     "puppeteer": "^25.2.1",
+    "turndown": "^7.2.4",
+    "turndown-plugin-gfm": "^1.0.2",
     "uuid": "^14.0.0",
     "ws": "^8.19.0"
   },

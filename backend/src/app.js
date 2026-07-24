@@ -1,17 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const config = require('./config');
-
-// 验证必要环境变量
-if (!process.env.VITEST) {
-  const requiredEnv = ['AI_API_KEY', 'JWT_SECRET', 'SCHOOL_ENC_KEY'];
-  const missing = requiredEnv.filter(key => !process.env[key]);
-  if (missing.length > 0) {
-    console.error(`[Config] 缺少必要环境变量: ${missing.join(', ')}`);
-    console.error('[Config] 请检查 backend/.env 文件配置');
-    process.exit(1);
-  }
-}
+// 环境变量校验已在 config/index.js 中统一处理，此处不再重复
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3000', 10);
@@ -51,9 +41,9 @@ app.listen(PORT, '0.0.0.0', async () => {
   console.log('='.repeat(60));
   console.log('[Server] Backend started successfully.');
   console.log(`[Server] URL: http://localhost:${PORT}`);
-  console.log(`[Server] AI Model: ${config.ai.model || 'Qwen3.6-35B-A3B'}`);
+  console.log(`[Server] AI Model: ${config.ai.model || 'step-3.7-flash'}`);
   console.log(`[Server] Mode: ${hasApi ? 'online' : 'mock'}`);
-  console.log('[Server] Storage: local file (data/store.json)');
-  console.log('[Server] RAG Provider: chatdoc.xfyun.cn');
+  console.log('[Server] Storage: SQLite (data/store.json)');
+  console.log('[Server] RAG Provider: Milvus (dense + sparse hybrid)');
   console.log('='.repeat(60));
 });

@@ -76,6 +76,7 @@ export const useChatStore = defineStore('chat', () => {
   const clearMessages = () => messageStore.clearMessages();
   const getConversationHistory = () => messageStore.getConversationHistory();
   const deleteMessage = (id) => messageStore.deleteMessage(id);
+  const setMessageFeedback = (id, feedback) => messageStore.setMessageFeedback(id, feedback);
   const abortCurrentRequest = () => messageStore.abortCurrentRequest();
 
   return {
@@ -109,6 +110,7 @@ export const useChatStore = defineStore('chat', () => {
     clearMessages,
     getConversationHistory,
     deleteMessage,
+    setMessageFeedback,
     abortCurrentRequest,
   };
 });

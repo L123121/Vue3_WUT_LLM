@@ -3,8 +3,10 @@ import { computed, ref, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import wutLogoImg from '../../assets/wuhan-university-logo.png';
 import ConversationList from '../chat/ConversationList.vue';
-import { Database, MessageSquare, Settings, BarChart3, LogOut } from 'lucide-vue-next';
+import { Database, MessageSquare, BarChart3, LogOut, MessagesSquare, ChevronUp } from 'lucide-vue-next';
 import { useAuthStore } from '../../stores/auth.store.js';
+import { prefetchRoute } from '../../utils/prefetch.js';
+import ProfilePanel from '../common/ProfilePanel.vue';
 
 const wutLogo = wutLogoImg;
 const router = useRouter();
@@ -18,14 +20,32 @@ const showDevEval = import.meta.env.VITE_SHOW_DEV_EVAL === 'true';
 const avatarFailed = ref(false);
 watch(() => authStore.user?.avatar, () => { avatarFailed.value = false; });
 
+const showProfilePanel = ref(false);
+const showAvatarPicker = ref(false);
+const draftAvatar = ref('');
+
 const handleLogout = () => {
   authStore.logout();
   router.push('/login');
 };
+
+const handleClickOutside = (event) => {
+  const panel = document.querySelector('.profile-panel');
+  const btn = event.target.closest('[data-profile-trigger]');
+  if (showProfilePanel.value && panel && !panel.contains(event.target) && !btn) {
+    showProfilePanel.value = false;
+  }
+};
+
+watch(showProfilePanel, (val) => {
+  if (val) {
+    document.addEventListener('click', handleClickOutside, { once: true });
+  }
+});
 </script>
 
 <template>
-  <div class="w-72 h-screen bg-white/80 dark:bg-gray-900/95 backdrop-blur-md border-r border-slate-200 dark:border-gray-800 flex flex-col z-20 transition-all duration-300 ease-in-out">
+  <div class="w-72 h-screen bg-white/80 dark:bg-gray-900/95 backdrop-blur-md border-r border-t border-b border-slate-200 dark:border-gray-800 flex flex-col z-20 transition-all duration-300 ease-in-out">
     <div class="p-6 pt-8 flex flex-col items-start justify-center">
       <div class="flex items-center gap-3 mb-2 px-2">
         <div class="w-20 h-20 rounded-full overflow-hidden flex items-center justify-center shrink-0">
@@ -55,6 +75,7 @@ const handleLogout = () => {
         </button>
         <button
           @click="router.push('/knowledge')"
+          @mouseenter="prefetchRoute('/knowledge')"
           :class="[
             'flex-1 h-8 rounded-md text-xs font-medium inline-flex items-center justify-center gap-1.5 transition-colors',
             currentPath === '/knowledge'
@@ -68,6 +89,7 @@ const handleLogout = () => {
         <button
           v-if="showDevEval"
           @click="router.push('/eval')"
+          @mouseenter="prefetchRoute('/eval')"
           :class="[
             'flex-1 h-8 rounded-md text-xs font-medium inline-flex items-center justify-center gap-1.5 transition-colors',
             currentPath === '/eval'
@@ -78,18 +100,26 @@ const handleLogout = () => {
           <BarChart3 :size="14" />
           <span>评测</span>
         </button>
-        <button
-          @click="router.push('/settings')"
-          :class="[
-            'h-8 w-8 rounded-md inline-flex items-center justify-center transition-colors',
-            currentPath === '/settings'
-              ? 'bg-white dark:bg-gray-700 text-slate-800 dark:text-white shadow-sm'
-              : 'text-slate-500 dark:text-gray-400 hover:text-slate-700 dark:hover:text-gray-200'
-          ]"
-        >
-          <Settings :size="14" />
-        </button>
-      </div>
+        </div>
+    </div>
+
+    <div v-if="authStore.isAdmin" class="px-3 mb-3">
+      <button
+        @click="router.push('/feedback')"
+        @mouseenter="prefetchRoute('/feedback')"
+        :class="[
+          'w-full h-10 rounded-xl inline-flex items-center justify-between px-3 text-xs font-bold transition-all border',
+          currentPath === '/feedback'
+            ? 'bg-blue-600 text-white border-blue-500 shadow-lg shadow-blue-500/20'
+            : 'bg-white/70 dark:bg-gray-800/60 text-slate-600 dark:text-gray-300 border-slate-200 dark:border-gray-700 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 dark:hover:bg-blue-900/20'
+        ]"
+      >
+        <span class="inline-flex items-center gap-2">
+          <MessagesSquare :size="15" />
+          反馈收集
+        </span>
+        <span class="rounded-full bg-white/20 px-2 py-0.5 text-[10px] uppercase tracking-wide" :class="currentPath === '/feedback' ? 'text-white' : 'text-blue-500 dark:text-blue-300'">RAG</span>
+      </button>
     </div>
 
     <section class="flex-1 min-h-0 pb-2">
@@ -97,15 +127,21 @@ const handleLogout = () => {
     </section>
 
     <!-- 底部用户信息 + 退出 -->
-    <div class="shrink-0 px-3 py-3 border-t border-slate-200 dark:border-gray-800">
+    <div class="shrink-0 px-3 py-3 border-t border-slate-200 dark:border-gray-800 relative">
       <div class="flex items-center gap-3">
-        <div class="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-500 to-indigo-400 flex items-center justify-center text-white text-xs font-bold shrink-0 overflow-hidden">
-          <img v-if="authStore.user?.avatar && !avatarFailed" :src="authStore.user.avatar" alt="头像" class="w-full h-full object-cover" @error="avatarFailed = true" />
-          <span v-else>{{ (authStore.user?.name || '?')[0] }}</span>
-        </div>
-        <div class="flex-1 min-w-0">
-          <div class="text-sm font-medium text-slate-700 dark:text-gray-200 truncate">{{ authStore.user?.name || '用户' }}</div>
-        </div>
+        <button data-profile-trigger @click="showProfilePanel = !showProfilePanel" class="flex items-center gap-3 flex-1 min-w-0 text-left">
+          <div class="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-500 to-indigo-400 flex items-center justify-center text-white text-xs font-bold shrink-0 overflow-hidden">
+            <img v-if="authStore.user?.avatar && !avatarFailed" :src="authStore.user.avatar" alt="头像" class="w-full h-full object-cover" @error="avatarFailed = true" />
+            <span v-else>{{ (authStore.user?.name || '?')[0] }}</span>
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-1.5">
+              <span class="text-sm font-medium text-slate-700 dark:text-gray-200 truncate">{{ authStore.user?.name || '用户' }}</span>
+              <span v-if="authStore.isAdmin" class="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800/50">Admin</span>
+            </div>
+          </div>
+          <ChevronUp :size="14" class="text-slate-400 dark:text-gray-500 shrink-0 transition-transform" :class="showProfilePanel ? 'rotate-0' : 'rotate-180'" />
+        </button>
         <button
           @click="handleLogout"
           class="p-1.5 rounded-lg text-slate-400 dark:text-gray-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
@@ -113,6 +149,10 @@ const handleLogout = () => {
         >
           <LogOut :size="16" />
         </button>
+      </div>
+
+      <div v-if="showProfilePanel" class="absolute bottom-full left-3 right-3 mb-2 z-30">
+        <ProfilePanel :show="true" @close="showProfilePanel = false" @open-avatar-picker="showAvatarPicker = true" />
       </div>
     </div>
   </div>

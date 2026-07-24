@@ -13,9 +13,10 @@ const props = defineProps({
   isConnected: { type: Boolean, default: true },
   isReconnecting: { type: Boolean, default: false },
   reconnectAttempt: { type: Number, default: 0 },
+  activeMode: { type: String, default: 'chat' },
 });
 
-const emit = defineEmits(['send', 'error', 'command']);
+const emit = defineEmits(['send', 'error', 'command', 'mode-change']);
 const languageStore = useLanguageStore();
 const chatStore = useChatStore();
 const toast = useToastStore();
@@ -62,6 +63,8 @@ const filteredCommands = computed(() => {
   const query = input.value.toLowerCase();
   return commands.value.filter(cmd => cmd.key.startsWith(query));
 });
+
+const isRagMode = computed(() => props.activeMode === 'rag');
 
 // 监听输入，显示命令菜单
 watch(input, (val) => {
@@ -208,7 +211,7 @@ defineExpose({
     <div class="relative flex items-center gap-1.5 bg-slate-100 dark:bg-gray-800 rounded-xl p-1.5 border border-transparent focus-within:border-blue-300 dark:focus-within:border-blue-700 focus-within:bg-white dark:focus-within:bg-gray-800 focus-within:ring-2 focus-within:ring-blue-100 dark:focus-within:ring-blue-900/20 transition-all duration-300">
       <!-- 快捷命令菜单 -->
       <Transition name="command-menu">
-        <div v-if="showCommands" class="absolute bottom-full left-0 mb-2 w-64 bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-slate-200 dark:border-gray-700 overflow-hidden z-20">
+        <div v-if="showCommands" class="absolute bottom-full left-0 mb-2 w-64 max-w-[calc(100vw-2rem)] bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-slate-200 dark:border-gray-700 overflow-hidden z-20">
           <div class="px-3 py-2 bg-slate-50 dark:bg-gray-900 border-b border-slate-100 dark:border-gray-700">
             <div class="flex items-center gap-2 text-xs text-slate-500 dark:text-gray-400">
               <Command :size="12" />
@@ -242,6 +245,39 @@ defineExpose({
         </div>
       </Transition>
 
+      <!-- RAG 模式切换按钮 -->
+      <div class="relative flex items-center border-r border-slate-200 dark:border-gray-700 pr-3 mr-2 shrink-0">
+        <span
+          v-if="isRagMode"
+          class="absolute left-0 right-3 h-9 rounded-full bg-blue-500/20 blur-md dark:bg-cyan-400/15"
+        ></span>
+        <button
+          type="button"
+          :aria-pressed="isRagMode"
+          :title="isRagMode ? '已开启 RAG 知识库检索' : '开启 RAG 知识库检索'"
+          @click="emit('mode-change', isRagMode ? 'chat' : 'rag')"
+          :class="[
+            'relative inline-flex min-w-[112px] items-center justify-center gap-1.5 rounded-full border px-3.5 py-2 text-xs font-bold tracking-[0.16em] transition-colors duration-300 active:scale-95',
+            isRagMode
+              ? 'border-blue-300 bg-gradient-to-r from-blue-600 via-sky-500 to-cyan-400 text-white shadow-lg shadow-blue-500/30 dark:border-cyan-400/50 dark:shadow-cyan-900/40'
+              : 'border-slate-200 bg-slate-50/90 text-slate-500 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-600 dark:border-gray-700 dark:bg-gray-800/80 dark:text-gray-400 dark:hover:border-blue-800 dark:hover:bg-blue-900/20 dark:hover:text-blue-300'
+          ]"
+        >
+          <Search :size="14" :class="isRagMode ? 'text-white' : 'text-slate-400 dark:text-gray-500'" />
+          <span>RAG</span>
+          <span
+            :class="[
+              'ml-0.5 inline-flex w-8 justify-center rounded-full px-1.5 py-0.5 text-[9px] font-black tracking-normal transition-colors',
+              isRagMode
+                ? 'bg-white/95 text-blue-600'
+                : 'bg-slate-200/80 text-slate-500 dark:bg-gray-700 dark:text-gray-300'
+            ]"
+          >
+            {{ isRagMode ? 'ON' : 'OFF' }}
+          </span>
+        </button>
+      </div>
+
       <textarea
         ref="textareaRef"
         v-model="input"
@@ -254,7 +290,7 @@ defineExpose({
       ></textarea>
 
       <!-- 文件选取 -->
-      <input ref="fileInputRef" type="file" accept="image/*,.pdf,.docx,.doc,.txt,.md" class="hidden" @change="handleFileSelect" />
+      <input ref="fileInputRef" type="file" accept="image/*,.pdf,.docx,.doc,.pptx,.txt,.md" class="hidden" @change="handleFileSelect" />
       <button
         @click="fileInputRef?.click()"
         :disabled="isLoading || !isConnected"

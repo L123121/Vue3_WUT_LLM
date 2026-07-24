@@ -15,7 +15,7 @@ export const ALLOWED_TAGS = [
 
 // DOMPurify 允许的属性
 export const ALLOWED_ATTR = [
-  'class', 'style', 'data-code', 'data-lang',
+  'class', 'style', 'data-code', 'data-lang', 'data-index',
   'xmlns', 'width', 'height', 'viewBox', 'fill', 'stroke',
   'stroke-width', 'stroke-linecap', 'stroke-linejoin', 'd', 'x', 'y', 'rx', 'ry',
   'href', 'target', 'rel', 'points',

@@ -1,0 +1,96 @@
+# ======================================================================
+# Lighthouse CI — 武理小精灵 性能审计
+# 功能: 每次 PR 或 push 时自动运行 Lighthouse 审计
+#       检查性能预算，生成报告作为 Artifacts
+# ======================================================================
+#
+# 触发条件:
+#   - pull_request → main（仅 src/ 等关键文件变更时）
+#   - push → main（同上）
+#   - 手动触发（workflow_dispatch）
+# ======================================================================
+
+name: Lighthouse CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "index.html"
+      - "vite.config.js"
+      - "vite-plugin-perf.js"
+      - "package.json"
+      - "lighthouserc.js"
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "index.html"
+      - "vite.config.js"
+      - "vite-plugin-perf.js"
+      - "package.json"
+      - "lighthouserc.js"
+  workflow_dispatch:
+
+jobs:
+  lighthouse:
+    name: Performance Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: "true"
+
+      - name: Build frontend
+        run: npm run build
+        env:
+          # 跳过关键 CSS 内联（CI 环境无 headless 浏览器）
+          VITE_SKIP_CRITICAL_CSS: "1"
+
+      - name: Run Lighthouse CI
+        run: npx lhci autorun
+        continue-on-error: true
+        env:
+          # 可选：用于在 PR 上自动评论审计结果
+          LHCI_GITHUB_APP_TOKEN: ${{ secrets.LHCI_GITHUB_APP_TOKEN }}
+
+      - name: Upload Lighthouse report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lighthouse-report
+          path: .lighthouseci/reports/
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Summarize results
+        if: always()
+        run: |
+          if [ -d ".lighthouseci" ]; then
+            echo "## Lighthouse CI 审计结果" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| 指标 | 状态 |" >> $GITHUB_STEP_SUMMARY
+            echo "|------|:----:|" >> $GITHUB_STEP_SUMMARY
+
+            # 从 lhci 输出中提取关键指标
+            if [ -f ".lighthouseci/assertion-results.json" ]; then
+              jq -r '.[] | "| \(.auditId // .category) | \(.passed | if . then "✅" else "❌" end) \(.actualValue // "") |"' .lighthouseci/assertion-results.json 2>/dev/null >> $GITHUB_STEP_SUMMARY || true
+            fi
+
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "报告已上传到 Artifacts（lighthouse-report），可下载查看完整 HTML。" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "没有 Lighthouse 报告生成" >> $GITHUB_STEP_SUMMARY
+          fi

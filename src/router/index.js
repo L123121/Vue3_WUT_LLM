@@ -30,10 +30,10 @@ const routes = [
     meta: { requiresAuth: true }
   },
   {
-    path: '/settings',
-    name: 'Settings',
-    component: () => import('../views/Settings.vue'),
-    meta: { requiresAuth: true }
+    path: '/feedback',
+    name: 'Feedback',
+    component: () => import('../views/RagFeedback.vue'),
+    meta: { requiresAuth: true, requiresAdmin: true }
   },
   {
     path: '/:pathMatch(.*)*',
@@ -46,12 +46,17 @@ const router = createRouter({
   routes,
 });
 
-// 路由守卫
-router.beforeEach((to, from, next) => {
+router.beforeEach(async (to, from, next) => {
   const authStore = useAuthStore();
 
+  if ((to.meta.requiresAuth || to.path === '/login') && !authStore.isAuthenticated && !authStore.hasCheckedSession) {
+    await authStore.fetchCurrentUser();
+  }
+
   if (to.meta.requiresAuth && !authStore.isAuthenticated) {
-    next('/login');
+    next({ path: '/login', query: { redirect: to.fullPath } });
+  } else if (to.meta.requiresAdmin && !authStore.isAdmin) {
+    next('/chat');
   } else if (to.path === '/login' && authStore.isAuthenticated) {
     next('/chat');
   } else {

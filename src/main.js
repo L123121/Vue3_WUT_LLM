@@ -7,6 +7,7 @@ import router from './router/index.js';
 import App from './App.vue';
 import { setupGlobalErrorHandler } from './utils/errorHandler.js';
 import { useToastStore } from './stores/toast.store.js';
+import { useWebVitals } from './composables/useWebVitals.js';
 
 const app = createApp(App);
 const pinia = createPinia();
@@ -16,6 +17,9 @@ app.use(router);
 app.use(VueVirtualScroller);
 
 app.mount('#app');
+
+// 启动 Web Vitals 采集（LCP/INP/CLS/FCP/TTFB）
+useWebVitals();
 
 // 全局错误处理（需等 app 挂载后 Pinia 才可用）
 const toastStore = useToastStore();

@@ -14,6 +14,7 @@ const authMiddleware = (req, res, next) => {
   if (!token) {
     req.userId = null;
     req.username = null;
+    req.role = null;
     return next();
   }
 
@@ -21,12 +22,14 @@ const authMiddleware = (req, res, next) => {
     const decoded = jwt.verify(token, config.jwt.secret);
     req.userId = decoded.userId || decoded.id || null;
     req.username = decoded.username || null;
+    req.role = decoded.role || null;
   } catch (err) {
     // Token 无效或过期，清除坏 cookie（secure 标志需与设置时一致）
     const isProd = process.env.NODE_ENV === 'production';
     res.clearCookie(COOKIE_NAME, { httpOnly: true, sameSite: 'lax', secure: isProd, path: '/' });
     req.userId = null;
     req.username = null;
+    req.role = null;
   }
 
   next();

@@ -111,7 +111,7 @@ router.post('/login', loginLimiter, async (req, res) => {
     // 设置 httpOnly cookie（前端无法读取，防止 XSS 窃取）
     res.cookie('auth_token', token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: req.protocol === 'https' || req.headers['x-forwarded-proto'] === 'https',
       sameSite: 'lax',
       maxAge: 7 * 24 * 60 * 60 * 1000,
       path: '/',
