@@ -3,7 +3,7 @@ require('dotenv').config();
 const path = require('path');
 
 if (!process.env.VITEST) {
-  const requiredEnv = ['AI_API_KEY', 'JWT_SECRET', 'SCHOOL_ENC_KEY'];
+  const requiredEnv = ['AI_API_KEY', 'JWT_SECRET'];
   const missing = requiredEnv.filter(key => !process.env[key]);
   if (missing.length > 0) {
     console.error(`[Config] 缺少必要环境变量: ${missing.join(', ')}`);
@@ -21,6 +21,15 @@ module.exports = {
     maxTokens: 4000,
     temperature: 0.7,
     timeout: 60000,
+    // 备用 provider（可选，主 provider 失败时自动切换）
+    fallback: {
+      apiKey: process.env.AI_FALLBACK_API_KEY || '',
+      baseUrl: process.env.AI_FALLBACK_BASE_URL || '',
+      model: process.env.AI_FALLBACK_MODEL || '',
+      maxTokens: parseInt(process.env.AI_FALLBACK_MAX_TOKENS, 10) || 4000,
+      temperature: parseFloat(process.env.AI_FALLBACK_TEMPERATURE) || 0.7,
+      timeout: parseInt(process.env.AI_FALLBACK_TIMEOUT, 10) || 60000,
+    },
   },
   // LLM-as-judge 评测专用（独立 Key，不跟生产抢配额）
   judge: {
@@ -71,17 +80,15 @@ module.exports = {
     keywordWeight: Number.parseFloat(process.env.RAG_KEYWORD_WEIGHT || '0.4'),
     rrfK: parseInt(process.env.RAG_RRF_K, 10) || 60,
   },
-  // 学校教务系统配置
-  school: {
-    tpHost: process.env.SCHOOL_TP_HOST || 'https://one.whut.edu.cn',
-    jwHost: process.env.SCHOOL_JW_HOST || 'https://jwxt.whut.edu.cn',
-    encKey: process.env.SCHOOL_ENC_KEY,
-    sessionTTL: 2 * 60 * 60 * 1000, // 2 小时
-    browserDebugPort: parseInt(process.env.SCHOOL_BROWSER_DEBUG_PORT) || 9222,
-  },
   // 自有账号系统配置
   auth: {
     inviteCode: process.env.AUTH_INVITE_CODE || '',
+  },
+  // 用户级配额限制（每日 LLM 调用次数）
+  quota: {
+    dailyLimit: parseInt(process.env.QUOTA_DAILY_LIMIT, 10) || 100,
+    anonymousLimit: parseInt(process.env.QUOTA_ANONYMOUS_LIMIT, 10) || 20,
+    adminLimit: parseInt(process.env.QUOTA_ADMIN_LIMIT, 10) || 1000,
   },
   // 管理员登录配置（密码未设置时生成随机密码，禁止空密码）
   admin: (() => {
@@ -97,6 +104,7 @@ module.exports = {
     };
   })(),
 };
+
 
 
 

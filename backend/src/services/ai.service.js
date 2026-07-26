@@ -57,7 +57,9 @@ const llmQueue = new RequestQueue(LLM_CONCURRENCY);
 // ==================== AI 服务 ====================
 
 /**
- * AI 服务
+ * AI 服务（主备双 provider）
+ *
+ * 主 provider（StepFun 等）失败时自动切换到备用 provider（如 LongCat）。
  *
  * 两种模式：
  *   1. OpenAI 兼容模式（默认）— /v2/chat/completions + Bearer 认证
@@ -68,49 +70,62 @@ const llmQueue = new RequestQueue(LLM_CONCURRENCY);
  */
 class AiService {
   constructor() {
-    this.apiKey = config.ai.apiKey || '';
-    this.baseUrl = config.ai.baseUrl || 'https://maas-api.cn-huabei-1.xf-yun.com/v2';
-    this.model = config.ai.model || 'xopqwen36v35b';
-    this.maxTokens = config.ai.maxTokens || 4000;
-    this.temperature = config.ai.temperature || 0.7;
-    this.timeout = config.ai.timeout || 60000;
-
-    // 自动检测 Anthropic 代理模式
-    this.anthropicMode = this.baseUrl.includes('/anthropic');
+    this.primary = this._normalizeProvider(config.ai);
+    // 备用 provider：有 apiKey 时才启用
+    this.fallback = config.ai.fallback?.apiKey
+      ? this._normalizeProvider(config.ai.fallback)
+      : null;
   }
 
-  _buildHeaders(path) {
-    if (this.anthropicMode) {
+  _normalizeProvider(cfg) {
+    const baseUrl = cfg.baseUrl || 'https://api.stepfun.com/v1';
+    return {
+      apiKey: cfg.apiKey || '',
+      baseUrl,
+      model: cfg.model || 'step-3.7-flash',
+      maxTokens: cfg.maxTokens || 4000,
+      temperature: cfg.temperature || 0.7,
+      timeout: cfg.timeout || 60000,
+      anthropicMode: baseUrl.includes('/anthropic'),
+    };
+  }
+
+  _hasKey() {
+    return !!(this.primary.apiKey || (this.fallback && this.fallback.apiKey));
+  }
+
+  _buildHeaders(path, provider) {
+    if (provider.anthropicMode) {
       return {
         'Content-Type': 'application/json; charset=utf-8',
-        'x-api-key': this.apiKey,
+        'x-api-key': provider.apiKey,
         ...(path.includes('/messages') ? { 'anthropic-version': '2023-06-01' } : {}),
       };
     }
     return {
       'Content-Type': 'application/json; charset=utf-8',
-      'Authorization': `Bearer ${this.apiKey}`,
+      'Authorization': `Bearer ${provider.apiKey}`,
     };
   }
 
-  _buildOptions(path, method = 'POST') {
+  _buildOptions(path, provider) {
     // 如果 baseUrl 已包含版本前缀（如 /v1），从请求路径中剥离版本号
     // StepFun: baseUrl=https://api.stepfun.com/v1, path=/v2/chat/completions → /chat/completions
-    // iFlytek: baseUrl=https://maas-api...com, path=/v2/chat/completions → /v2/chat/completions
+    // LongCat: baseUrl=https://api.longcat.chat/openai, path=/v2/chat/completions → /v2/chat/completions
     let finalPath = path;
-    const baseHasVersion = this.baseUrl.match(/\/v\d+$/);
+    const baseHasVersion = provider.baseUrl.match(/\/v\d+$/);
     if (baseHasVersion) {
       finalPath = path.replace(/^\/v\d+/, '');
     }
-    const fullUrl = this.baseUrl + finalPath;
+    const fullUrl = provider.baseUrl + finalPath;
     const urlObj = new URL(fullUrl);
     return {
       hostname: urlObj.hostname,
       port: urlObj.port || 443,
       path: urlObj.pathname + urlObj.search,
-      method,
-      headers: this._buildHeaders(path),
-      timeout: this.timeout,
+      method: 'POST',
+      headers: this._buildHeaders(path, provider),
+      timeout: provider.timeout,
     };
   }
 
@@ -124,20 +139,10 @@ class AiService {
     ];
   }
 
-  _buildPayload(message, history, stream = false) {
-    return {
-      model: this.model,
-      messages: this._buildMessages(message, history),
-      max_tokens: this.maxTokens,
-      temperature: this.temperature,
-      stream,
-    };
-  }
-
   // ========== 非流式（经队列） ==========
 
   async getCompletion(message, history = [], opts = {}) {
-    if (!this.apiKey) {
+    if (!this._hasKey()) {
       console.warn('[AI] API Key 缺失，使用模拟模式');
       return { content: this.getMockResponse(message), isMock: true, model: 'mock', usage: null };
     }
@@ -152,54 +157,61 @@ class AiService {
   }
 
   async _doGetCompletion(message, history = [], opts = {}) {
-    const path = this.anthropicMode ? '/v1/messages' : '/v2/chat/completions';
-    const payload = this._buildPayload(message, history, false);
+    // 先尝试主 provider
+    try {
+      return await this._requestProvider(this.primary, message, history, opts);
+    } catch (err) {
+      if (!this.fallback) throw err;
+      console.warn(`[AI] 主 provider 失败 (${err.message})，切换到备用 provider`);
+      return await this._requestProvider(this.fallback, message, history, opts);
+    }
+  }
+
+  async _requestProvider(provider, message, history, opts) {
+    const path = provider.anthropicMode ? '/v1/messages' : '/v2/chat/completions';
+    const payload = {
+      model: provider.model,
+      messages: this._buildMessages(message, history),
+      max_tokens: provider.maxTokens,
+      temperature: provider.temperature,
+      stream: false,
+    };
     const body = JSON.stringify(payload);
-    const options = this._buildOptions(path);
+    const options = this._buildOptions(path, provider);
     options.headers['Content-Length'] = Buffer.byteLength(body, 'utf8');
     // 支持调用方覆盖超时时间和重试次数
     if (opts.timeout) options.timeout = opts.timeout;
     if (opts.retries !== undefined) options.retries = opts.retries;
 
-    console.log(`[AI] ${options.hostname}${options.path} model=${this.model} bodyLen=${body.length}`);
+    console.log(`[AI] ${options.hostname}${options.path} model=${provider.model} bodyLen=${body.length}`);
 
-    try {
-      const startTime = Date.now();
-      const result = await request(options, body);
-      const latency = Date.now() - startTime;
-      metrics.recordLatency('ai', latency);
+    const startTime = Date.now();
+    const result = await request(options, body);
+    const latency = Date.now() - startTime;
+    metrics.recordLatency('ai', latency);
 
-      let content = '';
-      if (this.anthropicMode) {
-        content = result.data?.content?.[0]?.text || '';
-      } else {
-        content = result.data?.choices?.[0]?.message?.content || '';
-      }
+    let content = '';
+    if (provider.anthropicMode) {
+      content = result.data?.content?.[0]?.text || '';
+    } else {
+      content = result.data?.choices?.[0]?.message?.content || '';
+    }
 
-      if (content) {
-        console.log(`[AI] 响应 ${content.length} 字符`);
-        return { content, isMock: false, model: result.data?.model || this.model, usage: result.data?.usage || null };
-      } else {
-        const msg = `AI 服务返回空响应: ${JSON.stringify(result.data).substring(0, 200)}`;
-        console.warn('[AI]', msg);
-        if (process.env.NODE_ENV === 'production') {
-          throw new Error(msg);
-        }
-        return { content: this.getMockResponse(message), isMock: true, model: 'mock', usage: null };
-      }
-    } catch (err) {
-      console.error(`[AI] 请求失败: ${err.message}`);
-      if (process.env.NODE_ENV === 'production') {
-        throw new Error(`AI 服务请求失败: ${err.message}`);
-      }
-      return { content: this.getMockResponse(message), isMock: true, model: 'mock', usage: null };
+    if (content) {
+      console.log(`[AI] 响应 ${content.length} 字符`);
+      return { content, isMock: false, model: result.data?.model || provider.model, usage: result.data?.usage || null };
+    } else {
+      const msg = `AI 服务返回空响应: ${JSON.stringify(result.data).substring(0, 200)}`;
+      console.warn('[AI]', msg);
+      // 空响应视为可恢复错误，抛出后触发 fallback
+      throw new Error(msg);
     }
   }
 
   // ========== 流式（经队列） ==========
 
   async *getCompletionStream(message, history = []) {
-    if (!this.apiKey) {
+    if (!this._hasKey()) {
       const mock = this.getMockResponse(message);
       for (const c of mock) yield { content: c, done: false };
       yield { content: '', done: true };
@@ -218,40 +230,57 @@ class AiService {
   }
 
   async *_doGetCompletionStream(message, history = []) {
-    const path = this.anthropicMode ? '/v1/messages' : '/v2/chat/completions';
-    const payload = this._buildPayload(message, history, true);
+    // 主 provider 连接建立前失败时，可切换到备用 provider
+    if (this.fallback) {
+      try {
+        yield* this._streamProvider(this.primary, message, history);
+        return; // 主 provider 成功完成
+      } catch (err) {
+        console.warn(`[AI 流式] 主 provider 失败 (${err.message})，切换到备用 provider`);
+      }
+      // 主 provider 失败，尝试备用
+      yield* this._streamProvider(this.fallback, message, history);
+    } else {
+      yield* this._streamProvider(this.primary, message, history);
+    }
+  }
+
+  async *_streamProvider(provider, message, history) {
+    const path = provider.anthropicMode ? '/v1/messages' : '/v2/chat/completions';
+    const payload = {
+      model: provider.model,
+      messages: this._buildMessages(message, history),
+      max_tokens: provider.maxTokens,
+      temperature: provider.temperature,
+      stream: true,
+    };
     const body = JSON.stringify(payload);
-    const options = this._buildOptions(path);
+    const options = this._buildOptions(path, provider);
     options.headers['Content-Length'] = Buffer.byteLength(body, 'utf8');
 
     const streamStart = Date.now();
-    console.log(`[AI 流式] ${options.hostname}${options.path} model=${this.model} bodyLen=${body.length}`);
+    console.log(`[AI 流式] ${options.hostname}${options.path} model=${provider.model} bodyLen=${body.length}`);
 
     let res;
     try {
       res = await requestStream(options, body);
     } catch (err) {
-      console.error('[AI 流式] 连接失败:', err.message);
-      yield { content: `[连接失败: ${err.message}]`, done: false };
-      yield { content: '', done: true };
-      return;
+      // 连接建立前失败 → 抛出，让外层决定是否 fallback
+      throw new Error(`连接失败: ${err.message}`);
     }
 
     if (res.statusCode !== 200) {
       let err = '';
       for await (const c of res) err += c;
-      console.error(`[AI 流式] ${res.statusCode}: ${err.substring(0, 200)}`);
-      yield { content: `[错误 ${res.statusCode}]`, done: false };
-      yield { content: '', done: true };
-      return;
+      throw new Error(`HTTP ${res.statusCode}: ${err.substring(0, 200)}`);
     }
 
-    yield* this._parseStream(res);
+    yield* this._parseStream(res, provider);
 
     metrics.recordLatency('ai', Date.now() - streamStart);
   }
 
-  async *_parseStream(res) {
+  async *_parseStream(res, provider) {
     let buf = '';
     const decoder = new StringDecoder('utf8');
     for await (const chunk of res) {
@@ -268,7 +297,7 @@ class AiService {
           const j = JSON.parse(d);
           let content = '';
           let done = false;
-          if (this.anthropicMode) {
+          if (provider.anthropicMode) {
             if (j.type === 'content_block_delta' && j.delta?.text) content = j.delta.text;
             if (j.type === 'message_stop' || j.type === 'message_delta') done = true;
           } else {
@@ -288,7 +317,9 @@ class AiService {
       if (t.startsWith('data:') && t.slice(5).trim() !== '[DONE]') {
         try {
           const j = JSON.parse(t.slice(5).trim());
-          const content = j.choices?.[0]?.delta?.content || '';
+          const content = provider.anthropicMode
+            ? (j.delta?.text || '')
+            : (j.choices?.[0]?.delta?.content || '');
           if (content) yield { content, done: false };
         } catch (_) { /* ignore */ }
       }

@@ -86,12 +86,6 @@ if ! grep -q "fs.inotify.max_user_watches" /etc/sysctl.conf 2>/dev/null; then
   sysctl -p
 fi
 
-# 增大 SHM 大小（Chromium 可能用到）
-if ! grep -q "/dev/shm" /etc/fstab 2>/dev/null; then
-  echo "tmpfs /dev/shm tmpfs defaults,size=256m 0 0" >> /etc/fstab
-  mount -o remount /dev/shm 2>/dev/null || true
-fi
-
 # ─── 6. 防火墙提醒 ───
 info "========== 安全组配置提醒 =========="
 echo "请确保阿里云 ECS 安全组已开放以下端口："

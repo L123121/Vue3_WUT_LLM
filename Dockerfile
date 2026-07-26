@@ -1,20 +1,12 @@
 # ======================================================================
 # Dockerfile — 武理小精灵 (WUT RAG Copilot)
-# 多阶段构建：前端(Vite) + 后端(Express + Puppeteer + Redis)
+# 多阶段构建：前端(Vite) + 后端(Express + Redis)
 # ======================================================================
 
 # ---- Stage 1: 构建前端 SPA ----
 FROM node:20-slim AS frontend-builder
 
 WORKDIR /app
-
-# 安装 Chromium（用于预渲染登录页）
-RUN apt-get update && apt-get install -y \
-    chromium \
-    --no-install-recommends \
-    && rm -rf /var/lib/apt/lists/*
-ENV PUPPETEER_SKIP_DOWNLOAD=true
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 # 安装前端依赖（--ignore-scripts 避免触发 postinstall 安装后端）
 COPY package.json package-lock.json ./
@@ -26,25 +18,14 @@ COPY src/ src/
 COPY public/ public/
 COPY scripts/ scripts/
 
-# 构建 + 预渲染登录页
-RUN npm run build:full
+# 构建前端
+RUN npm run build
 
 # ---- Stage 2: 后端运行环境 ----
 FROM node:20-slim
 
 LABEL maintainer="武理小精灵团队"
 LABEL description="武理小精灵 - 武理校园 AI 助手 / WUT Campus AI Assistant"
-
-# 安装 Chromium（Puppeteer 依赖）及系统运行库
-# PUPPETEER_SKIP_DOWNLOAD=true 表示不重复下载，使用系统已安装的 chromium
-ENV PUPPETEER_SKIP_DOWNLOAD=true
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
-# 注意: chromium 依赖大量系统库（libnss3、libgbm1 等），不能使用 --no-install-recommends
-# 否则 headless 启动立即崩溃（Failed to launch the browser process）
-RUN apt-get update && apt-get install -y \
-    chromium \
-    fonts-wqy-zenhei \
-    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 

@@ -5,10 +5,12 @@ const { RagService } = require('../services/rag.service');
 const { aiService } = require('../services/ai.service');
 const { DocumentService } = require('../services/document.service');
 const { redis: store } = require('../services/memory-store');
+const { MemoryService } = require('../services/memory.service');
 const { successResponse, errorResponse } = require('../utils/response');
 const { upload, parseFile, cleanupFile } = require('../services/file-upload.service');
 
 const ragService = new RagService(aiService);
+const memoryService = new MemoryService();
 const documentService = new DocumentService();
 const FEEDBACK_RATINGS = new Set(['like', 'dislike']);
 const FEEDBACK_TEXT_LIMIT = 4000;
@@ -76,6 +78,7 @@ const ragChat = async (req, res, next) => {
     const result = await ragService.chat(message, history || [], getTraceOptions(req, { category }));
     res.setHeader('X-Trace-Id', result.traceId || req.traceId);
     successResponse(res, result, 'RAG 处理完成');
+    memoryService.saveChatMemory(req.userId, message, result.reply);
   } catch (error) {
     console.error('[RAG Controller] 错误:', error);
     next(error);
@@ -93,6 +96,7 @@ const ragChatStream = async (req, res, next) => {
       return res.status(400).json({ error: '消息内容不能为空' });
     }
 
+    var _fullReply = '';
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
@@ -110,12 +114,15 @@ const ragChatStream = async (req, res, next) => {
         if (chunk.done) {
           res.write(`data: [DONE]\n\n`);
         } else {
+          _fullReply += chunk.content || "";
           res.write(`data: ${JSON.stringify({ traceId: req.traceId, content: chunk.content })}\n\n`);
         }
       }
     }
 
     res.end();
+
+    memoryService.saveChatMemory(req.userId, message, _fullReply);
   } catch (error) {
     console.error('[RAG Stream] 错误:', error);
     res.write(`data: ${JSON.stringify({ traceId: req.traceId, error: error.message })}\n\n`);
@@ -499,3 +506,9 @@ module.exports = {
   uploadMiddleware,
   reindexAll,
 };
+
+
+
+
+
+

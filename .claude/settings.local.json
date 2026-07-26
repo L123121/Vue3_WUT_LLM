@@ -225,7 +225,10 @@
       "Bash(cp /d/Vue3_武理小精灵/backend/src/services/intent-router.service.js /d/武理小精灵_agent_存档/backend/src/services/)",
       "Bash(cp /d/Vue3_武理小精灵/backend/src/services/agent-tools.js /d/武理小精灵_agent_存档/backend/src/services/)",
       "Bash(cp /d/Vue3_武理小精灵/backend/src/services/agent-handlers.js /d/武理小精灵_agent_存档/backend/src/services/)",
-      "Bash(docker info *)"
+      "Bash(docker info *)",
+      "Bash(git stash *)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(git diff *)"
     ]
   }
 }

@@ -15,16 +15,6 @@ router.use(requireAuth);
  * 获取系统实时指标
  */
 router.get('/metrics', (req, res) => {
-  // 同步学校 API 的清洗统计
-  try {
-    const schoolApi = require('../services/school-api.service');
-    if (schoolApi.schoolApiService) {
-      schoolApi.schoolApiService.getCleanStats();
-    }
-  } catch (err) {
-    console.warn('[Eval] 同步学校 API 清洗统计失败:', err.message);
-  }
-
   const summary = metrics.getSummary();
   res.json({ success: true, data: summary });
 });
@@ -213,7 +203,7 @@ function getDefaultTestCases() {
       question: '如何查询我的成绩？',
       category: 'academic',
       difficulty: 'easy',
-      ground_truth: '可以通过教务系统查询成绩，登录后在成绩查询页面可以看到各科成绩、学分、绩点等信息。也可以使用AI助手查询，绑定学校账号后自动获取。'
+      ground_truth: '可以通过教务系统查询成绩，登录后在成绩查询页面可以看到各科成绩、学分、绩点等信息。'
     },
     {
       id: 't003',

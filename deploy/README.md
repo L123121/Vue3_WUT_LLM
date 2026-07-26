@@ -42,7 +42,7 @@ backend:3000
 - 已安装 Docker 和 Docker Compose V2。
 - 已开放安全组端口：`22`、`80`、`443`。
 - 可选：已备案域名和 SSL 证书。
-- 已准备模型服务、JWT、教务加密等生产环境变量。
+- 已准备模型服务、JWT 等生产环境变量。
 
 > 不建议把 `3000` 端口暴露到公网。当前 `docker-compose.yml` 仅绑定 `127.0.0.1:3000:3000`，由 nginx 访问后端。
 
@@ -70,9 +70,7 @@ vim deploy/.env.production
 
 | 变量 | 说明 |
 | --- | --- |
-| `AI_API_KEY` | OpenAI-compatible 模型服务 Key |
 | `JWT_SECRET` | JWT 签名密钥，建议 `openssl rand -hex 32` |
-| `SCHOOL_ENC_KEY` | 教务密码加密密钥 |
 | `CORS_ORIGIN` | 前端访问域名，例如 `https://your-domain.com` |
 
 按需填写：
@@ -83,7 +81,6 @@ vim deploy/.env.production
 | `JUDGE_API_KEY` / `JUDGE_MODEL` | LLM-as-judge 独立 Key（可选，默认同 AI_API_KEY） |
 | `MILVUS_ADDRESS` | Milvus 连接地址，默认 `milvus:19530` |
 | `MILVUS_COLLECTION` | 向量集合名，默认 `wuli_elf_chunks` |
-| `PUPPETEER_EXECUTABLE_PATH` | 容器内默认 `/usr/bin/chromium` |
 
 > `deploy/.env.production` 包含敏感信息，不要提交到 Git。SQLite 无需额外配置，数据自动持久化到 `backend-data` volume。
 
@@ -309,11 +306,9 @@ aliyun cdn RefreshObjectCaches --ObjectPath https://static.your-domain.com/asset
 
 ## 排障清单
 
-- **后端启动失败**：检查 `AI_API_KEY`、`JWT_SECRET`、`SCHOOL_ENC_KEY` 是否存在。
+- **后端启动失败**：检查 `AI_API_KEY`、`JWT_SECRET` 是否存在。
 - **生产环境 CORS 报错**：检查 `CORS_ORIGIN` 是否包含当前访问域名。
 - **nginx 证书错误**：检查证书文件路径是否与 `deploy/nginx.conf` 一致。
-- **登录超时**：确认服务器能访问 `SCHOOL_TP_HOST` 和 `SCHOOL_JW_HOST`。
-- **Puppeteer 启动失败**：确认镜像中存在 `/usr/bin/chromium`，或设置 `PUPPETEER_EXECUTABLE_PATH`。
 - **Milvus 连接失败**：检查 `MILVUS_ADDRESS` 是否指向 `milvus:19530`，及 milvus 容器是否完成初始化（`start_period=120s`）。
 - **Milvus 集合未加载**：首次启动后需在 RAG 接口中触发一次检索，自动加载集合。
 - **上传文件丢失**：确认 `uploads-data` volume 未被删除。
@@ -323,10 +318,9 @@ aliyun cdn RefreshObjectCaches --ObjectPath https://static.your-domain.com/asset
 
 ## 注意事项
 
-1. `deploy/.env.production`、SSL 私钥、教务加密密钥不要提交到仓库。
+1. `deploy/.env.production`、SSL 私钥不要提交到仓库。
 2. 生产环境必须配置 `CORS_ORIGIN`，否则后端会拒绝启动。
 3. `backend-data`、`milvus-data`、`uploads-data` 是关键持久化 volume，删除前务必备份。
-4. 教务系统依赖 Puppeteer 和外部站点稳定性，登录或查询失败时优先看后端日志。
-5. nginx 日志和容器日志已配置轮转上限，但仍建议定期清理旧镜像和备份文件。
+4. nginx 日志和容器日志已配置轮转上限，但仍建议定期清理旧镜像和备份文件。
 6. Milvus Standalone 包含嵌入式 etcd，单机部署无需额外安装 etcd / minio。
 7. SQLite 是单写者模型，仅适合单后端实例部署。如需水平扩展，需改用 PostgreSQL / Redis 等网络数据库。
