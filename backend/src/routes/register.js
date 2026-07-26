@@ -3,7 +3,6 @@
  */
 const express = require('express');
 const path = require('path');
-const fs = require('fs');
 const config = require('../config');
 
 function applyRoutes(app, chatLimiter) {
@@ -60,7 +59,7 @@ function applyRoutes(app, chatLimiter) {
   // 指标路由
   app.use('/api/metrics', metricsRoutes);
 
-  // 子路由（RAG、学校、评测、工具、记忆）
+  // 子路由（RAG、评测、工具、记忆）
   app.use('/api', apiRoutes);
 
   // SSE 流式聊天
@@ -121,18 +120,11 @@ function applyRoutes(app, chatLimiter) {
 
   // 生产环境托管前端
   if (isProduction) {
-    const frontendDist = path.join(__dirname, '../../dist');
+    const frontendDist = path.join(__dirname, '../../../dist');
     app.use(express.static(frontendDist));
-
-    const prerenderedLogin = path.join(frontendDist, 'login', 'index.html');
-    const hasPrerenderedLogin = fs.existsSync(prerenderedLogin);
 
     app.get('*', (req, res) => {
       if (req.path.startsWith('/api') || req.path.startsWith('/uploads')) return;
-
-      if (hasPrerenderedLogin && req.path === '/login') {
-        return res.sendFile(prerenderedLogin);
-      }
 
       res.sendFile(path.join(frontendDist, 'index.html'));
     });

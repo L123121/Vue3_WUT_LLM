@@ -2,6 +2,7 @@
 
 const { redis: store } = require('./memory-store');
 const { ShortTermMemory } = require('./memory/short-term-memory');
+const { aiService } = require('./ai.service');
 const { LongTermMemory } = require('./memory/long-term-memory');
 const { UserProfile } = require('./memory/user-profile');
 const { parseRedisList } = require('./memory/helpers');
@@ -21,7 +22,7 @@ const MAX_LONG_TERM_CHARS = 8000;
 
 class MemoryService {
   constructor() {
-    this.shortTerm = new ShortTermMemory();
+    this.shortTerm = new ShortTermMemory(aiService);
     this.longTerm = new LongTermMemory();
     this.profile = new UserProfile();
   }
@@ -38,6 +39,21 @@ class MemoryService {
 
   async clearShortTerm(userId) {
     return this.shortTerm.clear(userId);
+  }
+
+  // ==================== 对话记忆（组合写入） ====================
+
+  /**
+   * 保存一轮对话到短期记忆并提取长期记忆（异步，不阻塞调用方）
+   * @param {string} userId - 用户 ID，为空则跳过
+   * @param {string} message - 用户消息
+   * @param {string} reply - 助手回复
+   */
+  saveChatMemory(userId, message, reply) {
+    if (!userId) return;
+    const summary = `用户问：${message}\n助手答：${(reply || '').substring(0, 200)}`;
+    this.saveShortTerm(userId, summary).catch(() => {});
+    this.extractAndSave(userId, message, reply || '').catch(() => {});
   }
 
   // ==================== 长期记忆（委托） ====================
@@ -169,3 +185,5 @@ class MemoryService {
 }
 
 module.exports = { MemoryService };
+
+

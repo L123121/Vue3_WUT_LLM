@@ -3,11 +3,10 @@
 /**
  * 系统指标采集服务
  *
- * 采集四类指标：
- *   1. 响应延迟 — AI/LLM、ChatDoc、父子召回各阶段耗时
+ * 采集三类指标：
+ *   1. 响应延迟 — AI/LLM、ChatDoc、向量检索各阶段耗时
  *   2. RAG 召回率 — 基于 ground_truth 的上下文召回评估
  *   3. 父子召回覆盖率 — ChatDoc 检索后本地增强的比例
- *   4. 数据清洗拦截 — _cleanString 替换统计
  */
 
 class MetricsService {
@@ -25,7 +24,6 @@ class MetricsService {
       keywordSearch: [], // 关键词检索
       parentChild: [],   // 父子召回增强阶段
       total: [],         // 端到端总延迟
-      schoolApi: [],     // 教务接口调用
       rerank: []         // Rerank 精排延迟
     };
 
@@ -38,15 +36,6 @@ class MetricsService {
       totalRetrievedChunks: 0 // 检索到的总切片数
     };
 
-    // 数据清洗统计
-    this.cleaning = {
-      htmlEntities: 0,    // HTML 实体替换次数
-      invisibleChars: 0,  // 不可见字符移除次数
-      whitespaceFix: 0,   // 空白规范化次数
-      nullValues: 0,      // 空值拦截次数
-      totalFields: 0      // 处理的总字段数
-    };
-
     // 延迟分段（用于计算 p50/p95/p99）
     this.latencyBuckets = {
       embedding: { total: 0, count: 0 },
@@ -56,7 +45,6 @@ class MetricsService {
       keywordSearch: { total: 0, count: 0 },
       parentChild: { total: 0, count: 0 },
       total: { total: 0, count: 0 },
-      schoolApi: { total: 0, count: 0 },
       rerank: { total: 0, count: 0 }
     };
 
@@ -69,7 +57,7 @@ class MetricsService {
 
   /**
    * 记录单次延迟
-   * @param {'ai'|'chatdoc'|'vectorSearch'|'parentChild'|'total'|'schoolApi'|'rerank'} type
+   * @param {'ai'|'chatdoc'|'vectorSearch'|'parentChild'|'total'|'rerank'} type
    * @param {number} ms - 毫秒
    */
   recordLatency(type, ms) {
@@ -116,16 +104,6 @@ class MetricsService {
     if (options.usedParentChild) this.rag.parentChildQueries++;
     if (options.matchedDocs) this.rag.matchedDocCount += options.matchedDocs;
     if (options.retrievedChunks) this.rag.totalRetrievedChunks += options.retrievedChunks;
-  }
-
-  // ==================== 清洗统计 ====================
-
-  recordCleaning(stats) {
-    if (stats.htmlEntities) this.cleaning.htmlEntities += stats.htmlEntities;
-    if (stats.invisibleChars) this.cleaning.invisibleChars += stats.invisibleChars;
-    if (stats.whitespaceFix) this.cleaning.whitespaceFix += stats.whitespaceFix;
-    if (stats.nullValues) this.cleaning.nullValues += stats.nullValues;
-    if (stats.totalFields) this.cleaning.totalFields += stats.totalFields;
   }
 
   // ==================== 聚合输出 ====================
@@ -186,12 +164,6 @@ class MetricsService {
       ? (this.rag.matchedDocCount / this.rag.parentChildQueries).toFixed(1)
       : 0;
 
-    // 清洗拦截率
-    const totalIntercepted = this.cleaning.htmlEntities + this.cleaning.invisibleChars + this.cleaning.whitespaceFix + this.cleaning.nullValues;
-    const interceptRate = this.cleaning.totalFields > 0
-      ? ((totalIntercepted / this.cleaning.totalFields) * 100).toFixed(1)
-      : 0;
-
     return {
       uptime: `${minutes} min`,
       latency: latencySummary,
@@ -202,11 +174,6 @@ class MetricsService {
         parentChildCoverage: `${ragCoverage}%`,
         avgMatchedDocs,
         totalRetrievedChunks: this.rag.totalRetrievedChunks
-      },
-      cleaning: {
-        ...this.cleaning,
-        totalIntercepted,
-        interceptRate: `${interceptRate}%`
       },
       observability: {
         stages: this._getStageSummary(),

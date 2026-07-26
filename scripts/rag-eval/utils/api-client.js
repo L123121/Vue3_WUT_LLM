@@ -43,29 +43,8 @@ export async function loginForCookie() {
 
   if (cachedCookie) return cachedCookie;
 
-  const studentId = getCredential('RAG_EVAL_STUDENT_ID', 'SCHOOL_STUDENT_ID');
-  const password = getCredential('RAG_EVAL_PASSWORD', 'SCHOOL_PASSWORD');
-
-  if (!studentId || !password) return '';
-
-  const response = await fetch(`${BACKEND_URL}/api/school/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ studentId, password }),
-  });
-
-  const bodyText = await response.text();
-  if (!response.ok) {
-    throw new Error(`登录失败: ${response.status} ${bodyText.substring(0, 200)}`);
-  }
-
-  const cookie = extractCookieHeader(response);
-  if (!cookie) {
-    throw new Error('登录成功但响应中没有 Set-Cookie，请检查后端 auth_token 设置');
-  }
-
-  cachedCookie = cookie;
-  return cachedCookie;
+  // 评测登录仅支持显式 Cookie（RAG_EVAL_COOKIE），不再支持凭证换 Cookie
+  return '';
 }
 
 export async function getAuthHeaders(extraHeaders = {}) {
@@ -81,7 +60,7 @@ async function fetchWithAuth(url, options = {}) {
   const response = await fetch(url, { ...options, headers });
 
   if (response.status === 401 && !cachedCookie) {
-    throw new Error('接口需要登录：请设置 RAG_EVAL_COOKIE，或设置 RAG_EVAL_STUDENT_ID/RAG_EVAL_PASSWORD 后重试');
+    throw new Error('接口需要登录：请设置 RAG_EVAL_COOKIE 后重试');
   }
 
   return response;

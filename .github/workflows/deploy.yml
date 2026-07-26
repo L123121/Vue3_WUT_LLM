@@ -53,8 +53,6 @@ jobs:
       - name: Install backend dependencies
         run: npm ci --ignore-scripts
         working-directory: backend
-        env:
-          PUPPETEER_SKIP_DOWNLOAD: "true"
 
       - name: Lint
         run: npm run lint:check
@@ -63,7 +61,6 @@ jobs:
         run: npm test
         env:
           JWT_SECRET: test-secret
-          SCHOOL_ENC_KEY: test-enc-key
           AI_API_KEY: test-ai-key
 
   # ========== 2. 构建 & 推送 Docker 镜像 ==========

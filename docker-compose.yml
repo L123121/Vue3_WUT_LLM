@@ -1,7 +1,8 @@
 # ======================================================================
 # Docker Compose — 武理小精灵 生产部署
-# 包含: nginx (SSL 反向代理) + backend (Express) + milvus (向量库)
+# 包含: nginx (SSL 反向代理) + backend (Express)
 # 文档存储: SQLite（挂载 volume backend-data）
+# 向量检索: 文件持久化（无需外部向量数据库）
 # ======================================================================
 #
 # 使用方式:
@@ -44,8 +45,6 @@ services:
     volumes:
       - backend-data:/app/data              # SQLite 数据库持久化
       - uploads-data:/app/backend/uploads   # 上传文件临时目录
-    depends_on:
-      - milvus
     restart: unless-stopped
     logging:
       driver: "json-file"
@@ -59,31 +58,6 @@ services:
       retries: 3
       start_period: 30s
 
-  # ---- 向量数据库（Milvus Standalone） ----
-  milvus:
-    image: milvusdb/milvus:v2.4.17-standalone
-    command: ["milvus", "run", "standalone"]
-    ports:
-      - "127.0.0.1:19530:19530"  # gRPC（仅在宿主机可访问）
-    environment:
-      ETCD_USE_EMBED: "true"
-      ETCD_DATA_DIR: /var/lib/milvus/etcd
-      COMMON_STORAGE_TYPE: local
-    volumes:
-      - milvus-data:/var/lib/milvus
-    restart: unless-stopped
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 120s
-
 volumes:
   backend-data:
     driver: local
@@ -92,6 +66,4 @@ volumes:
   ssl-certs:
     driver: local
   nginx-logs:
-    driver: local
-  milvus-data:
     driver: local

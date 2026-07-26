@@ -2,7 +2,7 @@
 
 ![状态](https://img.shields.io/badge/status-active-success) ![版本](https://img.shields.io/badge/version-0.0.0-blue) ![Vue](https://img.shields.io/badge/Vue-3.5-brightgreen) ![Node](https://img.shields.io/badge/Node-20+-yellow)
 
-武理小精灵是面向武汉理工大学校园场景的 AI 助手。项目采用 **Vue 3 + Pinia + Express** 架构，围绕 AI 流式聊天、RAG 知识库、语音输入、多会话管理、评测体系和教务系统查询构建完整的前后端应用。
+武理小精灵是面向武汉理工大学校园场景的 AI 助手。项目采用 **Vue 3 + Pinia + Express** 架构，围绕 AI 流式聊天、RAG 知识库、语音输入、多会话管理、评测体系构建完整的前后端应用。
 
 ---
 
@@ -35,7 +35,7 @@
 
 | 页面 | 路由 | 说明 |
 | --- | --- | --- |
-| 登录页 | `/login` | 教务系统账号登录，成功后设置 httpOnly cookie |
+| 登录页 | `/login` | 账号密码登录，成功后设置 httpOnly cookie |
 | 聊天页 | `/chat` | AI 对话、文件上传、语音输入、会话列表 |
 | 知识库 | `/knowledge` | RAG 文档上传、文档管理、两级分类、统计信息 |
 | 评测页 | `/eval` | 人工评分、LLM-as-judge 结果、系统指标 |
@@ -278,13 +278,8 @@ data: [DONE]
 | `RAG_RERANK_TOP_K` | `10` | 重排后进入父文档上下文的片段数 |
 | `RAG_MAX_CONTEXT_LENGTH` | `6000` | 上下文最大字符数 |
 | `RAG_MIN_SOURCE_SCORE` | `0.03` | 低于该分数时触发无可靠来源拒答 |
-| `SCHOOL_TP_HOST` | `https://one.whut.edu.cn` | 武理统一身份认证地址 |
-| `SCHOOL_JW_HOST` | `https://jwxt.whut.edu.cn` | 武理教务系统地址 |
-| `SCHOOL_ENC_KEY` | 无 | 教务密码加密密钥，后端启动必填 |
-| `SCHOOL_BROWSER_DEBUG_PORT` | `9222` | 教务爬取浏览器调试端口 |
 | `REDIS_URL` | 无 | Redis 连接串；不填则使用本地 MemoryStore |
 | `CORS_ORIGIN` | 无 | 生产环境必填，多个域名用英文逗号分隔 |
-| `PUPPETEER_EXECUTABLE_PATH` | 无 | 容器内默认 `/usr/bin/chromium` |
 | `VITE_API_BASE_URL` | `/api` | 前端 API 基础路径，跨域部署时设置 |
 
 ---
@@ -294,7 +289,7 @@ data: [DONE]
 ```text
 .
 ├── src/                         # Vue 3 前端源码
-│   ├── api/                     # fetch 封装、聊天/SSE、RAG、教务、评测 API
+│   ├── api/                     # fetch 封装、聊天/SSE、RAG、评测 API
 │   ├── components/              # 聊天、通用、评测、布局组件
 │   ├── composables/             # 流式输出、Markdown、懒加载、指标等复用逻辑
 │   ├── i18n/                    # 多语言文案
@@ -310,8 +305,8 @@ data: [DONE]
 │   │   ├── config/              # 环境变量配置
 │   │   ├── controllers/         # 聊天控制器
 │   │   ├── middleware/          # CORS、Helmet、认证、限流等中间件
-│   │   ├── routes/              # 会话、RAG、教务、评测路由
-│   │   ├── services/            # AI、RAG、Embedding、Reranker、Judge、教务、指标服务
+│   │   ├── routes/              # 会话、RAG、评测路由
+│   │   ├── services/            # AI、RAG、Embedding、Reranker、Judge、指标服务
 │   │   └── utils/               # HTTP 客户端、响应、文本切分工具
 │   ├── __tests__/               # 后端测试
 │   ├── data/                    # 本地 MemoryStore 数据
@@ -382,7 +377,7 @@ Express:3000（API + 静态资源）
 - ONNX 本地模型：BGE-small-zh（Embedding）、BGE-reranker-base（重排）
 - Milvus 2.4.17 Hybrid Search（稠密×0.6 + 稀疏×0.4）
 - LLM：StepFun step-3.7-flash（生产）、step-3.5-flash（评测，独立 Key）
-- multer、pdf-parse、mammoth、Puppeteer
+- multer、pdf-parse、mammoth
 - Helmet、CORS、express-rate-limit、morgan
 
 ### 部署
@@ -399,7 +394,7 @@ Express:3000（API + 静态资源）
 
 ```bash
 cp deploy/.env.production.example deploy/.env.production
-# 编辑 deploy/.env.production，填写 AI_API_KEY、JWT_SECRET、SCHOOL_ENC_KEY、CORS_ORIGIN 等
+# 编辑 deploy/.env.production，填写 AI_API_KEY、JWT_SECRET、CORS_ORIGIN 等
 
 docker compose -p wuli-elf up -d --build
 docker compose -p wuli-elf logs -f

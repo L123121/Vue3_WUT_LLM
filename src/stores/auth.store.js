@@ -3,7 +3,6 @@ import { ref, computed } from 'vue';
 import { API_URL } from '../api/client.js';
 
 const USER_KEY = 'user';
-const REMEMBERED_STUDENT_ID_KEY = 'remembered_student_id';
 const AUTH_REQUEST_TIMEOUT_MS = 130000;
 
 const readStoredUser = () => {
@@ -83,17 +82,6 @@ export const useAuthStore = defineStore('auth', () => {
     hasCheckedSession.value = true;
   };
 
-  const rememberStudentId = (studentId) => {
-    const sid = String(studentId || '').trim();
-    if (sid) {
-      localStorage.setItem(REMEMBERED_STUDENT_ID_KEY, sid);
-    } else {
-      localStorage.removeItem(REMEMBERED_STUDENT_ID_KEY);
-    }
-  };
-
-  const getRememberedStudentId = () => localStorage.getItem(REMEMBERED_STUDENT_ID_KEY) || '';
-
   const finishLogin = (userData) => {
     const nextUser = userData?.role ? userData : { ...userData, role: 'user' };
     setUser(nextUser);
@@ -143,23 +131,6 @@ export const useAuthStore = defineStore('auth', () => {
     }
 
     return await postAuth('/auth/change-password', { currentPassword: c, newPassword: n }, 30000);
-  };
-
-  const casLogin = async (studentId, password) => {
-    const sid = String(studentId || '').trim();
-    const pwd = String(password || '');
-
-    if (!sid || !pwd) {
-      throw createAuthError({ code: 'MISSING_CREDENTIALS', message: '请输入学号和密码', status: 400 });
-    }
-
-    const data = await postAuth('/school/login', { studentId: sid, password: pwd });
-    const loggedInUser = data?.data?.user;
-    if (!loggedInUser) {
-      throw createAuthError({ code: 'INVALID_RESPONSE', message: '登录成功但未获取到用户信息' });
-    }
-
-    return finishLogin(loggedInUser);
   };
 
   const fetchCurrentUser = async () => {
@@ -215,11 +186,8 @@ export const useAuthStore = defineStore('auth', () => {
     setUser,     // 内部设置登录状态
     register,
     changePassword,
-    casLogin,
     fetchCurrentUser,
     logout,
     updateUser,
-    rememberStudentId,
-    getRememberedStudentId,
   };
 });

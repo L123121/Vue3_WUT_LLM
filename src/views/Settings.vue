@@ -37,8 +37,5 @@ import { Settings } from 'lucide-vue-next'
 
 const features = [
   { icon: '💬', name: 'AI 智能对话', status: '可用' },
-  { icon: '📊', name: '成绩查询', status: '可用' },
-  { icon: '📚', name: '课表查询', status: '可用' },
-  { icon: '📝', name: '考试安排', status: '可用' },
 ]
 </script>

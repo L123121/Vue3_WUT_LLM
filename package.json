@@ -10,8 +10,6 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "prerender": "node scripts/prerender-login.cjs",
-    "build:full": "npm run build && npm run prerender",
     "preview": "vite preview",
     "start": "cd backend && npm start",
     "lint": "eslint src/ --fix",

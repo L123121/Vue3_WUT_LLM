@@ -87,6 +87,10 @@ function applyMiddleware(app) {
   const { authMiddleware } = require('../middleware/auth.middleware');
   app.use(authMiddleware);
 
+  // 用户级配额中间件
+  const { quotaMiddleware } = require('../middleware/quota.middleware');
+  app.use(quotaMiddleware);
+
   // 聊天接口速率限制
   const chatLimiter = rateLimit({
     windowMs: 1 * 60 * 1000,
@@ -100,5 +104,6 @@ function applyMiddleware(app) {
 }
 
 module.exports = { applyMiddleware };
+
 
 
