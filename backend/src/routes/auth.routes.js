@@ -3,8 +3,7 @@
  */
 const express = require('express');
 const rateLimit = require('express-rate-limit');
-// 使用 PostgreSQL 版 auth 服务（替代原 better-sqlite3 版）
-const authService = require('../services/auth-pg.service');
+const authService = require('../services/auth.service');
 const quotaService = require('../services/quota.service');
 const { COOKIE_NAME, requireAuth, generateToken } = require('../middleware/auth.middleware');
 
