@@ -13,7 +13,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --ignore-scripts
 
 # 拷贝前端源码
-COPY vite.config.js index.html ./
+COPY vite.config.js vite-plugin-perf.js index.html ./
 COPY src/ src/
 COPY public/ public/
 COPY scripts/ scripts/
