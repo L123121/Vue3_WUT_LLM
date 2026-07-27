@@ -12,41 +12,17 @@
 # ======================================================================
 
 services:
-  # ---- 反向代理 + SSL 终止 ----
+  # ---- 反向代理 ----
   nginx:
     image: nginx:1.27-alpine
     ports:
       - "80:80"
-      - "443:443"
     volumes:
-      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./deploy/nginx.http.conf:/etc/nginx/conf.d/default.conf:ro
       - nginx-logs:/var/log/nginx
-      # SSL 证书（用 certbot 或阿里云免费证书）
-      - ssl-certs:/etc/letsencrypt:ro
     depends_on:
       - backend
     restart: unless-stopped
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  # ---- PostgreSQL 数据库 ----
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-wuli}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wuli123456}
-      POSTGRES_DB: ${POSTGRES_DB:-wuli_elf}
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-wuli} -d ${POSTGRES_DB:-wuli_elf}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
     logging:
       driver: "json-file"
       options:
@@ -63,13 +39,8 @@ services:
       - "127.0.0.1:3000:3000"  # 仅 nginx 可访问
     env_file:
       - ./deploy/.env.production
-    environment:
-      # 自动拼接 PG 连接（可被 .env.production 里的 DATABASE_URL 覆盖）
-      DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER:-wuli}:${POSTGRES_PASSWORD:-wuli123456}@postgres:5432/${POSTGRES_DB:-wuli_elf}}
-    depends_on:
-      postgres:
-        condition: service_healthy
     volumes:
+      - backend-data:/app/backend/data      # SQLite 数据持久化
       - uploads-data:/app/backend/uploads   # 上传文件临时目录
     restart: unless-stopped
     logging:
@@ -85,11 +56,9 @@ services:
       start_period: 30s
 
 volumes:
-  postgres-data:
+  backend-data:
     driver: local
   uploads-data:
-    driver: local
-  ssl-certs:
     driver: local
   nginx-logs:
     driver: local
