@@ -61,6 +61,7 @@ function applyMiddleware(app) {
   // 安全头 + CSP
   app.use(helmet({
     contentSecurityPolicy: {
+      useDefaults: false,
       directives: {
         defaultSrc: ["'self'"],
         scriptSrc: ["'self'", "'unsafe-inline'"],
@@ -69,6 +70,11 @@ function applyMiddleware(app) {
         fontSrc: ["'self'", "data:", "https://fonts.gstatic.com"],
         connectSrc: ["'self'", "ws:", "wss:"],
         frameSrc: ["'none'"],
+        baseUri: ["'self'"],
+        formAction: ["'self'"],
+        frameAncestors: ["'self'"],
+        objectSrc: ["'none'"],
+        scriptSrcAttr: ["'none'"],
       },
     },
   }));
