@@ -59,24 +59,9 @@ function applyMiddleware(app) {
   app.use(cookieParser());
 
   // 安全头 + CSP
+  // 注意：CSP 在 nginx 层面配置，此处禁用 helmet 的 CSP 以避免冲突
   app.use(helmet({
-    contentSecurityPolicy: {
-      useDefaults: false,
-      directives: {
-        defaultSrc: ["'self'"],
-        scriptSrc: ["'self'", "'unsafe-inline'"],
-        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-        imgSrc: ["'self'", "data:", "https:"],
-        fontSrc: ["'self'", "data:", "https://fonts.gstatic.com"],
-        connectSrc: ["'self'", "ws:", "wss:"],
-        frameSrc: ["'none'"],
-        baseUri: ["'self'"],
-        formAction: ["'self'"],
-        frameAncestors: ["'self'"],
-        objectSrc: ["'none'"],
-        scriptSrcAttr: ["'none'"],
-      },
-    },
+    contentSecurityPolicy: false,
   }));
 
   morgan.token('traceId', req => req.traceId || '-');
