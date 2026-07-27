@@ -13,10 +13,19 @@ const { EmbeddingService } = require('./embedding.service');
  * 检索流程：匹配子级句子 → 取父级段落作为上下文注入 LLM
  */
 class IndexingService {
-  constructor() {
-    this.vectorStore = new VectorStoreService();
-    this.embeddingService = new EmbeddingService();
+  /**
+   * @param {object} [vectorStore] - 向量库实例（默认使用全局单例）
+   * @param {object} [embeddingService] - embedding 服务（可选，避免重复加载模型）
+   */
+  constructor(vectorStore = null, embeddingService = null) {
+    // 延迟解析默认单例：避免模块加载时的循环依赖
+    this._getVectorStore = vectorStore
+      ? () => vectorStore
+      : () => require('./vector-store.service').vectorStore;
+    this.embeddingService = embeddingService || new EmbeddingService();
   }
+
+  get vectorStore() { return this._getVectorStore(); }
 
   /**
    * 将文本按段落分割（含碎片段落合并）

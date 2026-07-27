@@ -36,14 +36,32 @@ app.use((err, req, res, next) => {
 });
 
 // 启动
-app.listen(PORT, '0.0.0.0', async () => {
+const server = app.listen(PORT, '0.0.0.0', async () => {
   const hasApi = !!config.ai.apiKey;
+  const dbType = process.env.DATABASE_URL ? 'PostgreSQL' : 'SQLite';
   console.log('='.repeat(60));
   console.log('[Server] Backend started successfully.');
   console.log(`[Server] URL: http://localhost:${PORT}`);
   console.log(`[Server] AI Model: ${config.ai.model || 'step-3.7-flash'}`);
   console.log(`[Server] Mode: ${hasApi ? 'online' : 'mock'}`);
-  console.log('[Server] Storage: SQLite (data/store.json)');
-  console.log('[Server] RAG Provider: Milvus (dense + sparse hybrid)');
+  console.log(`[Server] Storage: ${dbType}`);
+  console.log('[Server] Vector: 本地文件持久化（精确检索）');
   console.log('='.repeat(60));
 });
+
+// 优雅关闭：先停向量库保存，再关 server
+async function shutdown(signal) {
+  console.log(`[Server] 收到 ${signal}，正在优雅关闭...`);
+  try {
+    const { vectorStore } = require('./services/vector-store.service');
+    if (vectorStore._dirty) vectorStore._saveSync();
+  } catch (_) {}
+  server.close(() => {
+    console.log('[Server] HTTP server 已关闭');
+    process.exit(0);
+  });
+  // 兜底：5s 后强制退出
+  setTimeout(() => process.exit(0), 5000).unref();
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
