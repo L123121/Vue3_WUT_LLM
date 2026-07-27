@@ -4,6 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 const { TextSplitter } = require('../utils/text-splitter');
 const { redis: store } = require('./memory-store');
 const { IndexingService } = require('./indexing.service');
+const { registerDocumentProvider } = require('./vector-store.service');
 
 const VECTOR_STATUS = Object.freeze({
   LOCAL_ONLY: 'local_only',
@@ -17,7 +18,39 @@ class DocumentService {
       chunkSize: 500,
       chunkOverlap: 50,
     });
-    this.indexingService = new IndexingService();
+    // 延迟初始化：避免模块加载时的循环依赖
+    this._indexing = null;
+    this._providerRegistered = false;
+  }
+
+  // 延迟获取 IndexingService（首次用时才 require）
+  get indexingService() {
+    if (!this._indexing) {
+      const { IndexingService } = require('./indexing.service');
+      // 传入全局向量库单例，保证索引写入同一个实例
+      const { vectorStore } = require('./vector-store.service');
+      this._indexing = new IndexingService(vectorStore);
+      if (!this._providerRegistered) {
+        const { registerDocumentProvider } = require('./vector-store.service');
+        registerDocumentProvider(() => this._allDocs());
+        this._providerRegistered = true;
+      }
+    }
+    return this._indexing;
+  }
+
+  /**
+   * 返回所有文档的索引信息（供向量库重建用）
+   */
+  async _allDocs() {
+    const docIds = await store.smembers('documents:all');
+    const pipeline = store.pipeline();
+    docIds.forEach(id => pipeline.hgetall(`document:${id}`));
+    const results = await pipeline.exec();
+    return results
+      .map(([, data]) => data)
+      .filter(d => d && d.id)
+      .map(d => ({ id: d.id, title: d.title, content: d.content, category: d.category }));
   }
 
   /**

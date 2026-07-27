@@ -10,6 +10,7 @@ lerna-debug.log*
 # Environment files
 .env
 backend/.env
+deploy/.env.production
 
 # Session/cookie files
 cookies.txt
