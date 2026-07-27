@@ -328,20 +328,15 @@ class SQLiteStore {
 }
 
 // ==================== 选择后端 ====================
-// 优先级：REDIS_URL > DATABASE_URL > SQLite（默认）
+// 优先级：REDIS_URL > SQLite（默认）
 
 let store;
 const REDIS_URL = process.env.REDIS_URL;
-const DATABASE_URL = process.env.DATABASE_URL;
 
 if (REDIS_URL) {
   const { RedisStore } = require('./redis-store');
   store = new RedisStore(REDIS_URL);
   console.log('[Store] 使用 Redis');
-} else if (DATABASE_URL) {
-  const { PostgresStore } = require('./postgres-store');
-  store = new PostgresStore(DATABASE_URL);
-  console.log('[Store] 使用 PostgreSQL');
 } else {
   store = new SQLiteStore();
   console.log('[Store] 使用 SQLite（本地持久化）');
