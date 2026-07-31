@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* 精确指定 Tailwind 扫描范围，避免扫描 node_modules、backend、scripts 等 */
+@source "./**/*.{vue,js,ts}";
+@source "!./design-archive/**";
+
 @custom-variant dark (&:where(.dark, .dark *));
 
 @layer base {

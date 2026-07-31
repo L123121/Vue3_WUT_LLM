@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, onMounted, onUnmounted, provide } from 'vue';
 import { useRoute } from 'vue-router';
 import Sidebar from './components/layout/Sidebar.vue';
 import MobileSidebar from './components/layout/MobileSidebar.vue';
@@ -12,13 +12,18 @@ const isMobile = ref(false);
 const isMobileSidebarOpen = ref(false);
 let mql = null;
 
+// 供子页面（如 AIChat 汉堡按钮）打开移动端侧边栏
+provide('openMobileSidebar', () => { isMobileSidebarOpen.value = true; });
+
+const handleMediaChange = (e) => { isMobile.value = e.matches; };
+
 onMounted(() => {
   mql = window.matchMedia('(max-width: 768px)');
   isMobile.value = mql.matches;
-  mql.addEventListener('change', (e) => { isMobile.value = e.matches; });
+  mql.addEventListener('change', handleMediaChange);
 });
 onUnmounted(() => {
-  if (mql) mql.removeEventListener('change', () => {});
+  if (mql) mql.removeEventListener('change', handleMediaChange);
 });
 </script>
 
@@ -34,9 +39,7 @@ onUnmounted(() => {
         <main class="flex-1 min-h-0 flex flex-col relative bg-slate-50 dark:bg-gray-950 transition-colors duration-300 ease-in-out border-t border-b border-slate-200 dark:border-gray-800">
           <ErrorBoundary>
             <router-view v-slot="{ Component }">
-              <transition name="fade" mode="out-in">
-                <component :is="Component" />
-              </transition>
+              <component :is="Component" />
             </router-view>
           </ErrorBoundary>
         </main>

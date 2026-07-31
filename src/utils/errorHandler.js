@@ -1,6 +1,5 @@
 /**
- * Global error handling setup for Vue app.
- * Catches unhandled errors and promise rejections.
+ * 全局错误处理与上报
  */
 
 const friendly = (err) => {
@@ -14,23 +13,37 @@ const friendly = (err) => {
   return '操作失败，请稍后重试';
 };
 
+/**
+ * 统一错误上报：带上下文信息，控制台可追溯
+ * 替代分散的 console.warn / console.error，统一格式
+ *
+ * @param {string} action - 出错的操作名称（如 "loadDocuments"、"clearMessages"）
+ * @param {Error|string} err - 错误对象或消息
+ * @param {object} [context] - 额外的上下文信息（如 { userId, docId }）
+ */
+export function reportError(action, err, context) {
+  const msg = err?.message || err?.toString?.() || err || '未知错误';
+  const detail = context ? ` | context: ${JSON.stringify(context)}` : '';
+  console.error(`[${action}] ${msg}${detail}`);
+}
+
 export function setupGlobalErrorHandler(app, toastStore) {
   app.config.errorHandler = (err, instance, info) => {
-    console.error('[Vue Error]', err, info);
+    reportError('VueError', err, { info });
     if (toastStore) toastStore.error(friendly(err));
   };
 
   window.addEventListener('unhandledrejection', (event) => {
     const reason = event.reason;
     if (reason?.name === 'AbortError' || reason?.message?.includes('navigation')) return;
-    console.error('[Unhandled Rejection]', reason);
+    reportError('UnhandledRejection', reason);
     if (toastStore) toastStore.error(friendly(reason));
     event.preventDefault();
   });
 
   window.addEventListener('error', (event) => {
     if (event.target?.tagName) return;
-    console.error('[Global Error]', event.error || event.message);
+    reportError('GlobalError', event.error || event.message);
     if (toastStore) toastStore.error(friendly(event.error || event.message));
   });
 }

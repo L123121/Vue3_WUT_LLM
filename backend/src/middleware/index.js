@@ -60,8 +60,10 @@ function applyMiddleware(app) {
 
   // 安全头 + CSP
   // 注意：CSP 在 nginx 层面配置，此处禁用 helmet 的 CSP 以避免冲突
+  // HTTP 模式下禁用 Cross-Origin-Opener-Policy，避免浏览器警告
   app.use(helmet({
     contentSecurityPolicy: false,
+    crossOriginOpenerPolicy: false,
   }));
 
   morgan.token('traceId', req => req.traceId || '-');

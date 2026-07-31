@@ -4,8 +4,6 @@ import { useRoute, useRouter } from 'vue-router';
 import { useChatStore } from '../../stores/chat.store';
 import { useLanguageStore } from '../../stores/language.store';
 import { ChevronDown, ChevronRight, Plus, Check, X, MessageSquare, Edit3, Trash2, Search } from 'lucide-vue-next';
-import { RecycleScroller } from 'vue-virtual-scroller';
-import 'vue-virtual-scroller/dist/vue-virtual-scroller.css';
 import ConfirmDialog from '../common/ConfirmDialog.vue';
 
 const chatStore = useChatStore();
@@ -31,10 +29,6 @@ const showDeleteConfirm = ref(false);
 const deletingConversationId = ref(null);
 const deletingConversationTitle = ref('');
 
-// 虚拟滚动配置
-const ITEM_SIZE = 72; // 每个会话项的高度（像素）
-const MIN_ITEMS_FOR_VIRTUAL = 20; // 超过此数量启用虚拟滚动
-
 const labels = computed(() => ({
   justNow: '刚刚',
   minutesAgo: (value) => `${value}分钟前`,
@@ -58,10 +52,6 @@ const labels = computed(() => ({
 
 const normalizedQuery = computed(() => searchQuery.value.trim().toLowerCase());
 
-// 是否启用虚拟滚动
-const shouldUseVirtualScroll = computed(() => {
-  return visibleConversations.value.length > MIN_ITEMS_FOR_VIRTUAL;
-});
 
 const buildMatchedPreview = (text, keyword) => {
   if (!keyword) return text;
@@ -244,103 +234,8 @@ const isEditing = (convId) => editingId.value === convId;
         </p>
       </div>
 
-      <!-- 虚拟滚动列表（会话数量超过阈值时使用） -->
-      <RecycleScroller
-        v-if="shouldUseVirtualScroll"
-        class="flex-1 min-h-0 scrollbar-thin"
-        :items="visibleConversations"
-        :item-size="ITEM_SIZE"
-        key-field="id"
-        :buffer="200"
-      >
-        <template #default="{ item: conv }">
-          <div
-            @click="handleSwitch(conv.id)"
-            :class="[
-              'group relative flex flex-col px-3.5 py-3 mb-1.5 rounded-xl cursor-pointer transition-all duration-200',
-              chatStore.currentConversationId === conv.id
-                ? 'bg-blue-50 dark:bg-blue-900/20'
-                : 'hover:bg-slate-50 dark:hover:bg-gray-800'
-            ]"
-          >
-            <div v-if="isEditing(conv.id)" class="flex items-center gap-2">
-              <input
-                v-model="editingTitle"
-                @click.stop
-                @keyup.enter="saveEdit"
-                @keyup.escape="cancelEdit"
-                class="flex-1 px-2 py-1 text-sm bg-white dark:bg-gray-700 border border-slate-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
-                autofocus
-              />
-              <button
-                @click.stop="saveEdit"
-                class="p-1 text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 rounded"
-              >
-                <Check :size="14" />
-              </button>
-              <button
-                @click.stop="cancelEdit"
-                class="p-1 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded"
-              >
-                <X :size="14" />
-              </button>
-            </div>
-
-            <template v-else>
-              <div class="flex items-center gap-2">
-                <MessageSquare
-                  :size="14"
-                  :class="[
-                    chatStore.currentConversationId === conv.id
-                      ? 'text-blue-600 dark:text-blue-400'
-                      : 'text-slate-400 dark:text-slate-500'
-                  ]"
-                />
-                <span
-                  :class="[
-                    'flex-1 text-sm font-medium truncate',
-                    chatStore.currentConversationId === conv.id
-                      ? 'text-blue-700 dark:text-blue-300'
-                      : 'text-slate-700 dark:text-slate-300'
-                  ]"
-                >
-                  {{ conv.title }}
-                </span>
-
-                <div class="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button
-                    @click.stop="startEdit(conv)"
-                    class="p-1 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors"
-                    :title="labels.edit"
-                  >
-                    <Edit3 :size="12" />
-                  </button>
-                  <button
-                    @click.stop="openDeleteConfirm(conv, $event)"
-                    class="p-1 text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
-                    :title="labels.remove"
-                  >
-                    <Trash2 :size="12" />
-                  </button>
-                </div>
-              </div>
-
-              <div class="flex items-center justify-between mt-1 pl-5">
-                <span class="text-xs text-slate-400 dark:text-slate-500 truncate flex-1 mr-2">
-                  {{ getPreview(conv) }}
-                </span>
-                <span class="text-[10px] text-slate-400 dark:text-slate-600 whitespace-nowrap">
-                  {{ formatTime(conv.updatedAt) }}
-                </span>
-              </div>
-            </template>
-          </div>
-        </template>
-      </RecycleScroller>
-
-      <!-- 普通列表（会话数量较少时使用） -->
+      <!-- 会话列表（普通滚动容器，移除虚拟滚动依赖） -->
       <div
-        v-else
         class="flex-1 min-h-0 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-200 dark:scrollbar-thumb-gray-700 scrollbar-track-transparent space-y-1.5"
       >
         <div

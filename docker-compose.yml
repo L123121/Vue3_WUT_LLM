@@ -42,6 +42,9 @@ services:
     volumes:
       - backend-data:/app/backend/data      # SQLite 数据持久化
       - uploads-data:/app/backend/uploads   # 上传文件临时目录
+      - ./dist:/app/dist:ro                 # 前端静态文件（支持热替换）
+      - ./backend/src:/app/backend/src:ro   # 后端源码（git pull 即时生效）
+      - ./ragdata:/app/ragdata:ro           # 知识库文档源文件
     restart: unless-stopped
     logging:
       driver: "json-file"

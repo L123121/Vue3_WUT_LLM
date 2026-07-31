@@ -57,4 +57,17 @@ const generateToken = (payload) => {
   });
 };
 
-module.exports = { authMiddleware, requireAuth, generateToken, COOKIE_NAME };
+/**
+ * 管理员鉴权中间件 — 必须为 admin 角色
+ */
+const requireAdmin = (req, res, next) => {
+  if (!req.userId) {
+    return res.status(401).json({ success: false, message: '请先登录' });
+  }
+  if (req.role !== 'admin') {
+    return res.status(403).json({ success: false, message: '权限不足，仅管理员可执行此操作' });
+  }
+  next();
+};
+
+module.exports = { authMiddleware, requireAuth, requireAdmin, generateToken, COOKIE_NAME };

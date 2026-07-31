@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router';
 import { getDocuments, addDocument, deleteDocument, getStats, uploadFile, getDocumentContent } from '../api/rag.js';
 import { useToastStore } from '../stores/toast.store.js';
 import MarkdownRenderer from '../components/chat/MarkdownRenderer.vue';
+import MobileMenuButton from '../components/layout/MobileMenuButton.vue';
 import {
   Database,
   Plus,
@@ -72,6 +73,9 @@ const categoryGroups = [
       { value: '课程资料:概率论', label: '概率论' },
       { value: '课程资料:离散数学', label: '离散数学' },
       { value: '课程资料:电路原理', label: '电路原理' },
+      { value: '课程资料:软件工程', label: '软件工程' },
+      { value: '课程资料:数据结构与算法', label: '数据结构与算法' },
+      { value: '课程资料:人工智能', label: '人工智能' },
     ]
   },
   {
@@ -99,6 +103,7 @@ const categoryGroups = [
       { value: '信息资源:奖助学金相关', label: '奖助学金相关' },
       { value: '信息资源:体测相关', label: '体测相关' },
       { value: '信息资源:本科生选课', label: '本科生选课' },
+      { value: '信息资源:校园指南', label: '校园指南' },
     ]
   }
 ];
@@ -420,6 +425,7 @@ watch(documents, (docs) => {
     <!-- 头部 -->
     <div class="flex items-center justify-between mb-5">
       <div class="flex items-center gap-3">
+        <MobileMenuButton />
         <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center text-white shadow-lg shadow-violet-500/20">
           <Database :size="20" />
         </div>

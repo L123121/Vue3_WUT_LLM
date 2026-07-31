@@ -6,6 +6,8 @@ import { useLanguageStore } from '../stores/language.store.js';
 import { Bot, Eraser } from 'lucide-vue-next';
 import MessageList from '../components/chat/MessageList.vue';
 import ChatBox from '../components/chat/ChatBox.vue';
+import ConfirmDialog from '../components/common/ConfirmDialog.vue';
+import MobileMenuButton from '../components/layout/MobileMenuButton.vue';
 
 const chatStore = useChatStore();
 const toast = useToastStore();
@@ -16,6 +18,15 @@ const messageListRef = ref(null);
 const currentTitle = computed(() => chatStore.currentConversation?.title || text.value.assistantTitle);
 const effectiveMessageCount = computed(() => chatStore.messages.filter((msg) => msg.id !== 'welcome' && msg.text?.trim()).length);
 const canClear = computed(() => effectiveMessageCount.value > 0 && !chatStore.isLoading);
+
+const showClearConfirm = ref(false);
+
+const confirmClear = () => {
+  showClearConfirm.value = false;
+  Promise.resolve(chatStore.clearMessages()).catch((e) => {
+    console.error('[AIChat] 清空会话异常:', e);
+  });
+};
 
 // 当前对话模式（已移除 Agent，始终为 chat）
 const activeMode = ref('chat');
@@ -86,39 +97,6 @@ const initializeChat = async () => {
   // forceRefresh=true：切换页面回来时从 localStorage 重新加载（本地模式）
   await chatStore.loadConversations(true);
 
-  // 从消息备份恢复（固定 key chat_msgs_last，不受 conversationId 生命周期影响）
-  try {
-    const raw = localStorage.getItem('chat_msgs_last');
-    console.log('[Init] chat_msgs_last:', raw ? raw.substring(0, 80) + '...' : 'null');
-    if (raw) {
-      const backup = JSON.parse(raw);
-      if (backup?.messages?.length > 1) {
-        let conv = chatStore.conversations.find(c => c.id === backup.conversationId);
-        if (!conv) {
-          // 会话不存在于当前列表（缓存丢失），从备份重建
-          console.log('[Init] 从备份重建会话:', backup.conversationId);
-          conv = {
-            id: backup.conversationId,
-            title: backup.title || '历史会话',
-            messages: backup.messages,
-            createdAt: new Date(),
-            updatedAt: new Date(),
-          };
-          chatStore.conversations.unshift(conv);
-        } else {
-          conv.messages = backup.messages;
-          if (backup.title) conv.title = backup.title;
-        }
-        chatStore.switchConversation(backup.conversationId);
-        await scrollToBottom();
-        console.log('[Init] 消息恢复完成:', backup.messages.length, '条');
-        return;
-      }
-    }
-  } catch (e) {
-    console.error('[Init] 备份恢复失败:', e);
-  }
-
   // 没有消息备份，走正常加载流程
   if (chatStore.currentConversationId) {
     await chatStore.loadConversationMessages(chatStore.currentConversationId);
@@ -150,6 +128,7 @@ onMounted(() => {
     <!-- 顶部标题栏 -->
     <div class="bg-white/90 dark:bg-gray-900/90 backdrop-blur-sm p-4 border-b border-slate-200 dark:border-gray-700 flex items-center justify-between z-10 gap-3 shrink-0">
       <div class="flex items-center min-w-0">
+        <MobileMenuButton />
         <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-blue-500 to-indigo-400 flex items-center justify-center mr-3 shadow-lg shadow-blue-500/20 text-white">
           <Bot :size="20" />
         </div>
@@ -164,7 +143,7 @@ onMounted(() => {
         </div>
       </div>
       <button
-        @click="chatStore.clearMessages"
+        @click="showClearConfirm = true"
         :disabled="!canClear"
         :class="[
           'p-2 rounded-lg transition-colors duration-200',
@@ -195,5 +174,15 @@ onMounted(() => {
       @mode-change="onModeChange"
     />
   </div>
-</template>
 
+  <ConfirmDialog
+    :show="showClearConfirm"
+    title="清空会话"
+    message="确定要清空当前会话吗？此操作不可撤销。"
+    confirm-text="确认清空"
+    cancel-text="取消"
+    :danger="true"
+    @confirm="confirmClear"
+    @cancel="showClearConfirm = false"
+  />
+</template>

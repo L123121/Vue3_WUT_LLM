@@ -168,6 +168,9 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = null;
     hasCheckedSession.value = true;
     localStorage.removeItem(USER_KEY);
+    // 清空会话缓存和清空标记，避免切换账号后看到上一个人的聊天记录
+    localStorage.removeItem('chat_cache');
+    localStorage.removeItem('chat_cleared_conversations');
   };
 
   const updateUser = (updates) => {

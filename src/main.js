@@ -1,7 +1,5 @@
 import { createApp } from 'vue';
 import { createPinia } from 'pinia';
-import VueVirtualScroller from 'vue-virtual-scroller';
-import 'vue-virtual-scroller/dist/vue-virtual-scroller.css';
 import './style.css';
 import router from './router/index.js';
 import App from './App.vue';
@@ -14,7 +12,6 @@ const pinia = createPinia();
 
 app.use(pinia);
 app.use(router);
-app.use(VueVirtualScroller);
 
 app.mount('#app');
 

@@ -126,6 +126,11 @@ function applyRoutes(app, chatLimiter) {
     app.get('*', (req, res) => {
       if (req.path.startsWith('/api') || req.path.startsWith('/uploads')) return;
 
+      // 禁止浏览器缓存 index.html，确保每次加载最新前端（配合 hash 资源文件）
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+
       res.sendFile(path.join(frontendDist, 'index.html'));
     });
   }

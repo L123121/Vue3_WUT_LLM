@@ -46,3 +46,15 @@ volumes/
 __pycache__/
 .claude/worktrees/
 scripts/rag-eval/results/
+
+# Lighthouse / 性能审计产物（报告由 CI 作为 Artifacts 输出，不入库）
+.lighthouseci/
+lighthouse*.json
+backend/lighthouse*.json
+
+# 一次性性能 benchmark 调试文件
+benchmark-fps.*
+public/benchmark-fps.*
+
+# 本地工具链配置（含历史真实凭证，禁止提交）
+.claude/settings.local.json

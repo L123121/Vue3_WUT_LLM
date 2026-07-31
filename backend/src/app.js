@@ -47,6 +47,23 @@ const server = app.listen(PORT, '0.0.0.0', async () => {
   console.log(`[Server] Storage: ${dbType}`);
   console.log('[Server] Vector: 本地文件持久化（精确检索）');
   console.log('='.repeat(60));
+
+  // 启动时初始化向量库：注册 documentProvider + 重建索引
+  // 修复延迟初始化 bug：DocumentService.indexingService 是懒加载，
+  // 如果没人调用索引方法，registerDocumentProvider 永远不触发，向量为空。
+  // 这里主动触发一次，确保启动后向量库就绪。
+  try {
+    const { DocumentService } = require('./services/document.service');
+    const { vectorStore } = require('./services/vector-store.service');
+    const docService = new DocumentService();
+    // 触发 indexingService getter → 注册 provider
+    // 然后 ensureReady 会从文档库重建向量
+    docService.indexingService; // 触发 provider 注册
+    await vectorStore.ensureReady();
+    console.log(`[Server] 向量库初始化完成，共 ${vectorStore._docs.length} 条向量`);
+  } catch (err) {
+    console.warn(`[Server] 向量库初始化失败（不影响启动）: ${err.message}`);
+  }
 });
 
 // 优雅关闭：先停向量库保存，再关 server

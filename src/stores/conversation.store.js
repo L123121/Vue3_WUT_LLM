@@ -9,6 +9,7 @@ import {
   saveConversationMessages as apiSaveMessages,
 } from '../api/conversations.js';
 import { useAuthStore } from './auth.store.js';
+import { reportError } from '../utils/errorHandler.js';
 import {
   normalizeMessages,
   createWelcomeMessage,
@@ -19,11 +20,42 @@ import {
   loadCache,
   saveCache,
   saveIncremental,
-  restoreFromLegacyBackups,
   cleanupLegacyKeys,
 } from '../utils/conversationCache.js';
 
 const CURRENT_CONVERSATION_KEY = 'chat_current_conversation_id';
+
+// ==================== 消息索引（加速查找） ====================
+// messagesMap: messageId -> { conversationId, message }
+// 纯索引结构，非响应式（避免深层依赖追踪开销），O(1) 按 ID 查找消息
+const messagesMap = new Map();
+
+function _registerMessage(convId, msg) {
+  if (msg?.id) messagesMap.set(msg.id, { conversationId: convId, message: msg });
+}
+
+function _registerConversationMessages(convId, messages) {
+  for (const msg of messages) _registerMessage(convId, msg);
+}
+
+function _unregisterMessage(msgId) {
+  messagesMap.delete(msgId);
+}
+
+function _unregisterConversationMessages(convId) {
+  for (const [id, entry] of messagesMap) {
+    if (entry.conversationId === convId) messagesMap.delete(id);
+  }
+}
+
+function _rebuildMessagesMap(conversations) {
+  messagesMap.clear();
+  for (const conv of conversations) {
+    for (const msg of (conv.messages || [])) {
+      _registerMessage(conv.id, msg);
+    }
+  }
+}
 
 // ==================== 统一缓存管理 ====================
 // 使用 conversationCache.js 统一管理 localStorage 持久化
@@ -64,7 +96,7 @@ const _triggerBackendSync = async () => {
   try {
     await apiSaveMessages(convId, conv.messages);
   } catch (e) {
-    console.warn('[BackendSync] 消息同步失败，下次再试:', e.message);
+    reportError('BackendSync', e, { convId });
   }
 };
 
@@ -161,14 +193,8 @@ export const useConversationStore = defineStore('conversation', () => {
         ensureLocalFallback(conversations, currentConversationId);
       }
       isLoaded.value = true;
-      // 离线状态下也尝试迁移旧数据
-      if (conversations.value.length > 0) {
-        const restored = restoreFromLegacyBackups(conversations.value);
-        if (restored !== conversations.value) {
-          conversations.value = restored;
-        }
-      }
-      cleanupLegacyKeys();
+      // 本地会话也需要建立消息索引
+      _rebuildMessagesMap(conversations.value);
       return;
     }
 
@@ -208,6 +234,9 @@ export const useConversationStore = defineStore('conversation', () => {
       // 首次加载成功后清理旧版备份
       cleanupLegacyKeys();
 
+      // 重建消息索引，加速后续按 ID 查找
+      _rebuildMessagesMap(conversations.value);
+
       // 如果当前会话是后端会话且消息为空，自动从后端拉取
       const currentId = currentConversationId.value;
       if (currentId && !isLocalSession(currentId) && data?.length > 0) {
@@ -218,7 +247,7 @@ export const useConversationStore = defineStore('conversation', () => {
         }
       }
     } catch (error) {
-      console.error('Failed to load conversations:', error);
+      reportError('loadConversations', error);
       if (conversations.value.length === 0) {
         ensureLocalFallback(conversations, currentConversationId);
       }
@@ -230,45 +259,23 @@ export const useConversationStore = defineStore('conversation', () => {
   };
 
   // 从统一缓存恢复消息（兼容旧版备份迁移）
-  const tryRestoreFromBackup = () => {
-    const conv = currentConversation.value;
-    if (!conv) return;
-    const hasRealMessages = (conv.messages || []).some((m) => m.id !== 'welcome' && getMessageText(m));
-    if (hasRealMessages) return;
-
-    // 检查是否已迁移到新缓存
-    const cached = loadCache();
-    if (cached?.conversations) {
-      const cachedConv = cached.conversations.find(c => c.id === conv.id);
-      if (cachedConv?.messages?.length > 1) {
-        conversations.value = conversations.value.map(c =>
-          c.id === conv.id ? { ...c, messages: cachedConv.messages } : c
-        );
-        return;
-      }
-    }
-
-    // 从旧版备份恢复（一次性迁移）
-    const restored = restoreFromLegacyBackups(conversations.value);
-    if (restored.length > 0 && restored !== conversations.value) {
-      conversations.value = restored;
-    }
-  };
-
   const createConversation = async (title) => {
     if (!isBackendAvailable()) {
       const localConv = createLocalConversation(title, conversations.value.length);
       conversations.value.unshift(localConv);
       currentConversationId.value = localConv.id;
       localStorage.setItem(CURRENT_CONVERSATION_KEY, localConv.id);
+      _registerMessage(localConv.id, localConv.messages?.[0]);
       return localConv.id;
     }
 
     try {
       const conv = await apiCreateConversation(title || `新会话 ${conversations.value.length + 1}`);
-      conversations.value.unshift({ ...conv, messages: [createWelcomeMessage()] });
+      const welcomeMsg = createWelcomeMessage();
+      conversations.value.unshift({ ...conv, messages: [welcomeMsg] });
       currentConversationId.value = conv.id;
       localStorage.setItem(CURRENT_CONVERSATION_KEY, conv.id);
+      _registerMessage(conv.id, welcomeMsg);
       flushSave(conversations.value, conv.id);
       return conv.id;
     } catch (error) {
@@ -277,6 +284,7 @@ export const useConversationStore = defineStore('conversation', () => {
       conversations.value.unshift(localConv);
       currentConversationId.value = localConv.id;
       localStorage.setItem(CURRENT_CONVERSATION_KEY, localConv.id);
+      _registerMessage(localConv.id, localConv.messages?.[0]);
       return localConv.id;
     }
   };
@@ -305,9 +313,12 @@ export const useConversationStore = defineStore('conversation', () => {
         const normalized = normalizeMessages(conv.messages);
         conversations.value[index].messages = normalized.length > 0 ? normalized : [createWelcomeMessage()];
         conversations.value[index].title = conv.title;
+        // 消息整体替换，重建该会话的索引
+        _unregisterConversationMessages(conversationId);
+        _registerConversationMessages(conversationId, conversations.value[index].messages);
       }
     } catch (error) {
-      console.error('加载会话消息失败:', error);
+      reportError('loadConversationMessages', error, { conversationId });
     }
   };
 
@@ -333,6 +344,8 @@ export const useConversationStore = defineStore('conversation', () => {
     if (targetIndex === -1) return;
 
     conversations.value.splice(targetIndex, 1);
+    // 删除会话时同步清理该会话的消息索引
+    _unregisterConversationMessages(id);
 
     if (!isLocalSession(id) && isBackendAvailable()) {
       try {
@@ -450,5 +463,10 @@ export const useConversationStore = defineStore('conversation', () => {
     isLocalSession,
     isBackendAvailable,
     scheduleSaveCache,
+    // 消息索引 API（O(1) 按 ID 查找，供外部修改消息后同步）
+    getMessage: (id) => messagesMap.get(id) || null,
+    registerMessage: _registerMessage,
+    unregisterMessage: _unregisterMessage,
+    rebuildMessagesMap: () => _rebuildMessagesMap(conversations.value),
   };
 });
