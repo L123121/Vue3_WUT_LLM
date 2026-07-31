@@ -186,10 +186,14 @@ class RagService {
 
     let reply = '';
     let aiLatency = 0;
+    let processCard = null;
     if (enhancedContext) {
       const aiStart = Date.now();
       try {
-        const enhancedPrompt = this.buildParentChildPrompt(message, enhancedContext);
+        const isProcess = this.isProcessQuestion(message);
+        const enhancedPrompt = isProcess
+          ? this.buildProcessPrompt(message, enhancedContext)
+          : this.buildParentChildPrompt(message, enhancedContext);
         const llmResult = await this.aiService.getCompletion(enhancedPrompt, history);
         aiLatency = Date.now() - aiStart;
         this._recordTraceStage(tracer, 'llm', aiStart, true, {
@@ -199,6 +203,7 @@ class RagService {
           usage: llmResult.usage || null,
         });
         reply = llmResult.content;
+        if (isProcess) processCard = this.parseProcessCard(reply);
       } catch (err) {
         aiLatency = this._recordTraceStage(tracer, 'llm', aiStart, false, { model: config.ai.model || 'step-3.7-flash' }, err);
         console.warn(`[RAG] 增强生成失败: ${err.message}`);
@@ -244,6 +249,7 @@ class RagService {
       questionType,
       rewrittenQuery,
       retrieval: retrievalSummary,
+      processCard: processCard || null,
       _metrics: {
         totalLatency,
         parentChildLatency,
@@ -597,6 +603,79 @@ ${context}
 用户问题：${query}`;
   }
 
+  /**
+   * 流程类问题识别：办理/申请/补办等结构化流程问题
+   */
+  isProcessQuestion(query) {
+    return /补办|办理|申请|报名|流程|步骤|手续|怎么办|如何办理|怎么做|需要什么材料|材料|多久|多长时间|在哪办|哪里办|费用是多少/.test(String(query || ''));
+  }
+
+  /**
+   * 流程类问题的结构化输出 prompt：强制 LLM 输出 JSON 步骤卡片
+   */
+  buildProcessPrompt(query, context) {
+    if (!context) return query;
+
+    return `你是武汉理工大学校园知识助手。请严格根据“参考资料”回答用户问题，并且必须输出严格 JSON。
+
+要求：
+1. 只依据参考资料回答，不要编造资料中没有的信息；资料不足时对应字段填 null 或空数组。
+2. 必须输出严格合法的 JSON 对象（不要用 markdown 代码块包裹，不要输出任何其他文字），结构如下：
+{
+  "summary": "一句话概述办理结果",
+  "steps": [{"title": "步骤标题", "detail": "具体操作说明"}],
+  "materials": ["所需材料1", "所需材料2"],
+  "location": "办理地点，资料未提及则为 null",
+  "duration": "办理时长/周期，资料未提及则为 null",
+  "notes": "注意事项，资料未提及则为 null"
+}
+3. 步骤中的关键事实请标注文档引用，例如 detail 中写“根据【文档 1】”。
+4. steps 至少 1 项；materials 无材料时为空数组。
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+参考资料：
+${context}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+用户问题：${query}`;
+  }
+
+  /**
+   * 从 LLM 回复中解析流程卡片 JSON（容忍 markdown 代码块包裹 / 前后杂文本）
+   */
+  parseProcessCard(reply) {
+    if (!reply || typeof reply !== 'string') return null;
+    try {
+      const text = String(reply).trim();
+      const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+      const raw = fenced ? fenced[1] : text;
+      const start = raw.indexOf('{');
+      const end = raw.lastIndexOf('}');
+      if (start === -1 || end === -1 || end <= start) return null;
+      const parsed = JSON.parse(raw.slice(start, end + 1));
+      if (!parsed || typeof parsed !== 'object') return null;
+      const card = {
+        summary: typeof parsed.summary === 'string' ? parsed.summary : '',
+        steps: Array.isArray(parsed.steps)
+          ? parsed.steps
+            .filter((s) => s && (s.title || s.detail))
+            .map((s) => ({ title: String(s.title || '').trim(), detail: String(s.detail || '').trim() }))
+          : [],
+        materials: Array.isArray(parsed.materials)
+          ? parsed.materials.map((m) => String(m || '').trim()).filter(Boolean)
+          : [],
+        location: parsed.location ? String(parsed.location) : null,
+        duration: parsed.duration ? String(parsed.duration) : null,
+        notes: parsed.notes ? String(parsed.notes) : null,
+      };
+      // 至少要有一个有意义的字段才算有效卡片
+      const hasContent = card.steps.length > 0 || card.materials.length > 0 || card.location || card.duration;
+      return hasContent ? card : null;
+    } catch {
+      return null;
+    }
+  }
+
   _extractQueryTerms(query) {
     const normalized = String(query || '').toLowerCase();
     const terms = new Set();
@@ -738,8 +817,12 @@ ${context}
 
         if (enhancedContext) {
           const aiStart = Date.now();
-          const enhancedPrompt = this.buildParentChildPrompt(message, enhancedContext);
+          const isProcess = this.isProcessQuestion(message);
+          const enhancedPrompt = isProcess
+            ? this.buildProcessPrompt(message, enhancedContext)
+            : this.buildParentChildPrompt(message, enhancedContext);
           let outputChars = 0;
+          let fullReply = '';
           for await (const chunk of this.aiService.getCompletionStream(enhancedPrompt, history)) {
             if (chunk.done) {
               metrics.recordLatency('ai', Date.now() - aiStart);
@@ -748,6 +831,12 @@ ${context}
                 stream: true,
                 outputChars,
               });
+              // 流程类问题：解析步骤卡片并下发给前端
+              let processCard = null;
+              if (isProcess) processCard = this.parseProcessCard(fullReply);
+              if (processCard) {
+                yield { type: 'process', processCard };
+              }
               metrics.recordLatency('total', Date.now() - totalStart);
               this._recordTraceStage(tracer, 'total', totalStart, true, {
                 usedRag: true,
@@ -767,6 +856,7 @@ ${context}
               return;
             }
             outputChars += (chunk.content || '').length;
+            fullReply += chunk.content || '';
             yield { type: 'content', content: chunk.content, done: false };
           }
         } else {

@@ -9,6 +9,7 @@ import { useFavoritesStore } from '../../stores/favorites.store.js';
 import { submitRagFeedback } from '../../api/rag.js';
 import MarkdownRenderer from './MarkdownRenderer.vue';
 import RetrievalTracePanel from './RetrievalTracePanel.vue';
+import ProcessCard from './ProcessCard.vue';
 
 const props = defineProps({
   message: {
@@ -242,6 +243,9 @@ const timeClasses = computed(() => {
         <!-- Message text -->
         <MarkdownRenderer v-if="isModel && !isError" :content="messageText" :sources="message.sources || []" @citation-click="showCitation" @copy-code="(code) => copyMessage(code)" />
         <div v-if="isUser || isError" class="whitespace-pre-wrap leading-relaxed">{{ messageText }}</div>
+
+        <!-- 政策问答步骤卡片（后端解析的结构化 JSON） -->
+        <ProcessCard v-if="isModel && !isError && message.processCard" :card="message.processCard" />
 
         <!-- 检索过程可视化（RAG 回答） -->
         <RetrievalTracePanel v-if="isModel && !isError && message.ragTrace" :trace="message.ragTrace" />
