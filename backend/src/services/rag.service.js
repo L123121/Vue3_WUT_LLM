@@ -310,7 +310,13 @@ class RagService {
         const searchStart = Date.now();
         currentStage = 'milvus_search';
         currentStageStart = searchStart;
-        candidates = await this.vectorStore.search(queryEmbedding, searchTopK, filter, query);
+        // 动态权重路由：术语倾向高 → 提高 sparse(关键词) 权重；语义问题 → 保持向量为主
+        const term = this._terminality(query);
+        const vectorWeight = Math.max(0.1, Math.min(0.9, this.vectorWeight - 0.3 * term));
+        candidates = await this.vectorStore.search(queryEmbedding, searchTopK, filter, {
+          vector: vectorWeight,
+          sparse: 1 - vectorWeight,
+        });
         trace.vector = {
           count: candidates.length,
           latency: Date.now() - searchStart,
@@ -456,7 +462,13 @@ class RagService {
 
     return parents;
   }
-  fuseRetrievalResults(vectorResults = [], keywordResults = [], limit = this.searchTopK) {
+  fuseRetrievalResults(vectorResults = [], keywordResults = [], limit = this.searchTopK, query = null) {
+    // 动态权重路由：传入 query 时按术语倾向调整 向量/关键词 权重；
+    // 不传 query 时使用实例默认权重（保持旧调用兼容）
+    const term = query ? this._terminality(query) : 0;
+    const vectorWeight = Math.max(0.1, Math.min(0.9, this.vectorWeight - 0.3 * term));
+    const keywordWeight = 1 - vectorWeight;
+
     const merged = new Map();
     const addResult = (item, channel, rank) => {
       const key = item.id || `${item.docId}:${item.chunkIndex}`;
@@ -489,8 +501,8 @@ class RagService {
     return [...merged.values()]
       .map(item => {
         const rrfScore = (item._rrfScore || 0) / maxRrf;
-        const finalScore = this.vectorWeight * (item._vectorScore || 0)
-          + this.keywordWeight * (item._keywordScore || 0)
+        const finalScore = vectorWeight * (item._vectorScore || 0)
+          + keywordWeight * (item._keywordScore || 0)
           + 0.15 * rrfScore;
         return { ...item, score: finalScore, _rrfScore: rrfScore };
       })
@@ -590,10 +602,11 @@ class RagService {
     return `你是武汉理工大学校园知识助手。请严格根据“参考资料”回答用户问题。
 
 要求：
-1. 优先使用参考资料，不要编造资料中没有的信息。
-2. 如果参考资料不足以回答，请明确说“知识库资料不足”，并建议用户补充资料或换一种问法。
+1. 回答要详细、完整、具体：把资料中的关键信息（时间、地点、条件、流程、数量、联系方式等）都展开说明，分点或分条组织，不要只给一句话结论。
+2. 优先使用参考资料，不要编造资料中没有的信息；资料不足时明确说明缺什么，并建议用户补充资料或换一种问法。
 3. 回答关键事实时引用文档编号，例如“根据【文档 1】”。
 4. 如果不同文档存在冲突，优先说明冲突点，不要自行合并成确定结论。
+5. 输出用 Markdown 排版：列表用 "-" 或 "1."，重要信息加粗，方便阅读。
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 参考资料：
@@ -1079,6 +1092,34 @@ ${context}
       return RagService.QuestionType.KNOWLEDGE;
 
     return RagService.QuestionType.GENERAL;
+  }
+
+  /**
+   * 术语倾向打分：返回 0（纯语义问题）~ 1（强术语问题）
+   * 用于动态检索权重路由：语义问题向量为主，术语问题关键词为主。
+   * 纯规则正则实现，不调 LLM、不额外耗时。
+   */
+  _terminality(query) {
+    const q = String(query || '');
+    let score = 0;
+    let signals = 0;
+
+    // 信号 1：引号/书名号包裹的专有内容（《离散数学》、"2024版培养方案"）
+    if (/[《》""'']/.test(q)) { score += 0.4; signals++; }
+    // 信号 2：大写英文词 / 字母数字组合（MPAcc, CET-4, BGE）
+    if (/[A-Z]{2,}/.test(q) || /[A-Za-z]+[-_]?\d+/.test(q)) { score += 0.3; signals++; }
+    // 信号 3：政策文号 / 条款编号（〔2023〕、第12条、号/款/章）
+    if (/〔.*?〕|\d+\s*条|第\s*\d+\s*[章条款款]|号文件/.test(q)) { score += 0.3; signals++; }
+    // 信号 4：精确术语词典命中（课程名、政策名）
+    if (/培养方案|学位|绩点|免修|保研|推免|重修|补考|选课|学分|奖学金|转专业/.test(q)) { score += 0.2; signals++; }
+    // 信号 5：数字密度（含数字 → 偏精确检索）
+    if (/\d/.test(q)) { score += 0.1; }
+
+    // 口语/语义信号为负向：出现口语词则降权
+    if (/咋|啥|么办|有没有|是不是|怎么|为什么|哪些|什么样/.test(q)) { score -= 0.15; }
+
+    // 无任何信号时不生硬加分，纯口语问题自然落到低术语分
+    return Math.max(0, Math.min(1, score));
   }
 
   /**

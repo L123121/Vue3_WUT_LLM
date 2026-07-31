@@ -125,6 +125,58 @@ ${answer}`;
   }
 
   /**
+   * 对话摘要压缩：将早期历史消息压缩成一段摘要（供滚动摘要使用）
+   * 复用独立评测 Key/小模型，不抢占生产 LLM 配额。
+   * @param {Array<{role:string, content:string}>} messages 被裁掉的早期消息
+   * @returns {Promise<string|null>} 摘要文本；无 Key 或失败时返回 null
+   */
+  async summarize(messages) {
+    if (!this.apiKey || !Array.isArray(messages) || messages.length === 0) return null;
+
+    const text = messages
+      .map(m => `${m.role === 'user' ? '用户' : '助手'}: ${String(m.content || '').slice(0, 500)}`)
+      .join('\n');
+    if (!text.trim()) return null;
+
+    const systemPrompt = '你是对话摘要助手。请将以下多轮对话压缩成 100 字以内的中文摘要，保留关键事实（用户身份、专业、年级、偏好、已办事项、重要结论）。只输出摘要文本，不要解释。';
+    const url = this._buildUrl();
+    const body = JSON.stringify({
+      model: this.model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: text },
+      ],
+      max_tokens: this.maxTokens,
+      temperature: 0,
+    });
+
+    const options = {
+      hostname: new URL(url).hostname,
+      path: new URL(url).pathname,
+      method: 'POST',
+      headers: { ...this._buildHeaders(), 'Content-Length': Buffer.byteLength(body, 'utf8') },
+      timeout: this.timeout,
+      retries: 2,
+    };
+
+    try {
+      const start = Date.now();
+      const res = await request(options, body);
+      const latency = Date.now() - start;
+      const content = res.data?.choices?.[0]?.message?.content || '';
+      const summary = String(content || '').trim().slice(0, 300);
+      if (summary) {
+        console.log(`[Judge] summarize ${messages.length} 条消息 → ${summary.length} 字符 (${latency}ms)`);
+        return summary;
+      }
+      return null;
+    } catch (err) {
+      console.warn(`[Judge] summarize 失败: ${err.message}，降级为直接截断`);
+      return null;
+    }
+  }
+
+  /**
    * 关键词匹配降级
    */
   _fallbackEvaluation(answer, ground_truth) {

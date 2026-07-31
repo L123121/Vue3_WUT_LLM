@@ -54,8 +54,9 @@
 ① BGE-small-zh ONNX 向量化
    生成稠密向量 512d + n-gram 稀疏向量（整数 key 哈希）
   ↓
-② Milvus Hybrid Search (topK=50)
+② 本地向量库精确检索 (topK=50)
    稠密 COSINE 相似度 ×0.6 + 稀疏 IP 相似度 ×0.4
+   （文件持久化 data/vectors.json，精确计算无 ANN 近似误差）
   ↓
 ③ 50 个候选句子 → 按 parentId 归并
    从句子级命中回溯到父段落，得到 ~15 个完整段落
@@ -104,7 +105,7 @@
 | 服务 | 文件 | 职责 |
 |------|------|------|
 | Embedding | `embedding.service.js` | BGE-small-zh ONNX + n-gram 稀疏 |
-| 向量检索 | `vector-store.service.js` | Milvus hybrid search |
+| 向量检索 | `vector-store.service.js` | 本地文件持久化 + 精确相似度检索 |
 | 重排 | `reranker.service.js` | BGE-reranker-base cross-encoder |
 | 检索管道 | `rag.service.js` | 混合检索→归并→rerank→截断→排序→组装 |
 | 文档索引 | `indexing.service.js` | 章节合并→段落→句子三层切片 |
@@ -267,14 +268,14 @@ data: [DONE]
 | `EMBEDDING_CACHE_DIR` | `.model-cache` | 本地模型缓存目录 |
 | `EMBEDDING_LOCAL_FILES_ONLY` | `true` | 是否只使用本地缓存模型 |
 | `EMBEDDING_SPARSE_DIM` | `250002` | n-gram sparse 哈希空间大小 |
-| `VECTOR_STORE_BACKEND` | `milvus` | 向量库后端；未连接时自动降级内存模式 |
-| `MILVUS_ADDRESS` | `localhost:19530` | Milvus Lite / Milvus gRPC 地址 |
-| `MILVUS_COLLECTION` | `wuli_elf_chunks` | 子块向量 collection |
-| `MILVUS_DENSE_FIELD` | `dense_vector` | dense 向量字段 |
-| `MILVUS_SPARSE_FIELD` | `sparse_vector` | sparse 向量字段 |
-| `MILVUS_DENSE_WEIGHT` | `0.6` | Hybrid Search dense 权重 |
-| `MILVUS_SPARSE_WEIGHT` | `0.4` | Hybrid Search sparse 权重 |
-| `RAG_VECTOR_TOP_K` | `50` | Milvus Hybrid Search 候选数 |
+| `VECTOR_STORE_BACKEND` | `file` | 向量库后端；当前上线方案为本地文件持久化（`file`），无需外部向量数据库 |
+| `MILVUS_ADDRESS` | `localhost:19530` | 预留：Milvus gRPC 地址（本地方案下不使用） |
+| `MILVUS_COLLECTION` | `wuli_elf_chunks` | 预留：Milvus collection（本地方案下不使用） |
+| `MILVUS_DENSE_FIELD` | `dense_vector` | 预留：dense 向量字段（本地方案下不使用） |
+| `MILVUS_SPARSE_FIELD` | `sparse_vector` | 预留：sparse 向量字段（本地方案下不使用） |
+| `MILVUS_DENSE_WEIGHT` | `0.6` | 混合检索 dense 权重 |
+| `MILVUS_SPARSE_WEIGHT` | `0.4` | 混合检索 sparse 权重 |
+| `RAG_VECTOR_TOP_K` | `50` | 向量检索候选数 |
 | `RAG_RERANK_TOP_K` | `10` | 重排后进入父文档上下文的片段数 |
 | `RAG_MAX_CONTEXT_LENGTH` | `6000` | 上下文最大字符数 |
 | `RAG_MIN_SOURCE_SCORE` | `0.03` | 低于该分数时触发无可靠来源拒答 |
@@ -339,7 +340,7 @@ data: [DONE]
 
 | 类型 | 技术 | 用途 | 部署方式 |
 |------|------|------|---------|
-| 向量库 | Milvus 2.4.17 | 稠密+稀疏向量混合检索 | Docker Standalone（19530） |
+| 向量库 | 本地文件持久化（`backend/data/vectors.json`） | 稠密+稀疏向量混合检索 | 文件持久化 + 精确计算（无 ANN 近似误差） |
 | 业务数据 | SQLite | 文档元数据、用户信息、会话记录 | 文件持久化（backend/data/） |
 | 缓存 | MemoryStore | 会话列表缓存 | 内存（无 Redis 时降级） |
 | 可选缓存 | Redis | 高性能会话缓存 | 配置 REDIS_URL 启用 |
@@ -355,7 +356,7 @@ nginx:80/443（SSL 终止）
   ▼
 Express:3000（API + 静态资源）
   │
-  ├── Milvus:19530（向量检索）
+  ├── data/vectors.json（向量持久化 + 精确检索）
   ├── SQLite（文档/用户/会话持久化）
   └── StepFun API（LLM 推理）
 ```
@@ -375,7 +376,7 @@ Express:3000（API + 静态资源）
 
 - Node.js 20、Express 4、cookie-parser、jsonwebtoken
 - ONNX 本地模型：BGE-small-zh（Embedding）、BGE-reranker-base（重排）
-- Milvus 2.4.17 Hybrid Search（稠密×0.6 + 稀疏×0.4）
+- 本地向量库：文件持久化（data/vectors.json）+ 精确相似度检索（稠密×0.6 + 稀疏×0.4）
 - LLM：StepFun step-3.7-flash（生产）、step-3.5-flash（评测，独立 Key）
 - multer、pdf-parse、mammoth
 - Helmet、CORS、express-rate-limit、morgan
@@ -383,7 +384,7 @@ Express:3000（API + 静态资源）
 ### 部署
 
 - Docker 多阶段构建：前端构建产物 + 后端运行环境
-- Docker Compose：nginx SSL 反代 + backend + Milvus
+- Docker Compose：nginx SSL 反代 + backend（向量/业务均本地持久化，无需外部向量数据库）
 - GitHub Actions：Lint、Test、Build、Push、Deploy to ECS
 
 ---
@@ -404,7 +405,7 @@ curl http://localhost:3000/api/health
 生产结构：
 
 ```text
-用户 → nginx(80/443, SSL 终止) → backend(Express API + dist 静态资源) → Milvus
+用户 → nginx(80/443, SSL 终止) → backend(Express API + dist 静态资源) → data/vectors.json（本地向量检索）
 ```
 
 完整证书、ECS 安全组、CI/CD 和运维命令见 [deploy/README.md](deploy/README.md)。
