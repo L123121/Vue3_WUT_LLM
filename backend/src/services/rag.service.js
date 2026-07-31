@@ -1169,10 +1169,11 @@ ${historyText}
     let cutoff = sorted.length;
 
     // 1. 断崖检测：找到第一个分差 > 0.05 的位置（至少保留 1 个）
+    let cliffCutoff = sorted.length;
     for (let i = 1; i < sorted.length; i++) {
       const gap = (sorted[i - 1]._rerankScore || 0) - (sorted[i]._rerankScore || 0);
       if (gap > 0.05) {
-        cutoff = i;
+        cliffCutoff = i;
         break;
       }
     }
@@ -1193,13 +1194,17 @@ ${historyText}
     // 最终 clamp 到 [clamp[0], clamp[1]]
     dynamicMinScore = Math.max(clamp[0], Math.min(clamp[1], dynamicMinScore));
 
+    // 低分过滤优先：严格排除所有低于动态阈值的候选；
+    // 否则按断崖截断（保留分界后的第一个，避免过度截断）
     const scoreCutoff = sorted.findIndex(c => (c._rerankScore || 0) < dynamicMinScore);
-    if (scoreCutoff > 0) {
-      cutoff = Math.min(cutoff, scoreCutoff);
+    if (scoreCutoff >= 0 && scoreCutoff <= cliffCutoff) {
+      cutoff = scoreCutoff;
+    } else {
+      cutoff = cliffCutoff + 1;
     }
 
-    // 3. 硬上限 effectiveMaxCount
-    const result = sorted.slice(0, Math.min(cutoff + 1, effectiveMaxCount));
+    // 3. 硬上限 effectiveMaxCount（至少保留 1 个）
+    const result = sorted.slice(0, Math.max(1, Math.min(cutoff, effectiveMaxCount)));
 
     // 4. 如果截断后只剩 1 个，且第 2 个分数够高，放宽到至少 2 个提高多样性
     if (result.length === 1 && sorted.length >= 2 && (sorted[1]._rerankScore || 0) > dynamicMinScore) {

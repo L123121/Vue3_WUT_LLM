@@ -73,7 +73,7 @@ class LongTermMemory {
 
     // 语义打分（异步）
     const queryEmbedding = this.embedder.isAvailable
-      ? await this.embedder.embed(query).catch(() => null)
+      ? (await this.embedder.embedHybrid(query).catch(() => null))?.dense || null
       : null;
 
     // 为没有 embedding 的记忆条目计算（懒加载）
@@ -151,7 +151,8 @@ class LongTermMemory {
   async _computeEmbedding(entry) {
     if (!this.embedder.isAvailable || !entry.content) return;
     try {
-      entry.embedding = await this.embedder.embed(entry.content);
+      const result = await this.embedder.embedHybrid(entry.content);
+      entry.embedding = result?.dense || null;
     } catch (err) {
       console.warn(`[Memory] embedding 计算失败: ${err.message}`);
     }
