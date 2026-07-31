@@ -11,12 +11,15 @@ function quotaMiddleware(req, res, next) {
   // 仅对需要消耗 LLM 配额的路由启用
   // 在白名单中的路径跳过配额检查
   const skipPaths = [
-    "/api/health", "/api",
+    "/api/health",
     "/api/auth/login", "/api/auth/register", "/api/auth/logout", "/api/auth/me",
     "/api/metrics",
     "/api/rag/stats", "/api/rag/documents",
     "/api/memory",
   ];
+  // API 列表页本身精确跳过；但注意 "/api" 不能作为前缀匹配，
+  // 否则 /api/chat、/api/stream 等消耗 LLM 的接口也会被误跳过（配额失效）
+  if (req.path === "/api") return next();
   if (skipPaths.some(p => req.path === p || req.path.startsWith(p + "/"))) {
     return next();
   }
