@@ -16,12 +16,29 @@ const WORKER_THRESHOLD = 2000;
 const { renderInWorker } = useMarkdownWorker();
 const { highlightCode, getLanguageLabel, isExecutableLanguage, highlightVersion, ensureLanguage } = useCodeHighlighter();
 
-const props = defineProps({ content: { type: String, default: '' }, sources: { type: Array, default: () => [] } });
+const props = defineProps({ content: { type: String, default: '' }, sources: { type: Array, default: () => [] }, highlight: { type: String, default: '' } });
 const emit = defineEmits(['copyCode', 'citation-click']);
 
 const showRunner = ref(false);
 const runnerCode = ref('');
 const runnerLanguage = ref('javascript');
+
+/**
+ * 搜索词高亮：仅在 HTML 的文本节点中包裹 <mark>（先遮蔽标签，避免误伤属性值）
+ * 与 ALLOWED_TAGS 配合：DOMPurify 允许 mark 标签（默认白名单含 mark）
+ */
+const wrapHighlight = (html) => {
+  const keyword = props.highlight;
+  if (!keyword || !html) return html;
+  const escaped = escapeHtml(keyword);
+  if (!escaped) return html;
+  const tags = [];
+  const masked = html.replace(/<[^>]*>/g, (m) => { tags.push(m); return '\u0001'; });
+  if (!masked.includes(escaped)) return html;
+  const highlighted = masked.split(escaped).join(`<mark class="search-hit">${escaped}</mark>`);
+  let i = 0;
+  return highlighted.replace(/\u0001/g, () => tags[i++]);
+};
 
 // 代码块渲染 - 使用 CodeBlock 组件的 HTML 结构
 const renderCodeBlock = (code, language, label, rawCode) => {
@@ -77,10 +94,10 @@ const renderMarkdownMain = (content) => {
     const raw = md.render(completed);
     const sanitized = DOMPurify.sanitize(raw, { ALLOWED_TAGS, ALLOWED_ATTR });
     // 将 【文档N】 渲染为可点击的行内引用
-    return sanitized.replace(
+    return wrapHighlight(sanitized.replace(
       /【文档\s*(\d+)】/g,
       '<span class="citation" data-index="$1" style="display:inline-flex;align-items:center;justify-content:center;min-width:1.25rem;height:1.25rem;padding:0 0.25rem;margin:0 0.125rem;font-size:0.6875rem;font-weight:600;border-radius:9999px;background:#e0e7ff;color:#4338ca;cursor:pointer;border:1px solid #c7d2fe;vertical-align:super;transition:all 0.15s">$1</span>'
-    );
+    ));
   } catch (e) {
     console.error('[MarkdownRenderer] 渲染失败:', e);
     return content;
@@ -111,7 +128,7 @@ const renderCitations = (html) => html.replace(
       isLoadingWorker.value = true;
       const html = await renderInWorker(content);
       if (html) {
-        renderedContent.value = renderCitations(DOMPurify.sanitize(html, { ALLOWED_TAGS, ALLOWED_ATTR }));
+        renderedContent.value = wrapHighlight(renderCitations(DOMPurify.sanitize(html, { ALLOWED_TAGS, ALLOWED_ATTR })));
         lastRenderedAt.value = content;
       } else {
         // Worker fallback

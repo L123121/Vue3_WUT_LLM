@@ -32,8 +32,8 @@ onUnmounted(() => {
     <ToastManager />
 
     <div class="flex h-screen overflow-hidden">
-      <Sidebar v-if="route.path !== '/login' && !isMobile" />
-      <MobileSidebar v-if="route.path !== '/login' && isMobile" v-model="isMobileSidebarOpen" />
+      <Sidebar v-if="route.path !== '/login' && !route.meta.publicShare && !isMobile" />
+      <MobileSidebar v-if="route.path !== '/login' && !route.meta.publicShare && isMobile" v-model="isMobileSidebarOpen" />
 
       <div class="flex-1 flex flex-col h-screen overflow-hidden relative">
         <main class="flex-1 min-h-0 flex flex-col relative bg-slate-50 dark:bg-gray-950 transition-colors duration-300 ease-in-out border-t border-b border-slate-200 dark:border-gray-800">

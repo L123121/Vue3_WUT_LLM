@@ -201,6 +201,35 @@ const openAddModal = () => {
   showAddModal.value = true;
 };
 
+// ==================== 搜索高亮 + 跳转原文 ====================
+
+const previewContentRef = ref(null);
+
+const escapeHtmlForHighlight = (str) => String(str || '')
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+// 列表标题/分类高亮：搜索词命中处用 <mark> 包裹
+const highlightText = (text) => {
+  const escaped = escapeHtmlForHighlight(text);
+  if (!searchQuery.value) return escaped;
+  const q = searchQuery.value.toLowerCase();
+  if (!q || !escaped.toLowerCase().includes(q)) return escaped;
+  const idx = escaped.toLowerCase().indexOf(q);
+  const matchLen = q.length;
+  return `${escaped.slice(0, idx)}<mark class="search-hit">${escaped.slice(idx, idx + matchLen)}</mark>${escaped.slice(idx + matchLen)}`;
+};
+
+// 预览加载完成后，若有搜索词则滚动到第一个命中处（跳转原文）
+const scrollPreviewToHit = async () => {
+  await nextTick();
+  const container = previewContentRef.value;
+  if (!container) return;
+  const hit = container.querySelector('.search-hit');
+  if (hit) {
+    hit.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+};
+
 // 预览文档
 const openPreview = async (doc) => {
   previewDoc.value = doc;
@@ -220,6 +249,7 @@ const openPreview = async (doc) => {
     previewContent.value = '加载失败';
   } finally {
     previewLoading.value = false;
+    scrollPreviewToHit();
   }
 };
 
@@ -405,6 +435,10 @@ onMounted(() => {
   if (route.query.docId) {
     pendingPreviewId.value = route.query.docId;
   }
+  // 携带高亮关键词（引用跳转：snippet 提取的词）
+  if (route.query.q) {
+    searchQuery.value = String(route.query.q).slice(0, 50);
+  }
   refresh();
 });
 
@@ -572,13 +606,13 @@ watch(documents, (docs) => {
                 <FileText :size="16" />
               </div>
               <div class="min-w-0 flex-1">
-                <h3 class="text-sm font-medium text-slate-800 dark:text-gray-100 truncate">{{ doc.title }}</h3>
+                <h3 class="text-sm font-medium text-slate-800 dark:text-gray-100 truncate" v-html="highlightText(doc.title)"></h3>
                 <div class="flex items-center gap-2 mt-1 flex-wrap">
                   <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 dark:bg-gray-700 text-slate-600 dark:text-gray-300">
-                    {{ getGroupLabel(doc.category) }}
+                    <span v-html="highlightText(getGroupLabel(doc.category))"></span>
                   </span>
                   <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300">
-                    {{ getCategoryLabel(doc.category) }}
+                    <span v-html="highlightText(getCategoryLabel(doc.category))"></span>
                   </span>
                   <span
                     class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium"
@@ -638,13 +672,13 @@ watch(documents, (docs) => {
             <X :size="16" />
           </button>
         </div>
-        <div class="flex-1 overflow-y-auto p-5">
+        <div ref="previewContentRef" class="flex-1 overflow-y-auto p-5">
           <div v-if="previewLoading" class="flex items-center justify-center h-32 text-slate-500 dark:text-gray-400">
             <RefreshCw class="animate-spin mr-2" :size="16" />
             加载中...
           </div>
           <div v-else class="text-sm text-slate-700 dark:text-gray-300 leading-relaxed">
-            <MarkdownRenderer :content="previewContent" />
+            <MarkdownRenderer :content="previewContent" :highlight="searchQuery" />
           </div>
         </div>
       </div>
@@ -881,3 +915,19 @@ watch(documents, (docs) => {
     </div>
   </div>
 </template>
+
+<style scoped>
+/* 搜索词高亮（v-html 注入的 mark 元素） */
+:deep(.search-hit) {
+  background-color: #fef08a;
+  color: #92400e;
+  border-radius: 3px;
+  padding: 0 1px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+:root.dark :deep(.search-hit) {
+  background-color: #854d0e;
+  color: #fef9c3;
+}
+</style>

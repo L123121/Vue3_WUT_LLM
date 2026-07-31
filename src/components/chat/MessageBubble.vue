@@ -1,12 +1,14 @@
 <script setup>
 import { ref, computed } from 'vue';
 import { useRouter } from 'vue-router';
-import { User, Bot, Copy, RotateCcw, FileText, BookOpen, Tag, Hash, X, ThumbsUp, ThumbsDown } from 'lucide-vue-next';
+import { User, Bot, Copy, RotateCcw, FileText, BookOpen, Tag, Hash, X, ThumbsUp, ThumbsDown, Star } from 'lucide-vue-next';
 import { useLanguageStore } from '../../stores/language.store.js';
 import { useChatStore } from '../../stores/chat.store.js';
 import { useAuthStore } from '../../stores/auth.store.js';
+import { useFavoritesStore } from '../../stores/favorites.store.js';
 import { submitRagFeedback } from '../../api/rag.js';
 import MarkdownRenderer from './MarkdownRenderer.vue';
+import RetrievalTracePanel from './RetrievalTracePanel.vue';
 
 const props = defineProps({
   message: {
@@ -19,11 +21,12 @@ const props = defineProps({
   },
 });
 
-const emit = defineEmits(['copy']);
+const emit = defineEmits(['copy', 'focus-input']);
 const router = useRouter();
 const languageStore = useLanguageStore();
 const chatStore = useChatStore();
 const authStore = useAuthStore();
+const favoritesStore = useFavoritesStore();
 
 const userAvatar = computed(() => authStore.user?.avatar || '');
 
@@ -35,6 +38,15 @@ const canRetry = computed(() => props.message.canRetry === true);
 const isStreaming = computed(() => chatStore.currentStreamingId === props.message.id);
 
 const hasSources = computed(() => props.message.sources && props.message.sources.length > 0);
+const isFallbackReply = computed(() => (
+  isModel.value
+  && !isError.value
+  && !isStreaming.value
+  && !!messageText.value
+  && !hasSources.value
+  && (props.message.ragTrace?.status === 'fallback'
+    || props.message.ragTrace?.outcome?.fallbackReason === 'no_reliable_sources')
+));
 const feedbackState = ref('idle');
 const selectedFeedback = computed(() => props.message.feedback?.rating || '');
 const isRagAnswer = computed(() => (
@@ -57,6 +69,20 @@ const showCitation = (index) => {
 };
 const closeCitation = () => { citationPopup.value = null; };
 
+// 跳转到知识库查看原文（复用 KnowledgeBase 的 docId 自动预览 + q 高亮）
+const openSourceInKnowledgeBase = () => {
+  const source = citationPopup.value?.source;
+  if (!source) return;
+  const docId = source.id || source.docId || source.parentId;
+  if (!docId) return;
+  // 用 snippet 中的首个有意义的词作为高亮关键词，提升定位精度
+  const snippet = source.snippet || '';
+  const match = snippet.match(/[\u4e00-\u9fa5A-Za-z0-9]{2,12}/);
+  const q = match ? match[0] : '';
+  closeCitation();
+  router.push({ path: '/knowledge', query: { docId, ...(q ? { q } : {}) } });
+};
+
 const messageText = computed(() => props.message.content ?? props.message.text ?? '');
 
 const isParentChildSource = (source) => {
@@ -78,6 +104,12 @@ const formatTime = (timestamp) => languageStore.formatTime(timestamp);
 
 const copyMessage = (text) => {
   navigator.clipboard.writeText(text).then(() => emit('copy', text));
+};
+
+// 收藏/取消收藏消息
+const isFavorited = computed(() => favoritesStore.isFavorite(props.message.id));
+const toggleFavorite = () => {
+  favoritesStore.toggleFavorite(props.message, chatStore.currentConversation);
 };
 
 const buildFeedbackSources = () => (props.message.sources || []).map((source) => ({
@@ -211,6 +243,33 @@ const timeClasses = computed(() => {
         <MarkdownRenderer v-if="isModel && !isError" :content="messageText" :sources="message.sources || []" @citation-click="showCitation" @copy-code="(code) => copyMessage(code)" />
         <div v-if="isUser || isError" class="whitespace-pre-wrap leading-relaxed">{{ messageText }}</div>
 
+        <!-- 检索过程可视化（RAG 回答） -->
+        <RetrievalTracePanel v-if="isModel && !isError && message.ragTrace" :trace="message.ragTrace" />
+
+        <!-- 拒答引导：无可靠来源时给出建议操作 -->
+        <div v-if="isFallbackReply" class="mt-3 rounded-xl border border-amber-200 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-900/20 p-3">
+          <p class="text-xs font-medium text-amber-800 dark:text-amber-300">没有检索到足够可靠的资料</p>
+          <p class="mt-1 text-xs text-amber-700/80 dark:text-amber-400/80 leading-relaxed">
+            可以换个问法（更具体、包含更多关键词），或去知识库查看相关文档后再提问。
+          </p>
+          <div class="mt-2 flex items-center gap-2">
+            <button
+              @click="emit('focus-input')"
+              class="inline-flex items-center gap-1.5 h-7 px-3 rounded-lg text-xs font-medium bg-amber-600 text-white hover:bg-amber-700 transition-colors"
+            >
+              <RotateCcw :size="12" />
+              换个问法
+            </button>
+            <button
+              @click="router.push('/knowledge')"
+              class="inline-flex items-center gap-1.5 h-7 px-3 rounded-lg text-xs font-medium border border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/30 transition-colors"
+            >
+              <BookOpen :size="12" />
+              去知识库
+            </button>
+          </div>
+        </div>
+
         <!-- 行内引用弹窗 -->
         <Teleport to="body">
           <Transition name="popup">
@@ -233,6 +292,16 @@ const timeClasses = computed(() => {
                 <!-- Content -->
                 <div class="p-5 overflow-y-auto flex-1">
                   <MarkdownRenderer :content="citationPopup.source.snippet || '（无原文内容）'" :sources="[]" />
+                </div>
+                <!-- Footer: 跳转知识库查看原文 -->
+                <div class="px-5 py-3 border-t border-slate-100 dark:border-gray-800 shrink-0">
+                  <button
+                    @click="openSourceInKnowledgeBase"
+                    class="w-full h-9 rounded-lg text-xs font-medium inline-flex items-center justify-center gap-1.5 bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+                  >
+                    <BookOpen :size="13" />
+                    在知识库查看原文
+                  </button>
                 </div>
               </div>
             </div>
@@ -282,6 +351,18 @@ const timeClasses = computed(() => {
           >
             <Copy :size="14" />
             <span>复制</span>
+          </button>
+          <button
+            v-if="messageText && !isStreaming"
+            class="flex items-center gap-1 transition-all duration-200 cursor-pointer px-1.5 py-0.5 rounded text-sm"
+            :class="isFavorited
+              ? 'text-amber-500 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20'
+              : 'text-slate-400 hover:text-amber-500 dark:hover:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20 opacity-60 hover:opacity-100'"
+            @click="toggleFavorite"
+            :title="isFavorited ? '取消收藏' : '收藏此消息'"
+          >
+            <Star :size="14" :class="{ 'fill-current': isFavorited }" />
+            <span v-if="isFavorited">已收藏</span>
           </button>
         </div>
       </div>

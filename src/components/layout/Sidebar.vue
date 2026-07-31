@@ -7,6 +7,7 @@ import { Database, MessageSquare, BarChart3, LogOut, MessagesSquare, ChevronUp }
 import { useAuthStore } from '../../stores/auth.store.js';
 import { prefetchRoute } from '../../utils/prefetch.js';
 import ProfilePanel from '../common/ProfilePanel.vue';
+import FavoritesPanel from './FavoritesPanel.vue';
 
 const wutLogo = wutLogoImg;
 const router = useRouter();
@@ -123,6 +124,7 @@ watch(showProfilePanel, (val) => {
     </div>
 
     <section class="flex-1 min-h-0 pb-2">
+      <FavoritesPanel />
       <ConversationList />
     </section>
 

@@ -11,7 +11,7 @@ const props = defineProps({
   currentStreamingId: { type: String, default: '' },
 });
 
-const emit = defineEmits(['copy']);
+const emit = defineEmits(['copy', 'focus-input']);
 const chatStore = useChatStore();
 const scrollerRef = ref(null);
 
@@ -103,8 +103,8 @@ defineExpose({ scrollToBottom, shouldAutoScroll });
       class="flex-1 min-h-0 overflow-y-auto p-4 space-y-4"
       @scroll="handleScroll"
     >
-      <div v-for="(item, index) in messages" :key="item.id" :data-index="index">
-        <MessageBubble :message="item" :question-message="getPreviousUserMessage(index)" @copy="handleCopy" />
+      <div v-for="(item, index) in messages" :key="item.id" :id="`msg-${item.id}`" :data-index="index">
+        <MessageBubble :message="item" :question-message="getPreviousUserMessage(index)" @copy="handleCopy" @focus-input="emit('focus-input')" />
       </div>
     </div>
 
