@@ -21,7 +21,9 @@ function quotaMiddleware(req, res, next) {
     return next();
   }
 
-  // 静态资源跳过
+  // SPA 首页和静态资源跳过（不消耗 LLM 配额）
+  if (req.path === "/") return next();
+  if (req.path.startsWith("/assets/")) return next();
   if (req.path.startsWith("/uploads/")) return next();
 
   quotaService.check(req.userId).then(function(result) {

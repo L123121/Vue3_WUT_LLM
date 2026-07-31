@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue';
 import { Download, Frown, MessageCircle, RefreshCw, Search, ThumbsDown, ThumbsUp } from 'lucide-vue-next';
 import { getRagFeedback } from '../api/rag.js';
 import { useToastStore } from '../stores/toast.store.js';
+import MobileMenuButton from '../components/layout/MobileMenuButton.vue';
 
 const toast = useToastStore();
 const feedbackItems = ref([]);
@@ -103,10 +104,13 @@ onMounted(() => fetchFeedback());
       <div class="relative overflow-hidden rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
         <div class="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-blue-600 via-cyan-400 to-emerald-400"></div>
         <div class="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-          <div>
-            <p class="text-xs font-black uppercase tracking-[0.24em] text-blue-600 dark:text-cyan-300">RAG Feedback</p>
-            <h1 class="mt-2 text-2xl font-black text-slate-900 dark:text-white">用户反馈收集台</h1>
-            <p class="mt-2 max-w-2xl text-sm text-slate-500 dark:text-gray-400">聚合用户对 RAG 回答的点赞和点踩，优先定位需要补资料、改检索或修回答的问题。</p>
+          <div class="flex items-start gap-3">
+            <MobileMenuButton class="mt-1" />
+            <div>
+              <p class="text-xs font-black uppercase tracking-[0.24em] text-blue-600 dark:text-cyan-300">RAG Feedback</p>
+              <h1 class="mt-2 text-2xl font-black text-slate-900 dark:text-white">用户反馈收集台</h1>
+              <p class="mt-2 max-w-2xl text-sm text-slate-500 dark:text-gray-400">聚合用户对 RAG 回答的点赞和点踩，优先定位需要补资料、改检索或修回答的问题。</p>
+            </div>
           </div>
           <div class="flex flex-wrap gap-2">
             <button

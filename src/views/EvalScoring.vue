@@ -6,6 +6,7 @@ import { useSystemMetrics } from '../composables/useSystemMetrics.js';
 import SystemMetricsPanel from '../components/eval/SystemMetricsPanel.vue';
 import RagasDashboard from '../components/eval/RagasDashboard.vue';
 import EvalContentViewer from '../components/eval/EvalContentViewer.vue';
+import MobileMenuButton from '../components/layout/MobileMenuButton.vue';
 
 const {
   evalData, currentIndex, humanScores, comments, loading,
@@ -73,10 +74,13 @@ onUnmounted(() => {
     <!-- 标题栏 -->
     <div class="max-w-5xl mx-auto mb-6">
       <div class="flex items-center justify-between">
-        <h1 class="text-2xl font-bold text-gray-800 dark:text-white flex items-center gap-2">
-          <BarChart3 :size="28" />
-          RAG 人工评测
-        </h1>
+        <div class="flex items-center gap-2">
+          <MobileMenuButton />
+          <h1 class="text-2xl font-bold text-gray-800 dark:text-white flex items-center gap-2">
+            <BarChart3 :size="28" />
+            RAG 人工评测
+          </h1>
+        </div>
         <div class="flex flex-wrap gap-1.5">
           <label
             class="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg cursor-pointer hover:bg-blue-700 transition">

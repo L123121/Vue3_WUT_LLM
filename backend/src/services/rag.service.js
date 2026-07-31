@@ -3,7 +3,7 @@
 const { AiService } = require('./ai.service');
 const { DocumentService } = require('./document.service');
 const { EmbeddingService } = require('./embedding.service');
-const { VectorStoreService } = require('./vector-store.service');
+const { vectorStore: vectorStoreSingleton } = require('./vector-store.service');
 const { RerankerService } = require('./reranker.service');
 const config = require('../config');
 const { metrics } = require('./metrics.service');
@@ -16,7 +16,8 @@ class RagService {
     this.aiService = aiService || new AiService();
     this.documentService = new DocumentService();
     this.embeddingService = new EmbeddingService();
-    this.vectorStore = new VectorStoreService();
+    // 使用全局单例，避免创建新实例导致向量为空
+    this.vectorStore = vectorStoreSingleton;
     this.maxContextLength = ragConfig.maxContextLength || 6000;
     this.parentChildEnabled = ragConfig.parentChildEnabled !== false;
     this.rerankEnabled = ragConfig.rerankEnabled !== false;

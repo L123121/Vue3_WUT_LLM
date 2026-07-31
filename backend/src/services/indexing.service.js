@@ -129,16 +129,63 @@ class IndexingService {
   }
 
   /**
-   * 将段落按句子分割
+   * 将段落按句子分割，并合并过短的相邻句子
    * 注意：选项行（如 "A. 内容"）中的英文句点不被视为句子边界
+   *
+   * 合并原因：按句末标点切分后，大量 < 10 字的碎片（目录项"一、学校概况3"、
+   * 标题"目 录"、日期"2025年7月"）被独立向量化，语义稀薄且干扰检索。
+   * 同一段落内相邻短句合并到目标长度，既消除碎片，又保留句子级的语义聚焦。
+   *
+   * @param {string} paragraph
+   * @param {number} [targetMinLen=25] - 合并目标最小字数，累积到此长度输出
    */
-  _splitSentences(paragraph) {
+  _splitSentences(paragraph, targetMinLen = 25) {
     // 先保护选项行（如 "A. 内容" 或 "- A. 内容"），避免被英文句点误切
     // 用占位符替换选项行中的句点，切完再还原
     const _protected = paragraph.replace(/^([- ]*[A-D])\.\s/gm, '$1<DOT>');
-    // 匹配中文/英文句号、感叹号、问号、省略号
+    // 匹配中文/英文句号、感叹号、问号、换行
     const parts = _protected.split(/(?<=[。！？.!?\n])\s*/);
-    return parts.map(s => s.trim().replace(/<DOT>/g, '.')).filter(s => s.length > 0);
+    const sentences = parts.map(s => s.trim().replace(/<DOT>/g, '.')).filter(s => s.length > 0);
+
+    // 单句段落无需合并
+    if (sentences.length <= 1) return sentences;
+
+    // 合并相邻短句，消除碎片向量
+    return this._mergeShortSentences(sentences, targetMinLen);
+  }
+
+  /**
+   * 同一段落内合并相邻短句
+   *
+   * 策略：顺序累积，达到 targetMinLen 后刷出一个 chunk；
+   * 尾部残余若过短（< 10 字）则并入前一个 chunk，避免产生新的碎片。
+   *
+   * @param {string[]} sentences - 已切分的句子列表
+   * @param {number} targetMinLen - 合并目标最小字数
+   * @returns {string[]} 合并后的 chunk 列表
+   */
+  _mergeShortSentences(sentences, targetMinLen) {
+    const merged = [];
+    let buffer = '';
+
+    for (const s of sentences) {
+      buffer = buffer ? buffer + s : s;
+      if (buffer.length >= targetMinLen) {
+        merged.push(buffer);
+        buffer = '';
+      }
+    }
+
+    // 尾部残余处理：过短则并入前一个 chunk，否则独立成块
+    if (buffer.length > 0) {
+      if (merged.length > 0 && buffer.length < 10) {
+        merged[merged.length - 1] += buffer;
+      } else {
+        merged.push(buffer);
+      }
+    }
+
+    return merged;
   }
 
   /**

@@ -41,9 +41,12 @@ function updateMessage(convStore, conversationId, msgId, updater) {
   if (!msgs) return null;
   const msgIdx = msgs.findIndex((m) => m.id === msgId);
   if (msgIdx === -1) return null;
-  const newMessages = msgs.map((m, i) => (i === msgIdx ? updater(m) : m));
+  const updatedMsg = updater(msgs[msgIdx]);
+  const newMessages = msgs.map((m, i) => (i === msgIdx ? updatedMsg : m));
   // 替换 messages 属性（而非整个 conv 对象），触发 conv.messages 的响应式追踪
   conv.messages = newMessages;
+  // 同步消息索引：updater 可能返回新对象（spread），需更新 map 引用
+  convStore.registerMessage(conversationId, updatedMsg);
   // 防抖增量持久化（非每帧全量同步写）
   convStore.scheduleSaveCache();
   return msgIdx;
@@ -190,7 +193,12 @@ export function useStreaming() {
       const idx = convStore.conversations[convIndex].messages?.findIndex((m) => m.id === retryMsgId);
       if (idx > -1) {
         userMsg = convStore.conversations[convIndex].messages[idx];
+        // 重试时移除用户消息 + 对应 AI 回复（2 条），同步清理索引
+        const removedUser = convStore.conversations[convIndex].messages[idx];
+        const removedAi = convStore.conversations[convIndex].messages[idx + 1];
         convStore.conversations[convIndex].messages.splice(idx, 2);
+        convStore.unregisterMessage(removedUser?.id);
+        convStore.unregisterMessage(removedAi?.id);
       }
     }
 
@@ -198,8 +206,10 @@ export function useStreaming() {
       userMsg = { id: createMessageId(), role: 'user', content: trimmedText, timestamp: new Date(), files: fileData ? [fileData] : [] };
       if (!convStore.conversations[convIndex].messages) convStore.conversations[convIndex].messages = [];
       convStore.conversations[convIndex].messages.push(userMsg);
+      convStore.registerMessage(conversationId, userMsg);
     } else {
       convStore.conversations[convIndex].messages.push(userMsg);
+      convStore.registerMessage(conversationId, userMsg);
     }
     convStore.conversations[convIndex].updatedAt = new Date();
     convStore.scheduleSaveCache(true);
@@ -208,12 +218,18 @@ export function useStreaming() {
     activeStreamingConversationId.value = conversationId;
     currentAbortController = new AbortController();
 
+    // TTFT 埋点变量
+    const streamStartTime = performance.now();
+    let firstChunkReceived = false;
+    let firstFramePainted = false;
+
     const history = buildHistory(convStore.conversations[convIndex].messages || [], userMsg.id);
     const skillPrompt = useSkillStore().buildSystemPrompt();
 
     const aiMsgId = createMessageId();
     const aiMsg = { id: aiMsgId, role: 'model', content: '', timestamp: new Date(), sources: [] };
     convStore.conversations[convIndex].messages.push(aiMsg);
+    convStore.registerMessage(conversationId, aiMsg);
     currentStreamingId.value = aiMsgId;
 
     let messageToSend = trimmedText;
@@ -243,9 +259,28 @@ export function useStreaming() {
             abortCurrentRequest();
             return;
           }
+          // 首字上屏埋点：第一个 chunk 到达时记录时间
+          if (!firstChunkReceived) {
+            firstChunkReceived = true;
+            const firstChunkMs = Math.round(performance.now() - streamStartTime);
+            console.log(`[TTFT] 首字上屏(RAF前): ${firstChunkMs}ms`);
+          }
           pendingContent += content;
           if (!rafId) {
             rafId = requestAnimationFrame(() => {
+              // 首字渲染埋点：RAF 回调执行 = 真正写 DOM 的时刻
+              if (!firstFramePainted) {
+                firstFramePainted = true;
+                const firstFrameMs = Math.round(performance.now() - streamStartTime);
+                console.log(`[TTFT] 首字渲染(DOM写入): ${firstFrameMs}ms`);
+                try {
+                  const key = 'ttft_frame_measurements';
+                  const arr = JSON.parse(localStorage.getItem(key) || '[]');
+                  arr.push({ ts: Date.now(), firstFrame: firstFrameMs, msg: text.substring(0, 30) });
+                  while (arr.length > 100) arr.shift();
+                  localStorage.setItem(key, JSON.stringify(arr));
+                } catch (_) {}
+              }
               updateMessage(convStore, conversationId, aiMsgId, (m) => {
                 const newText = getMessageText(m) + pendingContent;
                 return { ...m, text: newText, content: newText };
@@ -305,19 +340,6 @@ export function useStreaming() {
           activeStreamingConversationId.value = null;
           currentAbortController = null;
           convStore.scheduleSaveCache(true);
-          // 额外保存：把当前会话消息单独存一份（固定 key，不受 convId 变化影响）
-          try {
-            // 重新按 id 解析会话，避免使用流开始时缓存的 convIndex（列表可能已重排）
-            const doneConv = convStore.conversations.find((c) => c.id === conversationId);
-            const msgBackup = doneConv?.messages;
-            if (msgBackup && msgBackup.length > 0) {
-              localStorage.setItem('chat_msgs_last', JSON.stringify({
-                messages: msgBackup,
-                conversationId: conversationId,
-                title: doneConv?.title || '',
-              }));
-            }
-          } catch (e) {}
           onStreamEvent?.('done');
           markResolved();
           resolve();

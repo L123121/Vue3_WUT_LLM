@@ -155,6 +155,73 @@ describe('chatStore', () => {
     expect(store.conversations[0].messages[0].id).toBe('welcome');
   });
 
+  // —— messagesMap 索引测试（直接测 conversation store） ——
+  describe('messagesMap index', async () => {
+    let convStore;
+
+    beforeEach(async () => {
+      setActivePinia(createPinia());
+      localStorage.clear();
+      const { useConversationStore } = await import('../stores/conversation.store.js');
+      convStore = useConversationStore();
+      await convStore.loadConversations();
+    });
+
+    it('getMessage finds existing message in O(1)', () => {
+      const conv = convStore.conversations[0];
+      const targetMsg = conv.messages.find((m) => m.id !== 'welcome') || conv.messages[0];
+
+      const found = convStore.getMessage(targetMsg.id);
+      expect(found).not.toBeNull();
+      expect(found.message).toBe(targetMsg); // 严格引用相等，证明是同一对象
+      expect(found.conversationId).toBe(conv.id);
+    });
+
+    it('getMessage returns null for unknown id', () => {
+      expect(convStore.getMessage('nonexistent-id')).toBeNull();
+    });
+
+    it('index syncs after deleteMessage', async () => {
+      const conv = convStore.conversations[0];
+      const testMsgId = 'index-test-msg';
+      conv.messages.push({ id: testMsgId, role: 'user', content: 'test', timestamp: new Date() });
+      convStore.registerMessage(conv.id, conv.messages[conv.messages.length - 1]);
+
+      // 确认索引命中
+      expect(convStore.getMessage(testMsgId)).not.toBeNull();
+
+      // 通过 store 的 deleteMessage 删除（需从 chat.store 调用路径，这里直接测索引同步）
+      convStore.unregisterMessage(testMsgId);
+      expect(convStore.getMessage(testMsgId)).toBeNull();
+    });
+
+    it('index syncs when message object is replaced (spread)', () => {
+      const conv = convStore.conversations[0];
+      const oldMsg = conv.messages[conv.messages.length - 1];
+      const oldId = oldMsg.id;
+
+      // 模拟 updater 用 spread 替换对象
+      const newMsg = { ...oldMsg, content: 'updated content' };
+      conv.messages[conv.messages.length - 1] = newMsg;
+      convStore.registerMessage(conv.id, newMsg);
+
+      const found = convStore.getMessage(oldId);
+      expect(found).not.toBeNull();
+      expect(found.message).toBe(newMsg); // 引用更新为新对象
+      expect(found.message.content).toBe('updated content');
+    });
+
+    it('rebuildMessagesMap rebuilds from conversations', () => {
+      // 直接往数组加消息但不注册（模拟数据不一致）
+      const conv = convStore.conversations[0];
+      conv.messages.push({ id: 'ghost-msg', role: 'user', content: 'ghost', timestamp: new Date() });
+      expect(convStore.getMessage('ghost-msg')).toBeNull(); // 尚未注册
+
+      convStore.rebuildMessagesMap();
+      expect(convStore.getMessage('ghost-msg')).not.toBeNull(); // 重建后命中
+    });
+  });
+
   it('abortCurrentRequest is a function', () => {
     const store = useChatStore();
     expect(typeof store.abortCurrentRequest).toBe('function');

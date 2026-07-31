@@ -77,7 +77,7 @@ const features = [
       '会话搜索与过滤',
       '虚拟滚动优化长列表',
     ],
-    tech: ['Pinia', 'LocalStorage', 'vue-virtual-scroller'],
+    tech: ['Pinia', 'LocalStorage', 'IntersectionObserver'],
   },
   {
     id: 'voice',

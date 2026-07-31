@@ -161,6 +161,10 @@ export const sendMessageStream = async (message, history = [], callbacks, option
     connectionManager.addPendingMessage({ id: messageId, message, history, conversationId });
   }
 
+  // TTFT 埋点：记录 fetch 发起时刻
+  const ttftStart = performance.now();
+  let ttftMeasured = false;
+
   console.log('[Stream] fetch:', `${API_URL}/stream`, 'attempt:', attempt);
   try {
     const response = await fetch(`${API_URL}/stream`, {
@@ -183,6 +187,27 @@ export const sendMessageStream = async (message, history = [], callbacks, option
     let buffer = '';
     let lastDataTime = Date.now();
 
+    // 包装 onChunk，首次调用时打 TTFT
+    const originalOnChunk = callbacks.onChunk;
+    const measuredOnChunk = (content) => {
+      if (!ttftMeasured) {
+        ttftMeasured = true;
+        const ttftMs = Math.round(performance.now() - ttftStart);
+        console.log(`[TTFT] 首字响应延迟: ${ttftMs}ms`);
+        // 存到 localStorage，方便批量分析
+        try {
+          const key = 'ttft_measurements';
+          const arr = JSON.parse(localStorage.getItem(key) || '[]');
+          arr.push({ ts: Date.now(), ttft: ttftMs, attempt, msg: message.substring(0, 30) });
+          // 只保留最近 100 条
+          while (arr.length > 100) arr.shift();
+          localStorage.setItem(key, JSON.stringify(arr));
+        } catch (_) {}
+      }
+      originalOnChunk(content);
+    };
+    const measuredCallbacks = { ...callbacks, onChunk: measuredOnChunk };
+
     // Stall detection timer
     const stallCheck = setInterval(() => {
       if (Date.now() - lastDataTime > STREAM_STALL_TIMEOUT) {
@@ -199,7 +224,7 @@ export const sendMessageStream = async (message, history = [], callbacks, option
         if (done) {
           clearInterval(stallCheck);
           console.log('[Stream] stream ended (done=true), calling onDone');
-          callbacks.onDone();
+          measuredCallbacks.onDone();
           break;
         }
 
@@ -216,7 +241,7 @@ export const sendMessageStream = async (message, history = [], callbacks, option
           const data = trimmed.slice(5).trim();
           if (data === '[DONE]') {
             clearInterval(stallCheck);
-            callbacks.onDone();
+            measuredCallbacks.onDone();
             return;
           }
 
@@ -232,13 +257,13 @@ export const sendMessageStream = async (message, history = [], callbacks, option
             }
             if (content) {
               console.log('[Stream] chunk:', content.substring(0, 30));
-              callbacks.onChunk(content);
+              measuredCallbacks.onChunk(content);
             }
-            if (json.sources) callbacks.onSources?.(json.sources);
-            if (json.rag || json.trace || json.retrieval) callbacks.onTrace?.(json);
+            if (json.sources) measuredCallbacks.onSources?.(json.sources);
+            if (json.rag || json.trace || json.retrieval) measuredCallbacks.onTrace?.(json);
             if (json.error) {
               clearInterval(stallCheck);
-              callbacks.onError(new Error(json.error));
+              measuredCallbacks.onError(new Error(json.error));
               return;
             }
           } catch (err) {

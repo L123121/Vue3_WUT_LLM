@@ -45,7 +45,6 @@ export default defineConfig({
           'vue-vendor': ['vue', 'vue-router', 'pinia'],
           highlight: ['highlight.js/lib/core'],
           markdown: ['markdown-it'],
-          'virtual-scroller': ['vue-virtual-scroller'],
           icons: ['lucide-vue-next'],
         },
       },

@@ -6,6 +6,7 @@ import { useChatStore } from '../../stores/chat.store.js';
 import { useToastStore } from '../../stores/toast.store.js';
 import { uploadChatFile } from '../../api/chat.js';
 import VoiceRecorder from './VoiceRecorder.vue';
+import ConfirmDialog from '../common/ConfirmDialog.vue';
 
 const props = defineProps({
   isLoading: Boolean,
@@ -24,6 +25,11 @@ const input = ref('');
 const textareaRef = ref(null);
 const fileInputRef = ref(null);
 const debouncedInput = ref('');
+
+// 语音输入状态（由 VoiceRecorder 通过事件暴露）
+const voiceRecorderRef = ref(null);
+const voiceInterim = ref('');
+const voiceError = ref('');
 
 // 文件上传
 const selectedFile = ref(null);
@@ -51,9 +57,18 @@ const showCommands = ref(false);
 const selectedCommandIndex = ref(0);
 let debounceTimer = null;
 
+const showClearConfirm = ref(false);
+
+const confirmClearMessages = () => {
+  showClearConfirm.value = false;
+  Promise.resolve(chatStore.clearMessages()).catch((e) => {
+    console.error('[ChatBox] 清空会话异常:', e);
+  });
+};
+
 // 快捷命令列表
 const commands = computed(() => [
-  { key: '/clear', label: '清空会话', icon: Trash2, action: () => chatStore.clearMessages() },
+  { key: '/clear', label: '清空会话', icon: Trash2, action: () => { showClearConfirm.value = true; } },
   { key: '/export', label: '导出对话', icon: Download, action: () => emit('command', 'export') },
 ]);
 
@@ -162,8 +177,17 @@ const executeCommand = (cmd) => {
   showCommands.value = false;
 };
 
+// 语音输入状态（由 VoiceRecorder 通过事件暴露）
+// voiceRecorderRef 在文件顶部第 30 行已声明
 const handleTranscript = (text) => {
   input.value += text;
+};
+const handleVoiceInterim = (text) => {
+  voiceInterim.value = text;
+};
+const handleVoiceError = (message) => {
+  voiceError.value = message;
+  emit('error', message);
 };
 
 defineExpose({
@@ -278,6 +302,17 @@ defineExpose({
         </button>
       </div>
 
+      <!-- 语音识别 interim 预览 + 错误提示 -->
+      <Transition name="slide-down">
+        <div v-if="voiceInterim || voiceError" class="mb-1 px-2 py-1 rounded-lg text-xs flex items-center gap-2"
+          :class="voiceError ? 'bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400' : 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-300'">
+          <span v-if="voiceError" class="font-medium">⚠</span>
+          <span v-else class="inline-block h-1.5 w-1.5 rounded-full bg-blue-500 animate-pulse"></span>
+          <span class="truncate">{{ voiceError || voiceInterim }}</span>
+          <span v-if="!voiceError" class="text-slate-400 dark:text-slate-500 ml-auto shrink-0">识别中…</span>
+        </div>
+      </Transition>
+
       <textarea
         ref="textareaRef"
         v-model="input"
@@ -300,7 +335,13 @@ defineExpose({
         <Paperclip :size="16" />
       </button>
 
-      <VoiceRecorder :disabled="isLoading || !isConnected" @transcript="handleTranscript" @error="(message) => emit('error', message)" />
+      <VoiceRecorder
+        ref="voiceRecorderRef"
+        :disabled="isLoading || !isConnected"
+        @transcript="handleTranscript"
+        @interim="handleVoiceInterim"
+        @error="handleVoiceError"
+      />
 
       <button
         @click="handleSend"
@@ -315,6 +356,17 @@ defineExpose({
       </button>
     </div>
   </div>
+
+  <ConfirmDialog
+    :show="showClearConfirm"
+    title="清空会话"
+    message="确定要清空当前会话吗？此操作不可撤销。"
+    confirm-text="确认清空"
+    cancel-text="取消"
+    :danger="true"
+    @confirm="confirmClearMessages"
+    @cancel="showClearConfirm = false"
+  />
 </template>
 
 <style scoped>

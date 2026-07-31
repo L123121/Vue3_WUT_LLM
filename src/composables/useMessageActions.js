@@ -6,6 +6,8 @@
 
 import { useConversationStore } from '../stores/conversation.store.js';
 
+const CURRENT_CONVERSATION_KEY = 'chat_current_conversation_id';
+
 export function useMessageActions() {
   const deleteMessage = (id) => {
     const convStore = useConversationStore();
@@ -14,6 +16,7 @@ export function useMessageActions() {
     const index = conv.messages?.findIndex((m) => m.id === id);
     if (index > -1) {
       conv.messages.splice(index, 1);
+      convStore.unregisterMessage(id);
       convStore.scheduleSaveCache(true);
     }
   };
@@ -28,6 +31,8 @@ export function useMessageActions() {
         ...conv.messages[index],
         feedback,
       };
+      // 消息对象被替换（spread），重新注册以更新引用
+      convStore.registerMessage(conv.id, conv.messages[index]);
       convStore.scheduleSaveCache(true);
     }
   };
@@ -36,6 +41,13 @@ export function useMessageActions() {
     const convStore = useConversationStore();
     const conv = convStore.currentConversation;
     if (!conv) return;
+
+    // 清空消息前，先 unregister 旧消息（保留欢迎消息）
+    for (const msg of conv.messages) {
+      if (msg.id !== 'welcome') convStore.unregisterMessage(msg.id);
+    }
+
+    // 清空消息：保留欢迎消息
     conv.messages = [{ id: 'welcome', role: 'model', content: '你好！我是武理小精灵 AI 助手 (Powered by Qwen)。有什么我可以帮你的吗？', timestamp: new Date() }];
     convStore.scheduleSaveCache(true);
 
