@@ -36,6 +36,13 @@ const routes = [
     meta: { requiresAuth: true, requiresAdmin: true }
   },
   {
+    path: '/share/:code',
+    name: 'SharedConversation',
+    component: () => import('../views/SharedConversation.vue'),
+    // 公开只读分享页：无需登录，也不显示侧边栏
+    meta: { publicShare: true }
+  },
+  {
     path: '/:pathMatch(.*)*',
     redirect: '/chat'
   },
