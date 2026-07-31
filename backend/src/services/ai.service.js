@@ -75,6 +75,9 @@ class AiService {
     this.fallback = config.ai.fallback?.apiKey
       ? this._normalizeProvider(config.ai.fallback)
       : null;
+    // 摘要压缩复用独立评测 Key/小模型，不抢占生产配额
+    const { JudgeService } = require('./judge.service');
+    this.judgeService = new JudgeService();
   }
 
   _normalizeProvider(cfg) {
@@ -130,13 +133,65 @@ class AiService {
   }
 
   _buildMessages(message, history = []) {
+    // 防御：调用方可能传 null/非数组
+    if (!Array.isArray(history)) history = [];
+    // C 方案：token 预算分配（history / RAG 资料 / 当前问题+输出 互不挤占）
+    // - history 总预算：6000 字符（≈3000-4000 token，中文 1 字 ≈ 0.6-1 token）
+    // - RAG 资料预算：由 rag.service 的 maxContextLength=6000 字符独立控制
+    // - 输出预算：max_tokens=4000
+    // 预算按"从最近消息往回取"累积，超预算即停，保证最近的对话优先保留
+    const MAX_HISTORY_MESSAGES = 12;
+    const MAX_MESSAGE_CHARS = 2000;
+    const MAX_TOTAL_HISTORY_CHARS = 6000;
+
+    const recent = [];
+    let total = 0;
+    for (let i = history.length - 1; i >= 0 && recent.length < MAX_HISTORY_MESSAGES; i--) {
+      const h = history[i];
+      const content = String(h?.content || '').slice(0, MAX_MESSAGE_CHARS);
+      if (!content) continue;
+      // 至少保留 1 条；之后超总预算则停止（最近的对话优先）
+      if (recent.length > 0 && total + content.length > MAX_TOTAL_HISTORY_CHARS) break;
+      recent.unshift({ role: h.role === 'assistant' ? 'assistant' : 'user', content });
+      total += content.length;
+    }
     return [
-      ...history.map(h => ({
-        role: h.role === 'assistant' ? 'assistant' : 'user',
-        content: h.content,
-      })),
+      ...recent,
       { role: 'user', content: message },
     ];
+  }
+
+  /**
+   * 滚动摘要压缩（B 方案）：history 超过窗口时，把被裁掉的早期消息
+   * 用独立小模型压缩成摘要，摘要作为一条 system 消息置于对话前，
+   * 保留早期关键背景（专业/偏好/已办事项），同时 token 可控。
+   * 压缩失败时降级为直接截断（不阻塞主流程）。
+   * @param {Array} history 原始历史消息
+   * @returns {Promise<Array>} 压缩后的 history（异步）
+   */
+  async _compactHistory(history = []) {
+    const MAX_HISTORY_MESSAGES = 12;
+    if (!Array.isArray(history)) return [];
+    if (history.length === 0) return history;
+    if (history.length <= MAX_HISTORY_MESSAGES) return history;
+
+    // 被裁掉的早期消息（超出窗口的部分）
+    const early = history.slice(0, history.length - MAX_HISTORY_MESSAGES);
+    const recent = history.slice(-MAX_HISTORY_MESSAGES);
+
+    try {
+      const summary = await this.judgeService.summarize(early);
+      if (summary) {
+        console.log(`[AI] 滚动摘要: ${early.length} 条早期消息 → ${summary.length} 字摘要`);
+        return [
+          { role: 'system', content: `（此前对话摘要）${summary}` },
+          ...recent,
+        ];
+      }
+    } catch (err) {
+      console.warn(`[AI] 滚动摘要失败，降级为直接截断: ${err.message}`);
+    }
+    return recent;
   }
 
   // ========== 非流式（经队列） ==========
@@ -147,10 +202,13 @@ class AiService {
       return { content: this.getMockResponse(message), isMock: true, model: 'mock', usage: null };
     }
 
+    // 滚动摘要：先压缩 history，再进队列
+    const compacted = await this._compactHistory(history);
+
     const release = await llmQueue.acquire();
     console.log(`[AI 队列] 获取到槽位，队列中待处理: ${llmQueue.pending}`);
     try {
-      return await this._doGetCompletion(message, history, opts);
+      return await this._doGetCompletion(message, compacted, opts);
     } finally {
       release();
     }
@@ -217,6 +275,9 @@ class AiService {
       yield { content: '', done: true };
       return;
     }
+
+    // 滚动摘要：先压缩 history，再排队（async generator 内 await 后仍保留 yield 语义）
+    const compacted = await this._compactHistory(history);
 
     // 排队等待 LLM 槽位，整个流式过程占用一个槽位
     const release = await llmQueue.acquire();

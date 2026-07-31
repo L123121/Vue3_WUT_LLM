@@ -2,7 +2,7 @@
 
 ## 项目概述
 
-武理小精灵是一个基于 RAG 的武汉理工大学校园知识问答系统。前端 Vue 3 + Pinia SPA，后端 Express，向量库 Milvus 2.4.17 Standalone（Docker），Embedding BGE-small-zh（本地 ONNX），Reranker BGE-reranker-base（本地 ONNX cross-encoder），LLM StepFun step-3.7-flash，评测独立使用 step-3.5-flash + 独立 API Key。
+武理小精灵是一个基于 RAG 的武汉理工大学校园知识问答系统。前端 Vue 3 + Pinia SPA，后端 Express，向量库为本地文件持久化（精确相似度检索，无需外部向量数据库），Embedding BGE-small-zh（本地 ONNX），Reranker BGE-reranker-base（本地 ONNX cross-encoder），LLM StepFun step-3.7-flash，评测独立使用 step-3.5-flash + 独立 API Key。
 
 ## 整体架构
 
@@ -22,14 +22,14 @@ graph TB
     end
 
     subgraph 基础设施
-        Milvus[(Milvus)]
+        VectorFile[(本地向量文件 data/vectors.json)]
         SQLite[(SQLite)]
         StepFun[StepFun API]
         JudgeAPI[StepFun 独立 Key]
     end
 
     前端 -->|HTTP / SSE| 后端
-    后端 --> Milvus
+    后端 --> VectorFile
     后端 --> SQLite
     后端 --> StepFun
     后端 -->|评测| JudgeAPI
@@ -44,8 +44,8 @@ graph TB
   ↓
 BGE-small-zh ONNX → 稠密 512d + n-gram 稀疏向量（整数 key 哈希）
   ↓
-Milvus Hybrid Search (topK=50)
-  稠密 COSINE ×0.6 + 稀疏 IP ×0.4
+本地向量库精确检索 (topK=50)
+  稠密 COSINE ×0.6 + 稀疏 IP ×0.4（文件持久化 data/vectors.json，精确计算）
   ↓
 50 句子 → 按 parentId 归并 → ~15 个父段落
   ↓
@@ -105,7 +105,7 @@ chat.store（聚合层）→ 页面统一接口
 
 ### 后端核心
 - `indexing.service.js` — 段落→句子两层切片 + 中文章节合并
-- `vector-store.service.js` — Milvus schema/hybrid search/insert/BM25 Function 尝试
+- `vector-store.service.js` — 本地文件持久化 + 精确相似度检索（稠密+稀疏混合）
 - `embedding.service.js` — BGE-small-zh ONNX + n-gram 稀疏（整数 key）
 - `reranker.service.js` — BGE-reranker-base cross-encoder
 - `rag.service.js` — 检索/自适应截断/二级排序/上下文组装
@@ -219,10 +219,8 @@ LLM_CONCURRENCY=3
 JUDGE_API_KEY=...
 JUDGE_MODEL=step-3.5-flash
 
-# 向量库
-VECTOR_STORE_BACKEND=milvus
-MILVUS_ADDRESS=localhost:19530
-MILVUS_COLLECTION=wuli_elf_chunks
+# 向量库（上线方案：本地文件持久化，无需外部向量数据库）
+VECTOR_STORE_BACKEND=file
 MILVUS_DENSE_WEIGHT=0.6
 MILVUS_SPARSE_WEIGHT=0.4
 

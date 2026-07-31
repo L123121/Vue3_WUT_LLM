@@ -134,7 +134,7 @@ class VectorStoreService {
     this._scheduleSave();
   }
 
-  async search(queryEmbedding, topK = 10, filter = null) {
+  async search(queryEmbedding, topK = 10, filter = null, weights = null) {
     if (!this._ready) await this.ensureReady();
 
     const embedding = this._normalizeEmbedding(queryEmbedding);
@@ -147,6 +147,11 @@ class VectorStoreService {
       );
     }
 
+    // 动态权重路由：调用方可按 query 术语倾向传入 { vector, sparse }，
+    // 不传时使用实例默认权重（兼容旧调用）
+    const vectorWeight = weights?.vector ?? this.vectorWeight;
+    const sparseWeight = weights?.sparse ?? this.sparseWeight;
+
     const scored = candidates.map(doc => {
       const denseScore = doc.dense
         ? EmbeddingService.cosineSimilarity(embedding.dense, doc.dense)
@@ -154,7 +159,7 @@ class VectorStoreService {
       const sparseScore = (embedding.sparse && doc.sparse)
         ? EmbeddingService.sparseSimilarity(embedding.sparse, doc.sparse)
         : 0;
-      const score = this.vectorWeight * denseScore + this.sparseWeight * sparseScore;
+      const score = vectorWeight * denseScore + sparseWeight * sparseScore;
       return {
         id: doc.id,
         docId: doc.metadata?.docId || '',
