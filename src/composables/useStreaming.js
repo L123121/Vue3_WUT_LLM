@@ -305,6 +305,9 @@ export function useStreaming() {
             ...(usedRag ? { answerMode: 'rag', usedRag: true } : {}),
           }));
         },
+        onProcess: (processCard) => {
+          updateMessage(convStore, conversationId, aiMsgId, (m) => ({ ...m, processCard: processCard || m.processCard }));
+        },
         onRetry: () => {
           isReconnecting.value = true;
           reconnectAttempt.value = reconnectAttempt.value + 1;
