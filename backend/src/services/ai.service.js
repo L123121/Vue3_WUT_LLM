@@ -229,11 +229,15 @@ class AiService {
     const path = provider.anthropicMode ? '/v1/messages' : '/v2/chat/completions';
     const payload = {
       model: provider.model,
-      messages: this._buildMessages(message, history),
+      messages: opts.messages || this._buildMessages(message, history),
       max_tokens: provider.maxTokens,
       temperature: provider.temperature,
       stream: false,
     };
+    // 原生 function calling（OpenAI 兼容）：调用方传 opts.tools 时携带工具描述
+    if (!provider.anthropicMode && Array.isArray(opts.tools) && opts.tools.length > 0) {
+      payload.tools = opts.tools;
+    }
     const body = JSON.stringify(payload);
     const options = this._buildOptions(path, provider);
     options.headers['Content-Length'] = Buffer.byteLength(body, 'utf8');
@@ -241,7 +245,7 @@ class AiService {
     if (opts.timeout) options.timeout = opts.timeout;
     if (opts.retries !== undefined) options.retries = opts.retries;
 
-    console.log(`[AI] ${options.hostname}${options.path} model=${provider.model} bodyLen=${body.length}`);
+    console.log(`[AI] ${options.hostname}${options.path} model=${provider.model} bodyLen=${body.length} tools=${payload.tools?.length || 0}`);
 
     const startTime = Date.now();
     const result = await request(options, body);
@@ -249,15 +253,24 @@ class AiService {
     metrics.recordLatency('ai', latency);
 
     let content = '';
+    let toolCalls = null;
     if (provider.anthropicMode) {
       content = result.data?.content?.[0]?.text || '';
     } else {
-      content = result.data?.choices?.[0]?.message?.content || '';
+      const msg = result.data?.choices?.[0]?.message || {};
+      content = msg.content || '';
+      toolCalls = Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0 ? msg.tool_calls : null;
     }
 
-    if (content) {
-      console.log(`[AI] 响应 ${content.length} 字符`);
-      return { content, isMock: false, model: result.data?.model || provider.model, usage: result.data?.usage || null };
+    if (content || toolCalls) {
+      console.log(`[AI] 响应 ${content.length} 字符, tool_calls=${toolCalls?.length || 0}`);
+      return {
+        content,
+        isMock: false,
+        model: result.data?.model || provider.model,
+        usage: result.data?.usage || null,
+        toolCalls,
+      };
     } else {
       const msg = `AI 服务返回空响应: ${JSON.stringify(result.data).substring(0, 200)}`;
       console.warn('[AI]', msg);
@@ -268,7 +281,7 @@ class AiService {
 
   // ========== 流式（经队列） ==========
 
-  async *getCompletionStream(message, history = []) {
+  async *getCompletionStream(message, history = [], opts = {}) {
     if (!this._hasKey()) {
       const mock = this.getMockResponse(message);
       for (const c of mock) yield { content: c, done: false };
@@ -284,43 +297,47 @@ class AiService {
     console.log(`[AI 队列] 流式获取到槽位，队列中待处理: ${llmQueue.pending}`);
 
     try {
-      yield* this._doGetCompletionStream(message, history);
+      yield* this._doGetCompletionStream(message, history, opts);
     } finally {
       release();
     }
   }
 
-  async *_doGetCompletionStream(message, history = []) {
+  async *_doGetCompletionStream(message, history = [], opts = {}) {
     // 主 provider 连接建立前失败时，可切换到备用 provider
     if (this.fallback) {
       try {
-        yield* this._streamProvider(this.primary, message, history);
+        yield* this._streamProvider(this.primary, message, history, opts);
         return; // 主 provider 成功完成
       } catch (err) {
         console.warn(`[AI 流式] 主 provider 失败 (${err.message})，切换到备用 provider`);
       }
       // 主 provider 失败，尝试备用
-      yield* this._streamProvider(this.fallback, message, history);
+      yield* this._streamProvider(this.fallback, message, history, opts);
     } else {
-      yield* this._streamProvider(this.primary, message, history);
+      yield* this._streamProvider(this.primary, message, history, opts);
     }
   }
 
-  async *_streamProvider(provider, message, history) {
+  async *_streamProvider(provider, message, history, opts = {}) {
     const path = provider.anthropicMode ? '/v1/messages' : '/v2/chat/completions';
     const payload = {
       model: provider.model,
-      messages: this._buildMessages(message, history),
+      messages: opts.messages || this._buildMessages(message, history),
       max_tokens: provider.maxTokens,
       temperature: provider.temperature,
       stream: true,
     };
+    // 原生 function calling（OpenAI 兼容）：调用方传 opts.tools 时携带工具描述
+    if (!provider.anthropicMode && Array.isArray(opts.tools) && opts.tools.length > 0) {
+      payload.tools = opts.tools;
+    }
     const body = JSON.stringify(payload);
     const options = this._buildOptions(path, provider);
     options.headers['Content-Length'] = Buffer.byteLength(body, 'utf8');
 
     const streamStart = Date.now();
-    console.log(`[AI 流式] ${options.hostname}${options.path} model=${provider.model} bodyLen=${body.length}`);
+    console.log(`[AI 流式] ${options.hostname}${options.path} model=${provider.model} bodyLen=${body.length} tools=${payload.tools?.length || 0}`);
 
     let res;
     try {
@@ -336,14 +353,19 @@ class AiService {
       throw new Error(`HTTP ${res.statusCode}: ${err.substring(0, 200)}`);
     }
 
-    yield* this._parseStream(res, provider);
+    yield* this._parseStream(res, provider, opts);
 
     metrics.recordLatency('ai', Date.now() - streamStart);
   }
 
-  async *_parseStream(res, provider) {
+  async *_parseStream(res, provider, opts = {}) {
     let buf = '';
     const decoder = new StringDecoder('utf8');
+    // tool_calls 增量拼接（OpenAI 兼容流式：delta.tool_calls 按 index 分片）
+    const toolCallMap = new Map();
+    let hasToolCalls = false;
+    const needsTools = Array.isArray(opts.tools) && opts.tools.length > 0;
+
     for await (const chunk of res) {
       buf += decoder.write(chunk);
       const lines = buf.split('\n');
@@ -353,7 +375,10 @@ class AiService {
         if (!t || t.startsWith('event:')) continue;
         if (!t.startsWith('data:')) continue;
         const d = t.slice(5).trim();
-        if (d === '[DONE]') { yield { content: '', done: true }; return; }
+        if (d === '[DONE]') {
+          yield { content: '', done: true, tool_calls: this._assembleToolCalls(toolCallMap, hasToolCalls, needsTools) };
+          return;
+        }
         try {
           const j = JSON.parse(d);
           let content = '';
@@ -362,10 +387,29 @@ class AiService {
             if (j.type === 'content_block_delta' && j.delta?.text) content = j.delta.text;
             if (j.type === 'message_stop' || j.type === 'message_delta') done = true;
           } else {
-            content = j.choices?.[0]?.delta?.content || '';
+            const choice = j.choices?.[0];
+            content = choice?.delta?.content || '';
+            // tool_calls 增量：{index, id?, function:{name?, arguments?}}
+            if (choice?.delta?.tool_calls) {
+              hasToolCalls = true;
+              for (const tc of choice.delta.tool_calls) {
+                const idx = tc.index ?? 0;
+                let entry = toolCallMap.get(idx);
+                if (!entry) {
+                  entry = { id: tc.id || '', name: tc.function?.name || '', arguments: '' };
+                  toolCallMap.set(idx, entry);
+                }
+                if (tc.id) entry.id = tc.id;
+                if (tc.function?.name) entry.name = tc.function.name;
+                if (tc.function?.arguments) entry.arguments += tc.function.arguments;
+              }
+            }
           }
           if (content) yield { content, done: false };
-          if (done) { yield { content: '', done: true }; return; }
+          if (done) {
+            yield { content: '', done: true, tool_calls: this._assembleToolCalls(toolCallMap, hasToolCalls, needsTools) };
+            return;
+          }
         } catch (err) {
           console.warn('[AI 流式] SSE 解析失败:', err.message);
         }
@@ -385,7 +429,40 @@ class AiService {
         } catch (_) { /* ignore */ }
       }
     }
-    yield { content: '', done: true };
+    yield { content: '', done: true, tool_calls: this._assembleToolCalls(toolCallMap, hasToolCalls, needsTools) };
+  }
+
+  /**
+   * 把流式累积的 tool_calls 分片组装为完整数组（供 _parseStream 收尾）
+   * - 按 index 升序
+   * - name 为空的分片丢弃（首片丢失无法执行，避免"未知工具"）
+   * - arguments 残缺（流中断）降级为 {}，不静默用残缺 JSON
+   */
+  _assembleToolCalls(toolCallMap, hasToolCalls, needsTools) {
+    if (!needsTools || !hasToolCalls || toolCallMap.size === 0) return null;
+    const toolCalls = Array.from(toolCallMap.entries())
+      .sort(([a], [b]) => a - b)
+      .map(([_, tc]) => ({
+        id: tc.id || `call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        type: 'function',
+        function: { name: tc.name, arguments: tc.arguments || '{}' },
+      }))
+      .filter((tc) => {
+        if (!tc.function.name) {
+          console.warn('[AI 流式] 丢弃 name 为空的 tool_call（首片可能丢失）:', tc.id);
+          return false;
+        }
+        if (tc.function.arguments && tc.function.arguments !== '{}') {
+          try {
+            JSON.parse(tc.function.arguments);
+          } catch {
+            console.warn('[AI 流式] tool_call arguments 残缺，降级为空参数:', tc.function.name);
+            tc.function.arguments = '{}';
+          }
+        }
+        return true;
+      });
+    return toolCalls.length > 0 ? toolCalls : null;
   }
 
   getMockResponse(message) {

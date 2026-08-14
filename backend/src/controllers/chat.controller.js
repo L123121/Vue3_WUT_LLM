@@ -176,9 +176,10 @@ const streamHandler = async (req, res, next) => {
       return;
     }
 
-    // agent 意图且工具层已启用：单轮工具调度（LLM 决策 → 工具执行 → 生成）
+    // agent 意图且工具层已启用：多轮工具调度（LLM 决策 → 工具执行 → 生成，含 tracer）
     if (routing && routing.route === "agent" && agentService.enabled) {
       for await (const chunk of agentService.chatStream(message, history || [], {
+        traceId: req.traceId,
         userId: req.userId,
         conversationId: req.body?.conversationId || null,
       })) {
@@ -189,6 +190,17 @@ const streamHandler = async (req, res, next) => {
         } else if (chunk.type === "tool_result") {
           res.write(`data: ${JSON.stringify({
             tool_result: { name: chunk.tool_result?.name, content: chunk.tool_result?.content, durationMs: chunk.tool_result?.durationMs },
+          })}\n\n`);
+        } else if (chunk.type === "trace") {
+          const t = chunk.trace || {};
+          res.write(`data: ${JSON.stringify({
+            traceId: t.traceId || req.traceId,
+            agent: {
+              rounds: t.rounds || 0,
+              toolCalls: t.toolCalls || [],
+              totalMs: t.totalMs || 0,
+              finishReason: t.finishReason || null,
+            },
           })}\n\n`);
         } else if (chunk.type === "content") {
           if (chunk.done) {

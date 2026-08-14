@@ -120,6 +120,8 @@ module.exports = {
     // 工具决策/执行超时（毫秒）
     decideTimeoutMs: parseInt(process.env.AGENT_DECIDE_TIMEOUT_MS, 10) || 15000,
     toolTimeoutMs: parseInt(process.env.AGENT_TOOL_TIMEOUT_MS, 10) || 15000,
+    // 多轮工具调度上限（L2）：最多轮次，防止无限循环；配合无进展检测强制收尾
+    maxToolRounds: parseInt(process.env.AGENT_MAX_TOOL_ROUNDS, 10) || 2,
   },
   // 自有账号系统配置
   auth: {
