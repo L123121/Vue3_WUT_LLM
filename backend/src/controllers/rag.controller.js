@@ -65,6 +65,19 @@ function getTraceOptions(req, extra = {}) {
 }
 
 /**
+ * 提取请求级阈值覆盖参数（A/B 评测用，正常用户请求不带这些字段不受影响）
+ * 经 getTraceOptions 透传给 rag.service，由 _evalOverrides 校验后生效
+ */
+function getRerankOverrides(req) {
+  const b = req.body || {};
+  const overrides = {};
+  for (const key of ['rerankMinScore', 'rerankDropoff', 'rerankTopK', 'maxContextLength']) {
+    if (b[key] !== undefined && b[key] !== null && b[key] !== '') overrides[key] = b[key];
+  }
+  return overrides;
+}
+
+/**
  * RAG 增强聊天接口
  */
 const ragChat = async (req, res, next) => {
@@ -75,7 +88,7 @@ const ragChat = async (req, res, next) => {
       return errorResponse(res, '消息内容不能为空', 400);
     }
 
-    const result = await ragService.chat(message, history || [], getTraceOptions(req, { category }));
+    const result = await ragService.chat(message, history || [], getTraceOptions(req, { category, ...getRerankOverrides(req) }));
     res.setHeader('X-Trace-Id', result.traceId || req.traceId);
     successResponse(res, result, 'RAG 处理完成');
     memoryService.saveChatMemory(req.userId, message, result.reply);
@@ -103,7 +116,7 @@ const ragChatStream = async (req, res, next) => {
     res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders();
 
-    for await (const chunk of ragService.chatStream(message, history || [], getTraceOptions(req, { category }))) {
+    for await (const chunk of ragService.chatStream(message, history || [], getTraceOptions(req, { category, ...getRerankOverrides(req) }))) {
       if (chunk.type === 'retrieval') {
         res.write(`data: ${JSON.stringify({ traceId: chunk.traceId || req.traceId, retrieval: chunk.retrieval, trace: chunk.trace })}\n\n`);
       } else if (chunk.type === 'sources') {

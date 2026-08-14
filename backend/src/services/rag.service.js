@@ -162,8 +162,9 @@ class RagService {
           parentCandidates = allRanked.map(r => ({ ...r._match, _rerankScore: r._rerankScore, _rerankModel: r._rerankModel }));
         }
 
-        // 3. 自适应截断（按问题类型差异化阈值）
-        parentCandidates = this._adaptiveTruncate(parentCandidates, this.rerankTopK, message);
+        // 3. 自适应截断（按问题类型差异化阈值，支持请求级覆盖）
+        const truncateOverrides = this._evalOverrides(options);
+        parentCandidates = this._adaptiveTruncate(parentCandidates, this.rerankTopK, message, truncateOverrides);
 
         // 3.5 父段归并后 MMR 去重：剔除与已选父段高度相似的冗余段落（保留多样性）
         const mmrStart = Date.now();
@@ -554,10 +555,13 @@ class RagService {
    *
    * 优先注入命中的父段落；旧索引没有 parentText 时才回退到 chunk/doc 内容。
    */
-  async assembleParentContext(chunks) {
+  async assembleParentContext(chunks, overrides = {}) {
     if (!chunks || chunks.length === 0) {
       return { sources: [], context: '', parentDocs: [] };
     }
+
+    // 上下文长度支持请求级覆盖（A/B 评测验证"少而精"）
+    const maxContextLength = overrides.maxContextLength ?? this.maxContextLength;
 
     // 按 parentIdx（段落索引）分组，多个句子命中同一段落只取一次
     const paraMap = new Map();
@@ -829,7 +833,7 @@ ${context}
         if (this.parentChildEnabled) {
           const pcStart = Date.now();
           try {
-            const { context, sources } = await this.assembleParentContext(topChunks);
+            const { context, sources } = await this.assembleParentContext(topChunks, this._evalOverrides(options));
             enhancedContext = context;
             parentSources = sources;
             metrics.recordLatency('parentChild', Date.now() - pcStart);
@@ -1316,22 +1320,45 @@ ${historyText}
   }
 
   /**
+   * 提取请求级阈值覆盖（A/B 评测/调参用）
+   * 仅当请求显式传入有限数值时才覆盖，否则用默认配置（正常用户请求不受影响）
+   * @param {Object} options - chat/chatStream 的 options
+   * @returns {Object} { rerankMinScore?, rerankDropoff?, rerankTopK?, maxContextLength? }
+   */
+  _evalOverrides(options = {}) {
+    const overrides = {};
+    const finite = (v) => Number.isFinite(v);
+    const minScore = Number(options.rerankMinScore);
+    const dropoff = Number(options.rerankDropoff);
+    const topK = Number(options.rerankTopK);
+    const maxLen = Number(options.maxContextLength);
+    if (finite(minScore) && minScore >= 0 && minScore <= 1) overrides.rerankMinScore = minScore;
+    if (finite(dropoff) && dropoff >= 0 && dropoff <= 1) overrides.rerankDropoff = dropoff;
+    if (finite(topK) && topK >= 1 && topK <= 100) overrides.rerankTopK = Math.round(topK);
+    if (finite(maxLen) && maxLen >= 500 && maxLen <= 20000) overrides.maxContextLength = Math.round(maxLen);
+    return overrides;
+  }
+
+  /**
    * 自适应截断：保留高置信度父段，剔除低分和断崖段落
    * 策略：基础 Top N → 断崖检测 → 低分过滤 → 硬上限
    * @param {Array} candidates - 父段落候选列表
    * @param {number} maxCount - 硬上限
    * @param {string} [query] - 问题原文，用于获取类型化阈值
+   * @param {Object} [overrides] - 请求级覆盖 { rerankMinScore, rerankDropoff, rerankTopK }
    * @returns {Array} 截断后的候选列表
    */
-  _adaptiveTruncate(candidates, maxCount, query) {
+  _adaptiveTruncate(candidates, maxCount, query, overrides = {}) {
     if (!candidates || candidates.length === 0) return [];
     if (candidates.length <= 1) return candidates;
 
     // 获取类型化阈值配置
     const typeConfig = query ? this.getTypeConfig(query) : null;
-    const effectiveMaxCount = typeConfig ? typeConfig.rerankTopK : maxCount;
-    const baseMinScore = typeConfig ? typeConfig.minScore : 0.30;
+    const effectiveMaxCount = overrides.rerankTopK ?? (typeConfig ? typeConfig.rerankTopK : maxCount);
+    const baseMinScore = overrides.rerankMinScore ?? (typeConfig ? typeConfig.minScore : 0.30);
     const clamp = typeConfig ? typeConfig.clamp : [0.20, 0.50];
+    // 断崖阈值可覆盖（默认 0.05）
+    const cliffGap = overrides.rerankDropoff ?? 0.05;
 
     // 先按 rerank 分数降序排列（理论上已经排好了，但保险一下）
     const sorted = [...candidates].sort(
@@ -1340,11 +1367,11 @@ ${historyText}
 
     let cutoff = sorted.length;
 
-    // 1. 断崖检测：找到第一个分差 > 0.05 的位置（至少保留 1 个）
+    // 1. 断崖检测：找到第一个分差 > cliffGap 的位置（至少保留 1 个）
     let cliffCutoff = sorted.length;
     for (let i = 1; i < sorted.length; i++) {
       const gap = (sorted[i - 1]._rerankScore || 0) - (sorted[i]._rerankScore || 0);
-      if (gap > 0.05) {
+      if (gap > cliffGap) {
         cliffCutoff = i;
         break;
       }
@@ -1353,18 +1380,23 @@ ${historyText}
     // 2. 动态低分过滤：根据问题类型调整 minScore
     //    策略：以 baseMinScore 为基准，结合分数分布做 clamp
     const topScore = sorted[0]._rerankScore || 0;
-    // 如果 top1 分数已经很高（>0.8），说明检索质量好，可以适当放宽阈值
-    // 如果 top1 分数很低（<0.3），说明检索质量差，收紧阈值避免噪声
     let dynamicMinScore;
-    if (topScore > 0.8) {
+    if (overrides.rerankMinScore !== undefined) {
+      // 显式覆盖（A/B 评测）：直接使用覆盖值，不做动态调整，保证可复现
+      dynamicMinScore = overrides.rerankMinScore;
+    } else if (topScore > 0.8) {
+      // 如果 top1 分数已经很高（>0.8），说明检索质量好，可以适当放宽阈值
       dynamicMinScore = Math.max(clamp[0], baseMinScore - 0.05);
     } else if (topScore < 0.3) {
+      // 如果 top1 分数很低（<0.3），说明检索质量差，收紧阈值避免噪声
       dynamicMinScore = Math.min(clamp[1], baseMinScore + 0.10);
     } else {
       dynamicMinScore = baseMinScore;
     }
-    // 最终 clamp 到 [clamp[0], clamp[1]]
-    dynamicMinScore = Math.max(clamp[0], Math.min(clamp[1], dynamicMinScore));
+    // 最终 clamp 到 [clamp[0], clamp[1]]（显式覆盖时不 clamp，保证覆盖值精确生效）
+    if (overrides.rerankMinScore === undefined) {
+      dynamicMinScore = Math.max(clamp[0], Math.min(clamp[1], dynamicMinScore));
+    }
 
     // 低分过滤优先：严格排除所有低于动态阈值的候选；
     // 否则按断崖截断（保留分界后的第一个，避免过度截断）
@@ -1501,13 +1533,16 @@ ${historyText}
   /**
    * 从已 rerank 的父段落聚合结果构建上下文
    */
-  async _buildContextFromParents(parentCandidates) {
+  async _buildContextFromParents(parentCandidates, overrides = {}) {
     if (!parentCandidates || parentCandidates.length === 0) {
       return { sources: [], context: '' };
     }
     // 按 rerank 分数排序（rerank 已对所有父段打分，取高分优先）
     parentCandidates.sort((a, b) => (b._rerankScore || b.bestChunk?.score || 0) - (a._rerankScore || a.bestChunk?.score || 0));
     const selected = parentCandidates;
+
+    // 上下文长度支持请求级覆盖（A/B 评测验证"少而精"）
+    const maxContextLength = overrides.maxContextLength ?? this.maxContextLength;
 
     const contextParts = [];
     const sources = [];
@@ -1534,8 +1569,8 @@ ${historyText}
       const entry = `${header}\n${paraText}`;
       const rerankScore = match._rerankScore || match.bestChunk?.score || 0;
 
-      if (totalLength + entry.length > this.maxContextLength) {
-        const remaining = this.maxContextLength - totalLength;
+      if (totalLength + entry.length > maxContextLength) {
+        const remaining = maxContextLength - totalLength;
         if (remaining > 200) {
           contextParts.push(entry.substring(0, remaining) + '\n...(截断)');
           sources.push({
