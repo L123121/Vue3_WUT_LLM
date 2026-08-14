@@ -1,0 +1,1002 @@
+[
+  {
+    "id": "q001",
+    "question": "软件工程（卓越工程师）专业是哪一年申报获批的？",
+    "ground_truth": "2002年",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_d5c182ff-6ed7-46a8-9a59-bafab99e1940"
+    ],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q002",
+    "question": "根据该专业培养目标，毕业生经过五年左右的工作实践，需要具备哪些知识、素养与工程实践能力？",
+    "ground_truth": "具备扎实的数学、自然科学、计算机软件与信息技术、与工作岗位相关的法律和工程管理等方面的知识、良好的科学素养以及优秀的工程实践能力",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_d5c182ff-6ed7-46a8-9a59-bafab99e1940"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q003",
+    "question": "根据文档内容，软件工程专业学生毕业时需要达到的毕业要求中，哪一项明确要求能够基于科学原理并采用科学方法对软件工程领域复杂工程问题开展研究，包含设计实验、分析与解释数据、信息综合得出有效结论等要求？",
+    "ground_truth": "能够基于科学原理并采用科学方法对软件工程领域复杂工程问题进行研究，包括设计实验、分析与解释数据、并通过信息综合得到合理有效的结论。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_d5c182ff-6ed7-46a8-9a59-bafab99e1940"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q004",
+    "question": "根据文档内容，软件工程专业毕业生在约五年工作实践后，需要具备哪项职业能力，要求其具有终身学习的意识和能力，能够跟上计算机软件与信息技术的发展趋势，勇于创新，用最新技术手段解决复杂工程问题中的技术难题？",
+    "ground_truth": "Have the ability of self-learning and awareness of lifelong learning in the professional work and social environment, keep up with the development trend of computer software and information technology, have the courage to innovate, be able to use the latest technical means and tools to solve the technical problems encountered in complex engineering problems, and maintain the professional competitiveness;",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_d5c182ff-6ed7-46a8-9a59-bafab99e1940"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q005",
+    "question": "软件工程专业毕业要求3（设计/开发解决方案）中，要求在设计解决方案时需综合考虑哪些系统设计制约因素？",
+    "ground_truth": "健康与安全、全生命周期成本与净零碳要求、法律与伦理、社会与文化",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_d5c182ff-6ed7-46a8-9a59-bafab99e1940"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q006",
+    "question": "软件工程专业毕业要求11（终身学习）对学生提出了哪些核心能力要求？",
+    "ground_truth": "具有自主学习和终身学习的意识和能力，能够理解广泛的技术变革对工程和社会的影响，适应新技术变革，具有批判性思维能力",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_d5c182ff-6ed7-46a8-9a59-bafab99e1940"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q007",
+    "question": "文档中用字母 H、M、L 标注课程时，分别代表什么含义？",
+    "ground_truth": "H、M、L 分别表示该课程对指标点的支撑强度为高、中、低。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_d5c182ff-6ed7-46a8-9a59-bafab99e1940"
+    ],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q008",
+    "question": "该培养方案中列出的专业核心课程包含哪些？",
+    "ground_truth": "软件设计与体系结构 B、编译原理、离散结构、操作系统、软件质量保证与测试 B、软件工程基础。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_d5c182ff-6ed7-46a8-9a59-bafab99e1940"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q009",
+    "question": "专业选修课程板块中，《区块链技术 A》的先修课程有哪些？",
+    "ground_truth": "数据库原理与应用、计算机网络、计算机网络基础(GX)、计算机网络 G",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_d5c182ff-6ed7-46a8-9a59-bafab99e1940"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q010",
+    "question": "集中性实践教学环节的小计总学分为多少？",
+    "ground_truth": "22.54960004960",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_d5c182ff-6ed7-46a8-9a59-bafab99e1940"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q011",
+    "question": "面向对象方法的基本思想是什么？",
+    "ground_truth": "模拟人类习惯的解题方法，将问题分解为对象，通过对象之间的消息传递完成功能。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_118b3b16-953d-419c-a174-6e23fe87a8de"
+    ],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q012",
+    "question": "C++中类的拷贝构造函数有哪些调用时机？",
+    "ground_truth": "①用一个对象初始化同类的另一个新对象；②函数的形参是类的对象且为值传递时；③函数的返回值是类的对象。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_118b3b16-953d-419c-a174-6e23fe87a8de"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q013",
+    "question": "C++中的友元具备哪些特点？请至少列举三点。",
+    "ground_truth": "友元不是类的成员函数；可访问类的所有成员（包括私有）；破坏了封装性和隐藏性；不具有交换性；不具有传递性；不可继承。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_118b3b16-953d-419c-a174-6e23fe87a8de"
+    ],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q014",
+    "question": "派生类构造和析构对象的执行顺序分别是什么？",
+    "ground_truth": "构造顺序：先调用基类构造函数（按继承顺序），再调用成员对象的构造函数（按声明顺序），最后执行派生类构造函数体；析构顺序与构造完全相反。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_118b3b16-953d-419c-a174-6e23fe87a8de"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q015",
+    "question": "对于代码中同时公有继承B类和C类（二者均继承自A类）的D类，非虚继承和虚继承场景下，程序输出结果分别是什么？造成该差异的原因是什么？",
+    "ground_truth": "非虚继承时输出10，原因是D类包含两份独立的n（B::n和C::n），B::n和C::n互不影响，getn()返回B::n；虚继承时输出20，原因是D类只有一份n，最后对C::n赋值的20会覆盖之前B::n的10。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_118b3b16-953d-419c-a174-6e23fe87a8de"
+    ],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q016",
+    "question": "实现C++运行时多态的三个必要条件是什么？为什么基类的析构函数一般需要声明为虚函数？",
+    "ground_truth": "三个必要条件为：1. 存在公有派生类层次关系；2. 基类中声明了虚函数；3. 通过基类指针或引用调用虚函数。基类析构函数声明为虚函数是为了防止内存泄漏，若基类析构非虚，通过基类指针删除派生类对象时只会调用基类析构函数，无法释放派生类申请的堆内存。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_118b3b16-953d-419c-a174-6e23fe87a8de"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q017",
+    "question": "在文档5.3节的程序分析题中，main函数里依次调用f(a,5)和f(d,5)时，函数模板f分别被实例化为什么类型？",
+    "ground_truth": "分别被实例化为char*和double*",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_118b3b16-953d-419c-a174-6e23fe87a8de"
+    ],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q018",
+    "question": "文档6.4节的程序分析题中，代码先执行cout.fill('*')，再执行cout.fill('#')，最终输出为###123，请解释原因。",
+    "ground_truth": "因为cout.fill('#')调用覆盖了之前设置的填充字符'*'，因此最终输出为###123。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_118b3b16-953d-419c-a174-6e23fe87a8de"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q019",
+    "question": "在C++的公有继承方式下，派生类对象能否直接访问基类的保护成员？请说明原因。",
+    "ground_truth": "不能。公有继承下，派生类对象仅能直接访问基类的公有成员；基类的保护成员可在派生类成员函数内部访问，但无法通过派生类对象在类外部直接访问，基类私有成员则无论何种继承方式都无法被派生类直接访问。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_118b3b16-953d-419c-a174-6e23fe87a8de"
+    ],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q020",
+    "question": "C++中基类声明为虚函数的成员，在其派生类中的虚特性有什么特点？",
+    "ground_truth": "基类中声明为virtual的成员函数，在其所有派生类中自动继承虚特性，默认就是虚函数，无需派生类再次使用virtual关键字声明，即可支持运行时多态。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_118b3b16-953d-419c-a174-6e23fe87a8de"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q021",
+    "question": "什么是抽象类？抽象类有哪些作用？",
+    "ground_truth": "含有纯虚函数的类称为抽象类。作用：为一类组提供统一的操作接口（纯虚函数）；自身不能实例化，只能作为基类派生新类；将相关派生类组织在一个继承层次中。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_118b3b16-953d-419c-a174-6e23fe87a8de"
+    ],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q022",
+    "question": "C++中引入虚基类的主要目的是什么？",
+    "ground_truth": "解决多继承中'菱形继承'产生的二义性。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_118b3b16-953d-419c-a174-6e23fe87a8de"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q023",
+    "question": "C++中重载运算符时，采用成员函数方式和友元函数方式的参数个数有什么区别？",
+    "ground_truth": "成员函数重载运算符时参数比友元函数重载少一个（因为成员函数默认带有this指针参数），友元函数重载运算符时参数个数与运算符的操作数个数一致",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_118b3b16-953d-419c-a174-6e23fe87a8de"
+    ],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q024",
+    "question": "在Shape → Circle / Square / Rectangle的继承体系中，为什么不能直接实例化Shape类的对象？",
+    "ground_truth": "因为Shape类中定义了纯虚函数area()和perimeter()，属于抽象类，抽象类不能直接实例化，必须由其派生类重写所有纯虚函数后才能创建派生类的对象",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_118b3b16-953d-419c-a174-6e23fe87a8de"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q025",
+    "question": "软件工程领域中的验证（Verification）与确认（Validation）分别对应要解决的核心问题是什么？",
+    "ground_truth": "验证对应的问题是「Did we build the system right?」（是否正确构建系统），确认对应的问题是「Did we build the right system?」（是否构建了正确的系统）。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_6c8940aa-baad-4f60-abd6-e0b2066fec68"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q026",
+    "question": "在UML用例图的关系规则中，<<include>>（包含）关系和<<extend>>（扩展）关系的核心执行差异是什么？",
+    "ground_truth": "<<include>>关系中，基本用例执行时被包含用例一定执行；<<extend>>关系中，基本用例执行时扩展用例可选择执行。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_6c8940aa-baad-4f60-abd6-e0b2066fec68"
+    ],
+    "difficulty": "hard"
+  },
+  {
+    "id": "q027",
+    "question": "UML类图中，聚合关系与组合关系的核心区别是什么？",
+    "ground_truth": "聚合关系的部分可独立存在，组合关系的部分不可独立存在",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_6c8940aa-baad-4f60-abd6-e0b2066fec68"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q028",
+    "question": "UML顺序图中的alt组合框有什么作用？其内部结构是怎样的？",
+    "ground_truth": "alt框相当于程序中的if/else分支结构，框内被水平虚线分隔为多个区域，每个区域对应一个条件分支，运行时根据条件满足情况执行对应区域",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_6c8940aa-baad-4f60-abd6-e0b2066fec68"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q029",
+    "question": "状态图建模的完整步骤有哪些？",
+    "ground_truth": "1.找出适合用状态图描述行为的类；2.确定对象可能存在的状态；3.确定引起状态迁移的事件；4.确定迁移时执行的相应动作；5.精化和细化建模结果",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_6c8940aa-baad-4f60-abd6-e0b2066fec68"
+    ],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q030",
+    "question": "白盒测试的覆盖标准从强到弱的正确排序是什么？",
+    "ground_truth": "路径覆盖>条件组合覆盖>判定条件覆盖>条件覆盖>判定覆盖>语句覆盖",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_6c8940aa-baad-4f60-abd6-e0b2066fec68"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q031",
+    "question": "在软件白盒测试的条件组合覆盖规则中，若待测试逻辑包含A（x>1）、B（y=0）、C（x=2）、D（z>1）4个条件，每个条件均有T/F两种取值，理论上总共有多少种取值组合？为何实际仅需4个测试用例即可满足该覆盖要求？",
+    "ground_truth": "理论上总共有2⁴=16种取值组合；由于存在条件相关性（如A与C相关性），并非所有组合都能达到，因此实际仅需4个测试用例即可覆盖全部条件的取值组合。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_6c8940aa-baad-4f60-abd6-e0b2066fec68"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q032",
+    "question": "计算机网络考试采用的标准五层协议从上到下依次包含哪些层次？其中负责数据传输的通信子网由哪几层构成？",
+    "ground_truth": "考试标准五层协议从上到下依次为应用层、运输层、网络层、数据链路层、物理层；通信子网由网络层、数据链路层、物理层构成",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_10a02aa6-6fc8-473c-9fa8-7fe97a5930ce"
+    ],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q033",
+    "question": "CSMA/CD协议正常工作的核心要求是什么？以太网对应的争用期（往返传播时延2τ）时长是多少？",
+    "ground_truth": "核心要求是发送时延≥往返时延（2τ），即帧还未发送完毕时，信号已经可以在网络中跑完一个来回，确保能够检测到碰撞；以太网争用期（2τ）为51.2μs",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_10a02aa6-6fc8-473c-9fa8-7fe97a5930ce"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q034",
+    "question": "在以太网MTU为1500字节的场景下，一个总长度4000字节（首部20字节、数据3980字节）的IPv4数据报分片时，第二个分片的片偏移值是多少？为什么IP分片的数据部分长度要求是8字节的整数倍？",
+    "ground_truth": "第二个分片的片偏移值为185。因为IP分片的片偏移以8字节为单位，用于标记分片数据部分在原始数据报中的起始位置，第二个分片的数据起始位置为1480字节，1480/8=185；要求分片数据部分是8字节的整数倍，是为了保证片偏移的计算结果为整数，便于接收端按偏移顺序拼接分片恢复原始数据报。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_10a02aa6-6fc8-473c-9fa8-7fe97a5930ce"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q035",
+    "question": "TCP拥塞控制中，当发送方出现「3个重复ACK」和「超时」两种拥塞信号时，慢开始阈值ssthresh和拥塞窗口cwnd的调整规则分别是什么？",
+    "ground_truth": "1. 收到3个重复ACK（轻度拥塞）：新ssthresh等于当前cwnd的一半，新cwnd等于新的ssthresh，进入拥塞避免阶段；2. 发生超时（严重拥塞）：新ssthresh为max(当前cwnd/2, 2)，新cwnd降为1，进入慢开始阶段。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_10a02aa6-6fc8-473c-9fa8-7fe97a5930ce"
+    ],
+    "difficulty": "hard"
+  },
+  {
+    "id": "q036",
+    "question": "主机A向主机B发送IP数据报，传输途中经过3个路由器，整个传输过程中总共会使用多少次ARP协议？",
+    "ground_truth": "4次",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_10a02aa6-6fc8-473c-9fa8-7fe97a5930ce"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q037",
+    "question": "在CSMA/CD网络中，传输介质为完整电缆，传输速率为1Gbps，信号传播速度为200000km/s，若最小数据帧长度减少800比特，则最远的两个站点之间的距离至少需要如何调整？",
+    "ground_truth": "减少80m",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_10a02aa6-6fc8-473c-9fa8-7fe97a5930ce"
+    ],
+    "difficulty": "hard"
+  },
+  {
+    "id": "q038",
+    "question": "TCP拥塞控制的慢启动阶段，拥塞窗口（cwnd）的变化规律是什么？",
+    "ground_truth": "指数增长（每次×2）",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_10a02aa6-6fc8-473c-9fa8-7fe97a5930ce"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q039",
+    "question": "在计算机组成原理的存储器电路设计中，片选信号CS的有效选中电平是什么？",
+    "ground_truth": "CS=0是选中有效",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_1bbd130d-4798-49db-8c5b-0d62e66afc4c"
+    ],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q040",
+    "question": "32位单精度浮点数遵循IEEE 754标准时，其数值V的计算公式是什么？",
+    "ground_truth": "V = (-1)^S × 1.M × 2^(E-127)",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_1bbd130d-4798-49db-8c5b-0d62e66afc4c"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q041",
+    "question": "在RISC-V架构中，lb和lbu指令读取同一字节数据0xFFD0后，存入32位寄存器的值分别是什么？请说明两者的扩展方式差异。",
+    "ground_truth": "lb指令对读取的1字节数据做符号扩展，0xFFD0存入32位寄存器后值为0xFFFFFFD0；lbu指令对读取的1字节数据做零扩展，0xFFD0存入32位寄存器后值为0x000000D0。两者差异在于：lb是有符号读取，高位补符号位；lbu是无符号读取，高位补0。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_1bbd130d-4798-49db-8c5b-0d62e66afc4c"
+    ],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q042",
+    "question": "请简述RISC-V架构中bge指令的机器码计算步骤，并以bge a5, a3, 0x800008a为例给出最终机器码结果。",
+    "ground_truth": "计算步骤：1. 计算偏移值=目标地址-当前PC地址；2. 由于指令地址按字节对齐，偏移值除以2得到imm值；3. 确定rs1、rs2对应的寄存器二进制编号；4. 按B型指令格式编码imm字段，拼合各字段后转换为十六进制。以bge a5, a3, 0x800008a为例，最终机器码为0x00d7da63。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_1bbd130d-4798-49db-8c5b-0d62e66afc4c"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q043",
+    "question": "若某存储器有13根地址线、16根数据线，根据存储器容量计算公式，该存储器的容量是多少？",
+    "ground_truth": "2^13 × 16 = 8K × 16bit = 8K × 2B = 16KB",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_1bbd130d-4798-49db-8c5b-0d62e66afc4c"
+    ],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q044",
+    "question": "当主存容量为4MB、Cache容量为8KB、块大小为512B且按字节寻址时，直接映射方式下Cache地址格式的标记位、Cache块地址位、块内地址位分别为多少位？",
+    "ground_truth": "标记位9位，Cache块地址4位，块内地址9位",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_1bbd130d-4798-49db-8c5b-0d62e66afc4c"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q045",
+    "question": "算法的五大特性分别包含哪些内容？",
+    "ground_truth": "1. 输入：有零个或多个输入；2. 输出：有一个或多个输出；3. 有穷性：对于任何合法输入，算法必须在有穷时间内完成（程序可以无限循环，算法不可以）；4. 确定性：每条指令有确切的含义，相同输入得到相同输出；5. 可行性：每条指令可以通过已实现的基本操作执行有限次实现。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_56f5a48e-9874-4bc5-90af-b8f383e2958e"
+    ],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q046",
+    "question": "主方法适用于什么形式的递归方程？请说明三种情况分别对应的复杂度结论。",
+    "ground_truth": "主方法适用于形如T(n)=aT(n/b)+f(n)的递归方程，三种情况：1. 若f(n) < n^{log_b a}（多项式小于），则T(n)=Θ(n^{log_b a})；2. 若f(n)=n^{log_b a}（相等），则T(n)=Θ(n^{log_b a} log n)；3. 若f(n) > n^{log_b a}（多项式大于），则T(n)=Θ(f(n))。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_56f5a48e-9874-4bc5-90af-b8f383e2958e"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q047",
+    "question": "快速排序在最坏情况下的时间复杂度是多少？触发该最坏情况的条件是什么？",
+    "ground_truth": "最坏时间复杂度为$O(n^2)$；当输入序列已经有序时会触发最坏情况。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_56f5a48e-9874-4bc5-90af-b8f383e2958e"
+    ],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q048",
+    "question": "基于快排划分的选择算法查找第k小元素的最好与平均时间复杂度是多少？若要保证最坏时间复杂度为线性，可采用什么算法？",
+    "ground_truth": "最好与平均时间复杂度为$O(n)$；可采用Blum等人提出的线性时间选择算法，该算法可保证最坏时间复杂度为$O(n)$。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_56f5a48e-9874-4bc5-90af-b8f383e2958e"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q049",
+    "question": "在棋盘覆盖问题的实现代码中，全局变量tile的作用是什么？",
+    "ground_truth": "tile用于存储当前待分配的L型骨牌编号，初始值为1，每次递归分割棋盘时为新的L型骨牌分配递增的编号。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_56f5a48e-9874-4bc5-90af-b8f383e2958e"
+    ],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q050",
+    "question": "相较于分治法，动态规划在子问题处理和求解效率上有哪些核心差异？",
+    "ground_truth": "分治法的子问题相互独立，可能重复求解导致效率低；动态规划的子问题一般相互重叠，每个子问题只求解一次并填表保存，效率更高。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_56f5a48e-9874-4bc5-90af-b8f383e2958e"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q051",
+    "question": "在0/1背包问题的动态规划求解过程中，若当前考虑的第i个物品重量w[i]大于当前剩余背包容量r，此时dp[i][r]的取值应如何确定？",
+    "ground_truth": "dp[i][r] = dp[i-1][r]",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_56f5a48e-9874-4bc5-90af-b8f383e2958e"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q052",
+    "question": "游艇租用问题中，动态规划数组dp[j]代表什么含义？",
+    "ground_truth": "dp[j]表示从站点1到站点j的最小租金",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_56f5a48e-9874-4bc5-90af-b8f383e2958e"
+    ],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q053",
+    "question": "根据文档内容，人民币面额体系下使用贪心法进行零钱兑换能得到最优解的原因是什么？是否所有面额组合都适用该性质？",
+    "ground_truth": "人民币面额体系（1、2、5、10、20、50、100）具有\"贪心选择性质\"，贪心法可得最优解；但对任意面额组合（如{1,3,4}凑6）贪心法不一定最优，需用动态规划。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_56f5a48e-9874-4bc5-90af-b8f383e2958e"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q054",
+    "question": "部分背包问题中，贪心法的核心选择策略是什么？",
+    "ground_truth": "选择单位重量价值最大的物品优先装入。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_56f5a48e-9874-4bc5-90af-b8f383e2958e"
+    ],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q055",
+    "question": "在哈夫曼编码的生成过程中，若当前叶子结点是其父结点的左孩子，则对应的编码位是什么？",
+    "ground_truth": "左分支编码0",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_56f5a48e-9874-4bc5-90af-b8f383e2958e"
+    ],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q056",
+    "question": "Kruskal算法求解最小生成树时，使用并查集的主要作用是什么？",
+    "ground_truth": "维护连通分支，通过判断待选边的两个顶点是否不在同一连通分量来避免产生回路",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_56f5a48e-9874-4bc5-90af-b8f383e2958e"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q057",
+    "question": "在n皇后问题的回溯求解中，约束函数Place(t)判断第t行皇后与之前行皇后是否存在斜线冲突的依据是什么？",
+    "ground_truth": "主对角线（↘）上顶点行号与列号的差值为常数，副对角线（↗）上顶点行号与列号的和为常数，若两个皇后行差绝对值等于列差绝对值则存在斜线冲突。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_56f5a48e-9874-4bc5-90af-b8f383e2958e"
+    ],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q058",
+    "question": "回溯法与分支限界法在求解最优化问题时，二者在搜索策略和活结点存储结构上分别有何区别？",
+    "ground_truth": "搜索策略上回溯法采用深度优先搜索，分支限界法采用广度优先或最小耗费优先搜索；活结点存储结构上回溯法采用栈，分支限界法采用队列或优先队列。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_56f5a48e-9874-4bc5-90af-b8f383e2958e"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q059",
+    "question": "在分支限界法求解0/1背包问题的Knapsack_BB函数中，为何只有子结点的上界ub大于当前最优价值bestv时，才会将该子结点加入优先队列？",
+    "ground_truth": "ub是当前结点对应子树可能获得的最大价值估计，若ub≤bestv，说明该子树中不可能存在比当前最优解更优的解，无需扩展，以此实现上界剪枝、减少不必要的搜索。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_56f5a48e-9874-4bc5-90af-b8f383e2958e"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q060",
+    "question": "在命题逻辑的五大联结词中，蕴含式P→Q的真值规则是什么？即它在什么输入组合下为假，其余情况真值如何？",
+    "ground_truth": "P→Q仅在P为真（取值1）、Q为假（取值0）时为假，其余三种输入组合下均为真，当前件为假时无论后件真值如何，整个蕴含式都为真（属于善意推定）。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_4d78bac2-b5c8-40a9-b5b0-63871f71c0d9"
+    ],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q061",
+    "question": "谓词逻辑中量词的否定转换有哪些常见等值式？请写出¬∃x P(x)的等价形式，以及考试高频出现的¬∀x(P(x)→Q(x))的等价转换结果。",
+    "ground_truth": "¬∃x P(x)等价于∀x ¬P(x)；考试高频的¬∀x(P(x)→Q(x))等价于∃x(P(x)∧¬Q(x))。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_4d78bac2-b5c8-40a9-b5b0-63871f71c0d9"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q062",
+    "question": "例3的证明关键提示指出“先ES消去存在量词（引入a），再US消去全称量词，顺序不可颠倒”，请结合证明步骤说明若颠倒该顺序会带来什么问题？",
+    "ground_truth": "若先使用US规则，对全称量词前提实例化得到的是任意个体的命题，而ES规则引入的新常量a是特定满足存在量词的个体，无法将US得到的任意个体命题与ES得到的特定个体a的命题匹配，无法推出Q(a)∨R(a)，后续推理无法完成，不能得到结论。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_4d78bac2-b5c8-40a9-b5b0-63871f71c0d9"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q063",
+    "question": "设集合A={1,2,3}，关系R={<1,2>,<2,3>}，请写出R的关系矩阵，并判断R是否满足自反性、反自反性、对称性、传递性，分别说明理由。",
+    "ground_truth": "关系矩阵为$\\begin{pmatrix}0&1&0\\\\0&0&1\\\\0&0&0\\end{pmatrix}$；自反性：不满足，因为R中不存在<1,1>、<2,2>、<3,3>，矩阵对角线元素不全为1；反自反性：满足，因为R中没有任何形如<x,x>的元素，矩阵对角线元素全为0；对称性：不满足，因为<1,2>∈R但<2,1>∉R，矩阵不对称；传递性：不满足，因为<1,2>∈R且<2,3>∈R，但<1,3>∉R，不满足传递性的定义。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_4d78bac2-b5c8-40a9-b5b0-63871f71c0d9"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q064",
+    "question": "根据文档中偏序关系的真题示例，给定哈斯图满足4≤1≤2、4≤3≤2、3≤5，求子集B={1,2,3,5}的极小元和下界分别是什么？并说明下界是否属于B。",
+    "ground_truth": "极小元为1和3；下界为4，4不属于B但属于全集A。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_4d78bac2-b5c8-40a9-b5b0-63871f71c0d9"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q065",
+    "question": "设集合A={1,2,…,8}，R是A上的模3同余关系，求元素5的等价类[5]_R，并说明该关系的商集包含多少个元素。",
+    "ground_truth": "[5]_R={2,5,8}；商集包含3个元素。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_4d78bac2-b5c8-40a9-b5b0-63871f71c0d9"
+    ],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q066",
+    "question": "请写出群G的非空子集H是G子群的充要判定条件，并说明该判定条件能够简化子群证明的原因。",
+    "ground_truth": "充要条件为H非空（包含G的单位元e），且对任意a,b∈H，都有a∘b⁻¹∈H；简化证明的原因是：子群需要满足封闭性、结合律、存在单位元、存在逆元四个条件，其中结合律直接继承自大群G，该判定条件可以同时推出封闭性、单位元存在性、逆元存在性，无需单独验证这三个条件。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_4d78bac2-b5c8-40a9-b5b0-63871f71c0d9"
+    ],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q067",
+    "question": "非平凡树T中存在度数为k（k≥2）的顶点，请结合握手定理和树的边数性质证明T至少有k片树叶。",
+    "ground_truth": "设T有n个顶点，L片树叶，由握手定理得∑d(v)=2|E|；又树的边数满足|E|=n-1，故∑d(v)=2n-2。除度数为k的顶点和L片树叶（度数为1）外，剩余n-1-L个顶点为树中的非叶顶点，度数至少为2，因此有2n-2 ≥ k + L·1 + (n-1-L)·2，化简可得L≥k，即T至少有k片树叶。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_4d78bac2-b5c8-40a9-b5b0-63871f71c0d9"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q068",
+    "question": "使用Kruskal算法求解该图的最小生成树时，最终选取的5条边分别是什么？计算得到的最小总造价是多少？",
+    "ground_truth": "最终选取的边集为{C-D, A-C, D-F, A-B, E-F}，最小总造价为12万元。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_4d78bac2-b5c8-40a9-b5b0-63871f71c0d9"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q069",
+    "question": "文档中给出的推导过程里，哪一步存在错误？该错误属于哪种常见错误类型？请说明最终结论是否成立，并给出理由。",
+    "ground_truth": "推导第4步∃x(A(x) ∧ ¬B(x)) ⇔ ∃x A(x) ∧ ∃x ¬B(x)存在错误，属于「存在量词对合取分配错误」（存在量词对合取不可分配，该方向不成立）；最终结论不成立，因为原推导的前提步骤存在错误，无法得到正确的等值式。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_4d78bac2-b5c8-40a9-b5b0-63871f71c0d9"
+    ],
+    "difficulty": "hard"
+  },
+  {
+    "id": "q070",
+    "question": "请化简集合表达式 $(B - (A \\cap C)) \\cup (A \\cap B \\cap C)$，并写出化简过程中用到的核心代数律。",
+    "ground_truth": "化简过程为 $(B - (A \\cap C)) \\cup (A \\cap B \\cap C) = (B \\cap \\overline{A \\cap C}) \\cup (A \\cap B \\cap C) = B \\cap (\\overline{A} \\cup \\overline{C}) \\cup (A \\cap B \\cap C) = (B \\cap \\overline{A}) \\cup (B \\cap \\overline{C}) \\cup (A \\cap B \\cap C) = (B \\cap \\overline{A}) \\cup [B \\cap (\\overline{C} \\cup (A \\cap C))] = (B \\cap \\overline{A}) \\cup [B \\cap (\\overline{C} \\cup A)]$（吸收律）$= B \\cap (\\overline{A} \\cup \\overline{C} \\cup A) = B \\cap (1 \\cup \\overline{C}) = B$，用到的核心代数律有德摩根律、吸收律，最终结果为 $B$。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_4d78bac2-b5c8-40a9-b5b0-63871f71c0d9"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q071",
+    "question": "证明对于任意集合 $A$、$B$，有 $P(A) \\cap P(B) = P(A \\cap B)$，并说明证明两个集合相等的一般思路。",
+    "ground_truth": "证明分两部分：1. 证 $P(A) \\cap P(B) \\subseteq P(A \\cap B)$：任取 $X \\in P(A) \\cap P(B)$，则 $X \\subseteq A$ 且 $X \\subseteq B$，故 $X \\subseteq A \\cap B$，即 $X \\in P(A \\cap B)$；2. 证 $P(A \\cap B) \\subseteq P(A) \\cap P(B)$：任取 $X \\in P(A \\cap B)$，则 $X \\subseteq A \\cap B$，故 $X \\subseteq A$ 且 $X \\subseteq B$，即 $X \\in P(A)$ 且 $X \\in P(B)$，因此 $X \\in P(A) \\cap P(B)$。综上，$P(A) \\cap P(B) = P(A \\cap B)$。证明两个集合相等的一般思路是分别证明两个集合互相包含（即 $\\subseteq$ 和 $\\supseteq$ 均成立）。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_4d78bac2-b5c8-40a9-b5b0-63871f71c0d9"
+    ],
+    "difficulty": "hard"
+  },
+  {
+    "id": "q072",
+    "question": "已知有向图D的邻接矩阵为 $A = \\begin{pmatrix}0&1&0&1\\\\1&0&1&0\\\\0&1&0&1\\\\1&0&1&0\\end{pmatrix}$，求 $v_1$ 到 $v_4$ 长度为3的通路数目是多少？",
+    "ground_truth": "4",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_4d78bac2-b5c8-40a9-b5b0-63871f71c0d9"
+    ],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q073",
+    "question": "已知有向图的邻接矩阵 $A = \\begin{pmatrix}0&1&0\\\\0&0&1\\\\1&0&0\\end{pmatrix}$，使用Warshall算法计算可达矩阵时，以 $v_2$ 为中间点进行第2轮更新后得到的矩阵 $W^{(2)}$ 是什么？",
+    "ground_truth": "$W^{(2)} = \\begin{pmatrix}1 & 1 & 1 \\\\ 0 & 1 & 1 \\\\ 1 & 1 & 1\\end{pmatrix}$",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_4d78bac2-b5c8-40a9-b5b0-63871f71c0d9"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q074",
+    "question": "角谷猜想（3n+1）的运算规则是什么？若输入非正整数程序会输出什么结果？",
+    "ground_truth": "运算规则为：输入的正整数若为偶数则除以2，若为奇数则乘3加1，重复操作直到数值变为1；若输入非正整数则输出ERROR",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_0e96d400-1c4f-4c5a-bc94-0e72fd4474b1"
+    ],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q075",
+    "question": "文档中“字母组成判断”的两道变体核心区别是什么？分别对应怎样的字母使用规则，分别使用了什么方法实现？",
+    "ground_truth": "核心区别为字母能否重复使用；允许字母重复使用的变体使用set实现，不允许字母重复使用的变体使用Counter实现",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_0e96d400-1c4f-4c5a-bc94-0e72fd4474b1"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q076",
+    "question": "根据文档中随机生成车牌号的规则，生成的车牌号后5位最多包含几个字母？哪些字母是被明确禁止使用的？",
+    "ground_truth": "后5位最多2个字母；禁止使用字母I和O",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_0e96d400-1c4f-4c5a-bc94-0e72fd4474b1"
+    ],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q077",
+    "question": "文档中字符串循环移位部分说明正数右移、负数左移的实现逻辑不同，参考代码实现的是哪种移位？对应的左移n位的代码表达式是什么？",
+    "ground_truth": "参考代码实现的是正数右移；左移n位的代码表达式为s[n:] + s[:n]",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_0e96d400-1c4f-4c5a-bc94-0e72fd4474b1"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q078",
+    "question": "根据处理wuhan2021s1.csv的参考代码，当用户输入‘规模降序’时，程序的执行结果是什么？",
+    "ground_truth": "程序将按照‘可售住宅总规模’的数值对数据做降序排序，之后按顺序逐行输出所有数据行的字段内容，同一行不同字段用空格分隔",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_0e96d400-1c4f-4c5a-bc94-0e72fd4474b1"
+    ],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q079",
+    "question": "在绘制BaTiO3态密度曲线的参考代码中，读取DosOfBaTiO3.txt文件时做了哪些无效数据处理？",
+    "ground_truth": "代码会跳过空行、字段拆分后长度不足2的行，以及前两个字段无法转换为浮点数的行（如文件表头）",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_0e96d400-1c4f-4c5a-bc94-0e72fd4474b1"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q080",
+    "question": "软件工程的基本要素包括方法、工具和哪一项？",
+    "ground_truth": "软件过程",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_c252d16d-5290-4dd9-8df5-ce11a93f89bf"
+    ],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q081",
+    "question": "以下哪项不属于RUP模型的阶段？",
+    "ground_truth": "确认阶段",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_c252d16d-5290-4dd9-8df5-ce11a93f89bf"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q082",
+    "question": "UML 的全称是什么？",
+    "ground_truth": "统一建模语言",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_c252d16d-5290-4dd9-8df5-ce11a93f89bf"
+    ],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q083",
+    "question": "观察以下代码片段，判断类 HouseKeeper 和类 TimeCard 之间属于哪种类关系？\npublic class HouseKeeper {\n    public void clockIn(TimeCard timecard) {\n    }\n}",
+    "ground_truth": "依赖（Dependency）",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_c252d16d-5290-4dd9-8df5-ce11a93f89bf"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q084",
+    "question": "在项目初始阶段，开发任务的目标包含以下哪些选项？\nA. 理解基本问题\nB. 确定所需的解决方案\nC. 确定需要解决方案的人员\nD. 实现核心算法",
+    "ground_truth": "ABC",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_c252d16d-5290-4dd9-8df5-ce11a93f89bf"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q085",
+    "question": "武汉理工大学现有哪三个校区？其中主校区是哪个，主要功能定位是什么？",
+    "ground_truth": "武汉理工大学现有马房山校区、余家头校区、南湖校区三个主要校区，主校区是马房山校区，功能定位为学校行政中心、材料科学与工程学科群、理学与人文社科。",
+    "category": "学校概况",
+    "relevant_doc_ids": [
+      "doc_9a78cba7-14c0-435e-8823-d79f9ea9572c"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q086",
+    "question": "甲、乙、丙、丁四个人有且仅有两人参加围棋优胜比赛，已知以下四个判断均正确：(1)甲和乙仅有一人参加；(2)若丙参加，则丁必参加；(3)乙或丁至多参加一人；(4)若丁不参加，则甲也不参加。请推出最终参加该比赛的两人是谁？",
+    "ground_truth": "甲和丁参加了围棋优胜比赛",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_295ada27-8dee-4462-9c89-327214584b9c"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q087",
+    "question": "设⟨G,*⟩为一群，若对G中任意元素a都有a²=e，请证明G是阿贝尔群",
+    "ground_truth": "证明：任取a,b∈G，由群的性质可知(a*b)²=e，又群中任意元素的逆元满足(a*b)⁻¹=b⁻¹*a⁻¹，结合a²=e可得a⁻¹=a，b²=e可得b⁻¹=b，因此(a*b)⁻¹=b*a，又因为(a*b)⁻¹=a*b，所以a*b=b*a，对G中任意元素a,b都成立，故G为阿贝尔群。",
+    "category": "专业课程",
+    "relevant_doc_ids": [
+      "doc_295ada27-8dee-4462-9c89-327214584b9c"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q088",
+    "question": "LRU 缓存机制实现中，get 和 put 操作的时间复杂度分别是多少？",
+    "ground_truth": "get 和 put 操作的时间复杂度均为 O(1)",
+    "category": "面试刷题",
+    "relevant_doc_ids": [
+      "doc_ac1f7d77-c592-4611-9512-3bc92fe7bae4"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q089",
+    "question": "实现二叉树的层序遍历时，通常采用什么算法思路？核心使用的数据结构是什么？",
+    "ground_truth": "通常采用 BFS（广度优先搜索）算法，核心数据结构是队列",
+    "category": "面试刷题",
+    "relevant_doc_ids": [
+      "doc_ac1f7d77-c592-4611-9512-3bc92fe7bae4"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q090",
+    "question": "二叉树右视图的层序遍历实现中，通过什么逻辑判断当前节点是当前层的最后一个节点？",
+    "ground_truth": "记录当前层的节点数量size，遍历当前层所有节点时，若当前遍历到的节点是该层最后一个（即索引i等于size-1），则将其值加入结果数组，对应判断逻辑为`if(i===size-1) res.push(node.val);`",
+    "category": "面试刷题",
+    "relevant_doc_ids": [
+      "doc_ac1f7d77-c592-4611-9512-3bc92fe7bae4"
+    ],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q091",
+    "question": "三数之和的排序加双指针解法中，如何避免输出重复的三元组？",
+    "ground_truth": "解法核心为跳过重复元素去重，固定第一个数时，若当前元素与前一个元素相同则直接跳过（对应代码`if(i>0&&nums[i]===nums[i-1]) continue;`），找到符合条件的三元组后，还需跳过左右指针指向的重复元素避免结果重复。",
+    "category": "面试刷题",
+    "relevant_doc_ids": [
+      "doc_ac1f7d77-c592-4611-9512-3bc92fe7bae4"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q092",
+    "question": "最长上升子序列问题采用贪心结合二分法求解时，时间复杂度是多少？",
+    "ground_truth": "O(n log n)",
+    "category": "面试刷题",
+    "relevant_doc_ids": [
+      "doc_ac1f7d77-c592-4611-9512-3bc92fe7bae4"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q093",
+    "question": "爬楼梯问题的动态规划解法中，状态dp[i]对应的递推公式是什么？",
+    "ground_truth": "dp[i] = dp[i-1] + dp[i-2]",
+    "category": "面试刷题",
+    "relevant_doc_ids": [
+      "doc_ac1f7d77-c592-4611-9512-3bc92fe7bae4"
+    ],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q094",
+    "question": "根据文档中的算法题讲解内容，求解「缺失的第一个正数」问题的核心解题思路是什么？该问题的答案落在什么范围？",
+    "ground_truth": "原地哈希（桶排序思想），值 i 放到下标 i-1，答案一定在 [1, n+1] 范围内",
+    "category": "面试刷题",
+    "relevant_doc_ids": [
+      "doc_ac1f7d77-c592-4611-9512-3bc92fe7bae4"
+    ],
+    "difficulty": "hard"
+  },
+  {
+    "id": "q095",
+    "question": "请简述智能体的核心定义，并说明其包含的四个关键要素分别是什么。",
+    "ground_truth": "智能体是能通过传感器感知环境，自主地通过执行器采取行动以达成目标的实体，四个关键要素分别为：环境（外部世界）、传感器（感知环境的能力）、执行器（影响环境的手段）、自主性（独立决策，非被动响应，是核心特征）。",
+    "category": "AI学习",
+    "relevant_doc_ids": [
+      "doc_f0162488-a098-4e0d-98ae-d86ef42763fd"
+    ],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q096",
+    "question": "根据传统智能体演进阶段划分，AlphaGo Zero属于哪一类型的智能体？该类型智能体的核心能力是什么？",
+    "ground_truth": "AlphaGo Zero属于学习型智能体，该类型智能体的核心能力是通过环境互动自主学习，需要回答的核心问题是如何改进策略。",
+    "category": "AI学习",
+    "relevant_doc_ids": [
+      "doc_f0162488-a098-4e0d-98ae-d86ef42763fd"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q097",
+    "question": "Plan-and-Solve（先规划后执行）范式的核心执行流程是什么？",
+    "ground_truth": "问题→Planner（生成步骤列表）→Executor（逐步执行，带上下文）→最终答案",
+    "category": "AI学习",
+    "relevant_doc_ids": [
+      "doc_f0162488-a098-4e0d-98ae-d86ef42763fd"
+    ],
+    "difficulty": "easy"
+  },
+  {
+    "id": "q098",
+    "question": "若企业需要开发具备复杂业务逻辑的LLM应用，在Coze、Dify、n8n三个低代码平台中应该如何选型？请说明理由。",
+    "ground_truth": "应选择Dify。Dify定位为开源LLM应用开发平台，支持本地+云端部署，拥有8677+插件，适合企业级复杂业务场景。",
+    "category": "AI学习",
+    "relevant_doc_ids": [
+      "doc_f0162488-a098-4e0d-98ae-d86ef42763fd"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q099",
+    "question": "GRPO是PPO的简化变体，二者在训练所需的模型数量及组成上有何差异？",
+    "ground_truth": "PPO需要4个模型，分别为策略模型、参考模型、价值模型、奖励模型；GRPO仅需2个模型，分别为策略模型和参考模型。",
+    "category": "AI学习",
+    "relevant_doc_ids": [
+      "doc_f0162488-a098-4e0d-98ae-d86ef42763fd"
+    ],
+    "difficulty": "medium"
+  },
+  {
+    "id": "q100",
+    "question": "武汉理工大学是由哪三所院校于何时合并组建的？",
+    "ground_truth": "武汉理工大学由原武汉工业大学、原武汉交通科技大学和原武汉汽车工业大学三校于2000年5月27日合并组建而成。",
+    "category": "学校概况",
+    "relevant_doc_ids": [
+      "doc_4dcd7c94-8c2f-4fdc-ae18-3669c59dfd36"
+    ],
+    "difficulty": "medium"
+  }
+]

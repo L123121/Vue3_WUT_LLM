@@ -41,6 +41,7 @@ class RerankerService {
     env.allowRemoteModels = false;
     env.useFS = true;
     env.useFSCache = true;
+    env.localModelPath = MODEL_CACHE_DIR;   // local_files_only 时从该目录找模型
 
     const { AutoTokenizer, AutoModelForSequenceClassification } = require('@xenova/transformers');
 
@@ -87,7 +88,8 @@ class RerankerService {
     const { tokenizer, model: reranker } = model;
 
     try {
-      const needed = Math.min(candidates.length, Math.max(topK * 2, 10)); // 多取一些给 rerank 筛选
+      const MAX_RERANK = 30;
+      const needed = Math.min(candidates.length, Math.max(topK * 2, 10), MAX_RERANK); // 多取一些给 rerank 筛选，上限 30
       const slices = candidates.slice(0, needed);
       const texts = slices.map(c => String(c.text || ''));
 

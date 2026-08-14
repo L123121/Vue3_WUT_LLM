@@ -11,7 +11,7 @@ function makeJWT(payload, secret) {
 
 // Fresh token with 24h expiry
 const token = makeJWT(
-  { userId: 'eval-runner', username: 'eval', iat: Math.floor(Date.now()/1000), exp: Math.floor(Date.now()/1000) + 86400 },
+  { userId: 'eval-runner', username: 'eval', role: 'admin', iat: Math.floor(Date.now()/1000), exp: Math.floor(Date.now()/1000) + 86400 },
   JWT_SECRET
 );
 

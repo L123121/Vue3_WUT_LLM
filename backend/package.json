@@ -10,6 +10,9 @@
     "test:watch": "node --experimental-vm-modules ../node_modules/vitest/vitest.mjs --config ../vitest.config.js"
   },
   "dependencies": {
+    "@lancedb/lancedb": "^0.33.0",
+    "@qdrant/js-client-rest": "^1.19.0",
+    "@xenova/transformers": "^2.17.2",
     "axios": "^1.15.2",
     "cookie-parser": "^1.4.6",
     "cors": "^2.8.5",
@@ -24,6 +27,7 @@
     "mathjs": "^15.2.0",
     "morgan": "^1.10.0",
     "multer": "^2.1.1",
+    "mupdf": "^1.28.0",
     "pdf-parse": "^1.1.1",
     "pg": "^8.13.1",
     "turndown": "^7.2.4",

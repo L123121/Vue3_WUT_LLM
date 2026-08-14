@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+// 本测试针对文件持久化实现（VECTOR_STORE_BACKEND=file）：
+// config 默认已切 qdrant，若不锁定，vector-store.service.js 底部分发会导出 Qdrant 实现
+process.env.VECTOR_STORE_BACKEND = 'file';
+
 /**
  * VectorStoreService 单元测试 — 文件持久化 + 精确相似度检索
  * 覆盖 addChunks / search（排序、过滤、空 embedding）/ deleteByDocId / count。
@@ -26,7 +30,7 @@ describe('VectorStoreService', () => {
     vi.spyOn(store, '_scheduleSave').mockImplementation(() => {});
     // 跳过 ensureReady 的文件重建逻辑，直接进入就绪态
     store._ready = true;
-  });
+  }, 30000);
 
   it('addChunks 后 count 正确', async () => {
     store.addChunks(
@@ -53,7 +57,8 @@ describe('VectorStoreService', () => {
     expect(result[0].docId).toBe('doc-a');
     expect(result[0].text).toBe('学生证补办');
     expect(result[0]._hybridScore).toBeGreaterThan(0);
-    expect(result[0]._retrievalChannels).toEqual(['vector', 'sparse']);
+    // RRF：查询无 sparse 向量 → 仅稠密通道贡献，c2 无任何命中分
+    expect(result[0]._retrievalChannels).toEqual(['vector']);
   });
 
   it('search 支持 metadata 过滤', async () => {

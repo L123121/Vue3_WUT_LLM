@@ -1,11 +1,13 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
+import { useConversationStore } from './conversation.store.js';
 
 /**
  * 消息收藏 store — localStorage 持久化
  *
  * 收藏条目：{ id, conversationId, conversationTitle, messageId, role, text, timestamp, createdAt }
  * 侧边栏收藏夹点击后，通过 pendingScrollMessageId 通知 AIChat 滚动定位到该消息。
+ * conversationTitle 仅作快照兜底：展示时优先取会话 store 的实时标题（会话 store 是标题的唯一事实来源）。
  */
 
 const STORAGE_KEY = 'chat_favorites';
@@ -26,9 +28,17 @@ export const useFavoritesStore = defineStore('favorites', () => {
   // 待滚动定位的消息 id（侧边栏收藏夹 → AIChat）
   const pendingScrollMessageId = ref('');
 
-  const sortedFavorites = computed(() =>
-    [...favorites.value].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-  );
+  const sortedFavorites = computed(() => {
+    // 会话标题的唯一事实来源是 conversation store，收藏条目里的 conversationTitle 只是快照兜底
+    const conversationStore = useConversationStore();
+    const liveTitles = new Map(conversationStore.conversations.map((c) => [c.id, c.title]));
+    return [...favorites.value]
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+      .map((fav) => ({
+        ...fav,
+        conversationTitle: liveTitles.get(fav.conversationId) || fav.conversationTitle || '对话',
+      }));
+  });
 
   const isFavorite = (messageId) => favorites.value.some((f) => f.messageId === messageId);
 

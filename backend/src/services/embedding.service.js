@@ -36,6 +36,7 @@ class EmbeddingService {
       try {
         const { env, pipeline } = require('@xenova/transformers');
         env.cacheDir = this.cacheDir;
+        env.localModelPath = this.cacheDir;   // local_files_only 时从该目录找模型
         env.allowLocalModels = true;
         env.allowRemoteModels = !this.localFilesOnly;
 

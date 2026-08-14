@@ -294,6 +294,23 @@ export function useStreaming() {
         onSources: (sources) => {
           updateMessage(convStore, conversationId, aiMsgId, (m) => ({ ...m, sources, answerMode: 'rag', usedRag: true }));
         },
+        onIntent: (intent) => {
+          // V2.0 自动路由：记录后端意图识别结果，前端展示"自动路由：知识库检索"等
+          updateMessage(convStore, conversationId, aiMsgId, (m) => ({ ...m, intent: intent || m.intent }));
+        },
+        onToolCall: (toolCall) => {
+          updateMessage(convStore, conversationId, aiMsgId, (m) => ({
+            ...m,
+            toolCalls: [...(m.toolCalls || []), toolCall],
+            answerMode: 'agent',
+          }));
+        },
+        onToolResult: (toolResult) => {
+          updateMessage(convStore, conversationId, aiMsgId, (m) => ({
+            ...m,
+            toolResults: [...(m.toolResults || []), toolResult],
+          }));
+        },
         onTrace: (payload) => {
           const trace = payload?.trace || null;
           const rag = payload?.rag || trace?.outcome || {};

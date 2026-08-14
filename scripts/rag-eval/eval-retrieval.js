@@ -9,7 +9,9 @@ import { fileURLToPath } from 'url';
 import { ragQuery, withRetry, checkBackendHealth } from './utils/api-client.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const DATASET_PATH = resolve(__dirname, 'dataset/campus-qa.json');
+const DATASET_PATH = process.env.DATASET_PATH
+  ? resolve(__dirname, process.env.DATASET_PATH)
+  : resolve(__dirname, 'dataset/campus-qa.json');
 const RESULTS_DIR = resolve(__dirname, 'results');
 const EVAL_KS = [1, 3, 5];
 

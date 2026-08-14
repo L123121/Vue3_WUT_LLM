@@ -63,15 +63,50 @@ export function useMarkdownRenderer() {
 
   createLinkSecurityRule(md);
 
-  // 渲染结果缓存，避免重复解析相同内容
+  // 渲染结果缓存，避免重复解析相同内容（FIFO，上限淘汰）
   const renderCache = new Map();
   const MAX_RENDER_CACHE = 50;
+
+  // 缓存命中率统计（简历/性能数据用）：hit/miss 计数 + localStorage 持久化 + 定期日志
+  // 口径：主线程渲染路径（renderMarkdownMain），Worker 大内容路径不走此缓存
+  const CACHE_STATS_KEY = 'markdown_cache_stats';
+  let cacheHits = 0;
+  let cacheMisses = 0;
+  try {
+    const saved = JSON.parse(localStorage.getItem(CACHE_STATS_KEY) || '{}');
+    cacheHits = saved.hits || 0;
+    cacheMisses = saved.misses || 0;
+  } catch (_) { /* localStorage 不可用（隐私模式/SSR）时忽略 */ }
+
+  const persistCacheStats = () => {
+    try {
+      localStorage.setItem(CACHE_STATS_KEY, JSON.stringify({ hits: cacheHits, misses: cacheMisses }));
+    } catch (_) {}
+  };
+
+  const logCacheStats = () => {
+    const total = cacheHits + cacheMisses;
+    if (total === 0) return;
+    const rate = ((cacheHits / total) * 100).toFixed(1);
+    console.log(`[MarkdownCache] 命中率: ${rate}% (hit=${cacheHits}, miss=${cacheMisses})`);
+    persistCacheStats();
+  };
+
+  const recordCacheAccess = (hit) => {
+    if (hit) cacheHits += 1;
+    else cacheMisses += 1;
+    // 每 50 次渲染输出一次汇总，避免流式刷新期间刷屏
+    if ((cacheHits + cacheMisses) % 50 === 0) logCacheStats();
+  };
 
   // 主线程渲染
   const renderMarkdownMain = (content) => {
     if (!content || content.trim() === '') return '';
     // 命中缓存则直接返回
-    if (renderCache.has(content)) return renderCache.get(content);
+    if (renderCache.has(content)) {
+      recordCacheAccess(true);
+      return renderCache.get(content);
+    }
     try {
       const completed = completeMarkdown(content);
       const raw = md.render(completed);
@@ -82,6 +117,7 @@ export function useMarkdownRenderer() {
         renderCache.delete(firstKey);
       }
       renderCache.set(content, html);
+      recordCacheAccess(false);
       return html;
     } catch {
       return content;
