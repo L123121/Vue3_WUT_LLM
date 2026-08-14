@@ -58,11 +58,7 @@ const confirmClear = () => {
   });
 };
 
-// 当前对话模式（已移除 Agent，始终为 chat）
-const activeMode = ref('chat');
-const onModeChange = (mode) => {
-  activeMode.value = mode;
-};
+// V2.0：对话模式由后端意图识别自动路由，前端不再手动切换 RAG
 
 const handleSend = async (message, fileData = null) => {
   await chatStore.sendMessage(message, null, fileData);
@@ -403,11 +399,9 @@ onMounted(() => {
       :is-connected="chatStore.isConnected"
       :is-reconnecting="chatStore.isReconnecting"
       :reconnect-attempt="chatStore.reconnectAttempt"
-      :active-mode="activeMode"
       @send="handleSend"
       @error="handleError"
       @command="handleCommand"
-      @mode-change="onModeChange"
     />
   </div>
 

@@ -57,6 +57,18 @@ const isRagAnswer = computed(() => (
   && !isStreaming.value
   && (props.message.usedRag === true || props.message.answerMode === 'rag' || hasSources.value)
 ));
+
+// V2.0 自动路由徽标：后端意图识别结果 → 中文标签
+const intentLabel = computed(() => {
+  const route = props.message.intent?.route;
+  const map = {
+    rag: '自动路由：知识库检索',
+    chat: '自动路由：普通对话',
+    agent: '自动路由：多步任务',
+  };
+  return map[route] || '';
+});
+const showIntentBadge = computed(() => isModel.value && !isError.value && !!intentLabel.value);
 const questionText = computed(() => props.questionMessage?.content ?? props.questionMessage?.text ?? '');
 
 // 行内引用弹窗
@@ -246,6 +258,12 @@ const timeClasses = computed(() => {
 
         <!-- 政策问答步骤卡片（后端解析的结构化 JSON） -->
         <ProcessCard v-if="isModel && !isError && message.processCard" :card="message.processCard" />
+
+        <!-- V2.0 自动路由徽标：后端意图识别结果（替代原手动 RAG 开关） -->
+        <div v-if="showIntentBadge" class="mt-2 inline-flex items-center gap-1 rounded-full bg-blue-50/80 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800/40 px-2 py-0.5">
+          <span class="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+          <span class="text-[10px] font-medium text-blue-600 dark:text-blue-300">{{ intentLabel }}</span>
+        </div>
 
         <!-- 检索过程可视化（RAG 回答） -->
         <RetrievalTracePanel v-if="isModel && !isError && message.ragTrace" :trace="message.ragTrace" />

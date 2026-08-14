@@ -18,7 +18,7 @@ class QuotaService {
   }
 
   _limit(userId) {
-    if (userId === "admin") return this.cfg.adminLimit ?? 1000;
+    if (userId === "admin") return Infinity; // 管理员无配额限制
     if (!userId) return this.cfg.anonymousLimit ?? 20;
     return this.cfg.dailyLimit ?? 100;
   }

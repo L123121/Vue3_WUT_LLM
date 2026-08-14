@@ -259,6 +259,9 @@ export const sendMessageStream = async (message, history = [], callbacks, option
               console.log('[Stream] chunk:', content.substring(0, 30));
               measuredCallbacks.onChunk(content);
             }
+            if (json.intent) measuredCallbacks.onIntent?.(json.intent);
+            if (json.tool_call) measuredCallbacks.onToolCall?.(json.tool_call);
+            if (json.tool_result) measuredCallbacks.onToolResult?.(json.tool_result);
             if (json.sources) measuredCallbacks.onSources?.(json.sources);
             if (json.rag || json.trace || json.retrieval) measuredCallbacks.onTrace?.(json);
             if (json.processCard) measuredCallbacks.onProcess?.(json.processCard);

@@ -12,11 +12,15 @@ const DEFAULT_RETRIES = 2;
 const RETRYABLE_STATUS = [408, 429, 502, 503, 504];
 
 // 全局 keep-alive agent（连接池）
+// 注意：https.Agent({ timeout }) 是 socket 连接后设置的超时，**对活动请求同样生效**，
+// 不是"空闲连接超时"。此前误缩短为 15s，导致 StepFun 流式首 token（常需 4~26s）
+// 被中途 destroy → 触发重试 → 首 token 翻倍、偶发流中断（outputChars=0）。
+// 正确做法：agent timeout 与请求级一致（60s），死连接问题靠 requestStream 重试解决。
 const agent = new https.Agent({
   keepAlive: true,
   maxSockets: 20,
   maxFreeSockets: 5,
-  timeout: 30000,
+  timeout: DEFAULT_TIMEOUT,
 });
 
 /**
@@ -67,25 +71,64 @@ async function request(options, body) {
 
 /**
  * 发送流式 HTTPS 请求（返回原始 IncomingMessage）
+ * 带连接失败/5xx 重试：keep-alive 复用死连接、瞬时断连（ECONNRESET/ETIMEDOUT）
+ * 是流式首 token 偶发 10~30s 卡顿的主因，这里与 request() 一致地做指数退避重试。
  * @param {Object} options - https.request options
  * @param {string} [body] - JSON 字符串体
+ * @param {AbortSignal} [signal] - 取消信号（abort 后不重试）
  * @returns {Promise<IncomingMessage>}
  */
 async function requestStream(options, body, signal) {
   const timeout = options.timeout || DEFAULT_TIMEOUT;
+  const retries = options.retries ?? DEFAULT_RETRIES;
+  const retryOn5xx = options.retryOn5xx !== false;
   const reqOptions = {
     ...options,
     agent,
     timeout,
   };
+  delete reqOptions.retries;
+  delete reqOptions.retryOn5xx;
 
+  let lastError;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const start = Date.now();
+    try {
+      const res = await _sendStreamRequest(reqOptions, body, signal);
+      metrics.recordLatency('http', Date.now() - start);
+      return res;
+    } catch (err) {
+      lastError = err;
+      // abort 是客户端主动取消，不重试
+      if (signal?.aborted) throw err;
+      const shouldRetry = attempt < retries && (
+        err.code === 'ECONNRESET' ||
+        err.code === 'ETIMEDOUT' ||
+        err.code === 'ECONNREFUSED' ||
+        err.code === 'ECONNABORTED' ||
+        (retryOn5xx && err.statusCode && RETRYABLE_STATUS.includes(err.statusCode))
+      );
+      if (!shouldRetry) break;
+      const delay = Math.min(1000 * Math.pow(2, attempt) + Math.random() * 500, 10000);
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+  throw lastError;
+}
+
+/**
+ * 内部：发送单次流式请求（不重试）
+ */
+function _sendStreamRequest(options, body, signal) {
   return new Promise((resolve, reject) => {
-    const req = https.request(reqOptions, (res) => {
+    const req = https.request(options, (res) => {
       if (res.statusCode !== 200) {
         let errData = '';
         res.on('data', chunk => { errData += chunk; });
         res.on('end', () => {
-          reject(new Error(`HTTP ${res.statusCode}: ${errData.slice(0, 200)}`));
+          const err = new Error(`HTTP ${res.statusCode}: ${errData.slice(0, 200)}`);
+          err.statusCode = res.statusCode;
+          reject(err);
         });
         return;
       }
@@ -95,7 +138,9 @@ async function requestStream(options, body, signal) {
     req.on('error', reject);
     req.on('timeout', () => {
       req.destroy();
-      reject(new Error('请求超时'));
+      const err = new Error('请求超时');
+      err.code = 'ETIMEDOUT';
+      reject(err);
     });
 
     // 客户端断开 / abort → 立即销毁底层 socket，使流式 for-await 尽快退出，

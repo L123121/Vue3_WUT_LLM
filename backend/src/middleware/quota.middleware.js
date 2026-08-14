@@ -8,6 +8,11 @@ const quotaService = require("../services/quota.service");
  * 在请求处理后递增配额（通过 res.on("finish") 确保只对成功请求计数）
  */
 function quotaMiddleware(req, res, next) {
+  // 管理员账号无配额限制（authMiddleware 已注入 req.role）
+  if (req.role === 'admin') {
+    return next();
+  }
+
   // 仅对需要消耗 LLM 配额的路由启用
   // 在白名单中的路径跳过配额检查
   const skipPaths = [

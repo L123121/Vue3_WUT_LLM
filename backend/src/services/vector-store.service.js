@@ -30,6 +30,9 @@ class VectorStoreService {
     const vectorConfig = config.vectorStore || {};
     this.vectorWeight = vectorConfig.vectorWeight ?? 0.6;
     this.sparseWeight = vectorConfig.sparseWeight ?? 0.4;
+    this.rrfK = vectorConfig.rrfK ?? 60;
+    // 融合方式：rrf（默认）| weighted（0.6/0.4 加权打分，用于 A/B 对比）
+    this.fusionMode = vectorConfig.fusion || 'rrf';
 
     this._docs = [];
     this._dirty = false;
@@ -134,7 +137,7 @@ class VectorStoreService {
     this._scheduleSave();
   }
 
-  async search(queryEmbedding, topK = 10, filter = null, weights = null) {
+  async search(queryEmbedding, topK = 10, filter = null) {
     if (!this._ready) await this.ensureReady();
 
     const embedding = this._normalizeEmbedding(queryEmbedding);
@@ -147,39 +150,96 @@ class VectorStoreService {
       );
     }
 
-    // 动态权重路由：调用方可按 query 术语倾向传入 { vector, sparse }，
-    // 不传时使用实例默认权重（兼容旧调用）
-    const vectorWeight = weights?.vector ?? this.vectorWeight;
-    const sparseWeight = weights?.sparse ?? this.sparseWeight;
-
-    const scored = candidates.map(doc => {
-      const denseScore = doc.dense
+    // 融合方式（config.vectorStore.fusion，RAG_FUSION 环境变量）：
+    // - rrf（默认）：稠密/稀疏两通道各自按分数独立排名，score = Σ 1/(k + rank)，
+    //   只看排名不看分数量纲，免去跨通道分数校准（原 0.6/0.4 加权方案的痛点）
+    // - weighted：0.6·denseCosine + 0.4·sparseCosine（旧方案，用于 A/B 对比）
+    const scored = candidates.map(doc => ({
+      doc,
+      denseScore: doc.dense
         ? EmbeddingService.cosineSimilarity(embedding.dense, doc.dense)
-        : 0;
-      const sparseScore = (embedding.sparse && doc.sparse)
+        : 0,
+      sparseScore: (embedding.sparse && doc.sparse)
         ? EmbeddingService.sparseSimilarity(embedding.sparse, doc.sparse)
-        : 0;
-      const score = vectorWeight * denseScore + sparseWeight * sparseScore;
-      return {
-        id: doc.id,
-        docId: doc.metadata?.docId || '',
-        parentId: doc.metadata?.parentId || doc.metadata?.docId || '',
-        parentText: doc.metadata?.parentText || '',
-        parentIdx: doc.metadata?.parentIdx ?? -1,
-        text: doc.document || '',
-        score,
-        title: doc.metadata?.title || '',
-        category: doc.metadata?.category || '',
-        chunkIndex: doc.metadata?.chunkIndex ?? -1,
-        _vectorScore: denseScore,
-        _sparseScore: sparseScore,
-        _hybridScore: score,
-        _retrievalChannels: ['vector', 'sparse'],
-      };
-    });
+        : 0,
+    }));
 
-    scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, topK);
+    let results;
+    if (this.fusionMode === 'weighted') {
+      // 旧加权融合：0.6/0.4 加权打分（兼容 A/B 对比与历史评测复现）
+      const vectorWeight = this.vectorWeight;
+      const sparseWeight = this.sparseWeight;
+      results = scored.map(({ doc, denseScore, sparseScore }) => {
+        const score = vectorWeight * denseScore + sparseWeight * sparseScore;
+        const channels = [];
+        if (denseScore > 0) channels.push('vector');
+        if (sparseScore > 0) channels.push('sparse');
+        return {
+          id: doc.id,
+          docId: doc.metadata?.docId || '',
+          parentId: doc.metadata?.parentId || doc.metadata?.docId || '',
+          parentText: doc.metadata?.parentText || '',
+          parentIdx: doc.metadata?.parentIdx ?? -1,
+          text: doc.document || '',
+          score,
+          title: doc.metadata?.title || '',
+          category: doc.metadata?.category || '',
+          chunkIndex: doc.metadata?.chunkIndex ?? -1,
+          _vectorScore: denseScore,
+          _sparseScore: sparseScore,
+          _hybridScore: score,
+          _retrievalChannels: channels.length > 0 ? channels : ['vector', 'sparse'],
+        };
+      });
+    } else {
+      // RRF 融合（默认）
+      // 每通道独立排名：仅对通道得分 > 0 的项计排名（0 分视为该通道未命中，不参与 RRF）
+      const rankChannel = (channelScore) => {
+        const ranks = new Map();
+        scored
+          .filter(item => channelScore(item) > 0)
+          .sort((a, b) => channelScore(b) - channelScore(a))
+          .forEach((item, index) => ranks.set(item.doc.id, index + 1));
+        return ranks;
+      };
+      const denseRanks = rankChannel(item => item.denseScore);
+      const sparseRanks = rankChannel(item => item.sparseScore);
+
+      const k = this.rrfK;
+      results = scored.map(({ doc, denseScore, sparseScore }) => {
+        const channels = [];
+        let rrfScore = 0;
+        const denseRank = denseRanks.get(doc.id);
+        const sparseRank = sparseRanks.get(doc.id);
+        if (denseRank) {
+          rrfScore += 1 / (k + denseRank);
+          channels.push('vector');
+        }
+        if (sparseRank) {
+          rrfScore += 1 / (k + sparseRank);
+          channels.push('sparse');
+        }
+        return {
+          id: doc.id,
+          docId: doc.metadata?.docId || '',
+          parentId: doc.metadata?.parentId || doc.metadata?.docId || '',
+          parentText: doc.metadata?.parentText || '',
+          parentIdx: doc.metadata?.parentIdx ?? -1,
+          text: doc.document || '',
+          score: rrfScore,
+          title: doc.metadata?.title || '',
+          category: doc.metadata?.category || '',
+          chunkIndex: doc.metadata?.chunkIndex ?? -1,
+          _vectorScore: denseScore,
+          _sparseScore: sparseScore,
+          _hybridScore: rrfScore,
+          _retrievalChannels: channels.length > 0 ? channels : ['vector', 'sparse'],
+        };
+      });
+    }
+
+    results.sort((a, b) => b.score - a.score);
+    return results.slice(0, topK);
   }
 
   async deleteByDocId(docId) {
@@ -278,4 +338,12 @@ function registerDocumentProvider(provider) {
   getInstance().setDocumentProvider(provider);
 }
 
-module.exports = { vectorStore: getInstance(), registerDocumentProvider, VectorStoreService, _class: VectorStoreService };
+// ==================== 按 backend 分发 ====================
+// VECTOR_STORE_BACKEND=qdrant → 使用 Qdrant 独立服务版；
+// 其余（file / milvus 遗留配置）→ 保持文件持久化版，行为不变。
+const vectorBackend = config.vectorStore?.backend || 'file';
+if (vectorBackend === 'qdrant') {
+  module.exports = require('./vector-store-qdrant.service');
+} else {
+  module.exports = { vectorStore: getInstance(), registerDocumentProvider, VectorStoreService, _class: VectorStoreService };
+}

@@ -39,12 +39,18 @@ services:
       - "127.0.0.1:3000:3000"  # 仅 nginx 可访问
     env_file:
       - ./deploy/.env.production
+    environment:
+      - VECTOR_STORE_BACKEND=qdrant
+      - QDRANT_URL=http://qdrant:6333
+    depends_on:
+      - qdrant
     volumes:
       - backend-data:/app/backend/data      # SQLite 数据持久化
       - uploads-data:/app/backend/uploads   # 上传文件临时目录
       - ./dist:/app/dist:ro                 # 前端静态文件（支持热替换）
       - ./backend/src:/app/backend/src:ro   # 后端源码（git pull 即时生效）
       - ./ragdata:/app/ragdata:ro           # 知识库文档源文件
+      - ./model-cache:/app/.model-cache:ro  # BGE 本地模型文件（离线加载）
     restart: unless-stopped
     logging:
       driver: "json-file"
@@ -58,10 +64,27 @@ services:
       retries: 3
       start_period: 30s
 
+  # ---- Qdrant 向量数据库（独立服务） ----
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "127.0.0.1:6333:6333"  # REST API（仅本机/nginx 可访问，生产不对外）
+      - "127.0.0.1:6334:6334"  # gRPC（可选）
+    volumes:
+      - qdrant-storage:/qdrant/storage
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 volumes:
   backend-data:
     driver: local
   uploads-data:
     driver: local
   nginx-logs:
+    driver: local
+  qdrant-storage:
     driver: local

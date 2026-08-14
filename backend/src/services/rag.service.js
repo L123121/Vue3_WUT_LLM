@@ -25,10 +25,12 @@ class RagService {
     this.searchTopK = ragConfig.searchTopK || 50;
     this.keywordTopK = ragConfig.keywordTopK || 20;
     this.hybridSearchEnabled = ragConfig.hybridSearchEnabled !== false;
-    this.vectorWeight = ragConfig.vectorWeight ?? 0.6;
-    this.keywordWeight = ragConfig.keywordWeight ?? 0.4;
     this.rrfK = ragConfig.rrfK || 60;
     this.minSourceScore = ragConfig.minSourceScore ?? 0.03;
+    this.mmrEnabled = ragConfig.mmrEnabled !== false;
+    this.mmrLambda = ragConfig.mmrLambda ?? 0.7;
+    this.mmrMaxSim = ragConfig.mmrMaxSim ?? 0.85;
+    this.autoCategoryFilter = ragConfig.autoCategoryFilter !== false;
     this.rerankerService = new RerankerService();
   }
 
@@ -140,9 +142,12 @@ class RagService {
         const paraMap = this._groupChunksByParent(topChunks);
         let parentCandidates = [...paraMap.values()];
 
-        // 2. cross-encoder rerank 父段落（打分排序所有父段）
+        // 2. cross-encoder rerank 父段落（先按 score 粗排取前 20，避免 CPU ONNX 处理过多候选）
         if (this.rerankEnabled && parentCandidates.length > 1) {
-          const rerankInput = parentCandidates.map(m => ({
+          const RERANK_MAX_INPUT = 20;
+          parentCandidates.sort((a, b) => (b.bestChunk?.score || 0) - (a.bestChunk?.score || 0));
+          const rerankCandidates = parentCandidates.slice(0, RERANK_MAX_INPUT);
+          const rerankInput = rerankCandidates.map(m => ({
             text: m.parentText || m.bestChunk?.text || '',
             score: m.bestChunk?.score || 0,
             _match: m,
@@ -159,6 +164,19 @@ class RagService {
 
         // 3. 自适应截断（按问题类型差异化阈值）
         parentCandidates = this._adaptiveTruncate(parentCandidates, this.rerankTopK, message);
+
+        // 3.5 父段归并后 MMR 去重：剔除与已选父段高度相似的冗余段落（保留多样性）
+        const mmrStart = Date.now();
+        const beforeDedup = parentCandidates.length;
+        parentCandidates = this._mmrDedupe(parentCandidates, this.rerankTopK);
+        if (parentCandidates.length < beforeDedup) {
+          console.log(`[RAG] MMR 去重: ${beforeDedup} → ${parentCandidates.length} 个父段`);
+        }
+        this._recordTraceStage(tracer, 'parent_dedup', mmrStart, true, {
+          before: beforeDedup,
+          after: parentCandidates.length,
+          method: 'mmr',
+        });
 
         // 4. 按 (docId, parentIdx) 二级排序，让同文档连续段落按阅读顺序排列
         parentCandidates.sort((a, b) => {
@@ -268,9 +286,17 @@ class RagService {
     const searchTopK = parseInt(options.topK || options.childTopK || this.searchTopK, 10) || this.searchTopK;
     const tracer = options.tracer || null;
     const queryVariant = options.queryVariant || 'primary';
+
+    // 元数据过滤（Multi-faceted Filtering）：显式 category 优先；
+    // 未指定时按问题关键词自动推断（低置信返回 null → 不设过滤，保持全库召回）
+    const explicitCategory = options.category || null;
+    const autoCategory = !explicitCategory ? this._inferDocCategory(query) : null;
+    const effectiveCategory = explicitCategory || autoCategory || null;
+
     const trace = {
       mode: 'bge-small-zh-milvus-hybrid',
-      category: options.category || null,
+      category: effectiveCategory,
+      autoCategory,
       topK: {
         hybrid: searchTopK,
         final: searchTopK,
@@ -281,7 +307,7 @@ class RagService {
       fused: { count: 0, topScore: 0, channels: [] },
     };
 
-    const filter = options.category ? { category: options.category } : null;
+    const filter = effectiveCategory ? { category: effectiveCategory } : null;
     let candidates = [];
     let currentStage = 'embedding';
     let currentStageStart = Date.now();
@@ -310,13 +336,25 @@ class RagService {
         const searchStart = Date.now();
         currentStage = 'milvus_search';
         currentStageStart = searchStart;
-        // 动态权重路由：术语倾向高 → 提高 sparse(关键词) 权重；语义问题 → 保持向量为主
-        const term = this._terminality(query);
-        const vectorWeight = Math.max(0.1, Math.min(0.9, this.vectorWeight - 0.3 * term));
-        candidates = await this.vectorStore.search(queryEmbedding, searchTopK, filter, {
-          vector: vectorWeight,
-          sparse: 1 - vectorWeight,
-        });
+        // RRF 融合在 vector-store 内完成（稠密/稀疏独立排名，无需动态权重路由）
+        candidates = await this.vectorStore.search(queryEmbedding, searchTopK, filter);
+
+        // 空结果回退：自动推断的类别过滤无命中 → 回退全库检索，避免跨文档问题被误过滤
+        // （显式 category 是调用方意图，不做回退）
+        if (autoCategory && candidates.length === 0) {
+          const fallbackStart = Date.now();
+          candidates = await this.vectorStore.search(queryEmbedding, searchTopK, null);
+          trace.filterFallback = {
+            inferredCategory: autoCategory,
+            recovered: candidates.length,
+            latency: Date.now() - fallbackStart,
+          };
+          this._recordTraceStage(tracer, 'category_filter_fallback', fallbackStart, true, {
+            inferredCategory: autoCategory,
+            recovered: candidates.length,
+          });
+        }
+
         trace.vector = {
           count: candidates.length,
           latency: Date.now() - searchStart,
@@ -328,7 +366,8 @@ class RagService {
           queryVariant,
           topK: searchTopK,
           count: candidates.length,
-          category: options.category || null,
+          category: effectiveCategory || null,
+          autoCategory,
           backend: trace.vector.backend,
         });
       } else {
@@ -463,12 +502,7 @@ class RagService {
     return parents;
   }
   fuseRetrievalResults(vectorResults = [], keywordResults = [], limit = this.searchTopK, query = null) {
-    // 动态权重路由：传入 query 时按术语倾向调整 向量/关键词 权重；
-    // 不传 query 时使用实例默认权重（保持旧调用兼容）
-    const term = query ? this._terminality(query) : 0;
-    const vectorWeight = Math.max(0.1, Math.min(0.9, this.vectorWeight - 0.3 * term));
-    const keywordWeight = 1 - vectorWeight;
-
+    // RRF 融合：score = Σ 1/(k + rank)，只看通道内排名，免去跨通道权重校准
     const merged = new Map();
     const addResult = (item, channel, rank) => {
       const key = item.id || `${item.docId}:${item.chunkIndex}`;
@@ -497,15 +531,8 @@ class RagService {
     vectorResults.forEach((item, index) => addResult(item, 'vector', index + 1));
     keywordResults.forEach((item, index) => addResult(item, 'keyword', index + 1));
 
-    const maxRrf = [...merged.values()].reduce((max, item) => Math.max(max, item._rrfScore || 0), 0) || 1;
     return [...merged.values()]
-      .map(item => {
-        const rrfScore = (item._rrfScore || 0) / maxRrf;
-        const finalScore = vectorWeight * (item._vectorScore || 0)
-          + keywordWeight * (item._keywordScore || 0)
-          + 0.15 * rrfScore;
-        return { ...item, score: finalScore, _rrfScore: rrfScore };
-      })
+      .map(item => ({ ...item, score: item._rrfScore || 0 }))
       .sort((a, b) => b.score - a.score)
       .slice(0, limit);
   }
@@ -559,10 +586,12 @@ class RagService {
     let totalLength = 0;
     let docIndex = 0;
 
-    const sortedEntries = [...paraMap.entries()]
-      .sort((a, b) => (b[1].bestChunk.score || 0) - (a[1].bestChunk.score || 0));
+    // 父段归并后 MMR 去重：剔除与已选父段高度相似的冗余段落（保留多样性）
+    const parentMatches = this._mmrDedupe([...paraMap.values()]);
+    const sortedMatches = parentMatches
+      .sort((a, b) => (b.bestChunk.score || 0) - (a.bestChunk.score || 0));
 
-    for (const [, match] of sortedEntries) {
+    for (const match of sortedMatches) {
       const docId = match.docId;
       if (!docId) continue;
 
@@ -1071,6 +1100,14 @@ ${context}
     general:       { minScore: 0.30, rerankTopK: 6, needSource: false, clamp: [0.20, 0.50] },
   };
 
+  /** 文档类别关键词表：用于元数据过滤（Multi-faceted Filtering）的 query → category 自动推断 */
+  static DOC_CATEGORY_KEYWORDS = {
+    '学校概况': ['校训', '食堂', '宿舍', '社团', '校区', '图书馆', '报到', '开学', '学费', '奖学金', '校史', '地图', '一卡通', '军训', '转专业', '校车', '体育'],
+    '专业课程': ['离散数学', '软件工程', '课程', '复习', '教材', '知识点', '算法', '数据结构', '组成原理', '计算机网络', '操作系统', '数据库', '编译', '期末', '课件', '作业', '考试'],
+    '面试刷题': ['面试', '刷题', 'CodeTop', '大厂', 'offer', '笔试', '简历', '面经', '算法题', '八股', '手撕'],
+    'AI学习': ['Agent', 'RAG', '大模型', 'LLM', '智能体', '提示词', 'Prompt', '机器学习', '深度学习', 'Embedding', 'Rerank', '向量检索', 'AIGC'],
+  };
+
   /**
    * 根据问题文本分类
    * @param {string} query
@@ -1095,34 +1132,6 @@ ${context}
   }
 
   /**
-   * 术语倾向打分：返回 0（纯语义问题）~ 1（强术语问题）
-   * 用于动态检索权重路由：语义问题向量为主，术语问题关键词为主。
-   * 纯规则正则实现，不调 LLM、不额外耗时。
-   */
-  _terminality(query) {
-    const q = String(query || '');
-    let score = 0;
-    let signals = 0;
-
-    // 信号 1：引号/书名号包裹的专有内容（《离散数学》、"2024版培养方案"）
-    if (/[《》""'']/.test(q)) { score += 0.4; signals++; }
-    // 信号 2：大写英文词 / 字母数字组合（MPAcc, CET-4, BGE）
-    if (/[A-Z]{2,}/.test(q) || /[A-Za-z]+[-_]?\d+/.test(q)) { score += 0.3; signals++; }
-    // 信号 3：政策文号 / 条款编号（〔2023〕、第12条、号/款/章）
-    if (/〔.*?〕|\d+\s*条|第\s*\d+\s*[章条款款]|号文件/.test(q)) { score += 0.3; signals++; }
-    // 信号 4：精确术语词典命中（课程名、政策名）
-    if (/培养方案|学位|绩点|免修|保研|推免|重修|补考|选课|学分|奖学金|转专业/.test(q)) { score += 0.2; signals++; }
-    // 信号 5：数字密度（含数字 → 偏精确检索）
-    if (/\d/.test(q)) { score += 0.1; }
-
-    // 口语/语义信号为负向：出现口语词则降权
-    if (/咋|啥|么办|有没有|是不是|怎么|为什么|哪些|什么样/.test(q)) { score -= 0.15; }
-
-    // 无任何信号时不生硬加分，纯口语问题自然落到低术语分
-    return Math.max(0, Math.min(1, score));
-  }
-
-  /**
    * 获取问题类型对应的阈值配置
    * @param {string} query
    * @returns {{ minScore: number, rerankTopK: number, needSource: boolean, clamp: [number, number] }}
@@ -1131,6 +1140,38 @@ ${context}
     const type = this.classifyQuestion(query);
     const config = RagService.TYPE_CONFIG[type] || RagService.TYPE_CONFIG.general;
     return { type, ...config };
+  }
+
+  /**
+   * 自动推断问题所属文档类别（Multi-faceted Filtering）。
+   *
+   * 规则：命中 ≥ 2 个类别关键词（或问题中直接出现类别名）才返回类别；
+   * 低置信度返回 null（不设过滤，保持全库召回，避免误伤跨文档问题）。
+   * 纯正则/子串实现，零 LLM、零额外耗时。
+   *
+   * @param {string} query
+   * @returns {string|null} 推断出的文档类别，低置信返回 null
+   */
+  _inferDocCategory(query) {
+    if (!this.autoCategoryFilter) return null;
+    const q = String(query || '').trim();
+    if (!q) return null;
+
+    let bestCategory = null;
+    let bestHits = 0;
+    for (const [category, keywords] of Object.entries(RagService.DOC_CATEGORY_KEYWORDS)) {
+      let hits = 0;
+      for (const kw of keywords) {
+        if (q.includes(kw)) hits++;
+      }
+      if (hits > bestHits) {
+        bestHits = hits;
+        bestCategory = category;
+      }
+    }
+
+    // 至少命中 2 个关键词才认为足够置信（避免泛化问题被误过滤）
+    return bestHits >= 2 ? bestCategory : null;
   }
 
   // ──────────────────────────────────────────────
@@ -1343,6 +1384,93 @@ ${historyText}
     }
 
     return result;
+  }
+
+  /**
+   * 字符 bigram 集合：中文文本相似度的轻量特征（零模型调用）
+   */
+  _charBigrams(text) {
+    const s = String(text || '').replace(/\s+/g, '');
+    const set = new Set();
+    for (let i = 0; i < s.length - 1; i++) set.add(s.slice(i, i + 2));
+    return set;
+  }
+
+  /**
+   * 字符 bigram Jaccard 相似度（0~1）
+   */
+  _jaccardBigrams(setA, setB) {
+    if (!setA || !setB || setA.size === 0 || setB.size === 0) return 0;
+    let intersection = 0;
+    for (const gram of setA) if (setB.has(gram)) intersection++;
+    const union = setA.size + setB.size - intersection;
+    return union > 0 ? intersection / union : 0;
+  }
+
+  /**
+   * 父段归并后 MMR 去重：剔除与已选父段高度相似的冗余段落。
+   *
+   * 思路（对标 RAG_Techniques 的 reranking 多样性）：
+   *   1. 按相关性（rerank/检索分数）降序贪心选择第一个父段
+   *   2. 后续每次选择使 score = λ·relevance − (1−λ)·maxSim(selected) 最大的父段
+   *   3. 与已选父段相似度 ≥ mmrMaxSim 的段落直接视为冗余剔除
+   *
+   * 相似度用字符 bigram Jaccard 计算，无 embedding / 无模型调用，开销可忽略。
+   *
+   * @param {Array} parentCandidates 父段候选（需含 parentText 或 bestChunk.text、_rerankScore 或 bestChunk.score）
+   * @param {number} [maxCount] 去重后最多保留数量，默认全部候选
+   * @returns {Array} 去重后的父段候选
+   */
+  _mmrDedupe(parentCandidates, maxCount = 0) {
+    if (!this.mmrEnabled || !Array.isArray(parentCandidates) || parentCandidates.length <= 1) return parentCandidates || [];
+
+    const limit = Math.min(maxCount > 0 ? maxCount : parentCandidates.length, parentCandidates.length);
+    if (limit <= 1) return parentCandidates.slice(0, 1);
+
+    const textOf = (c) => c.parentText || c.bestChunk?.text || '';
+    const scoreOf = (c) => c._rerankScore ?? c.bestChunk?.score ?? c.score ?? 0;
+
+    const bigramSets = parentCandidates.map(c => this._charBigrams(textOf(c)));
+    const simCache = new Map();
+    const similarity = (i, j) => {
+      const key = i < j ? `${i}:${j}` : `${j}:${i}`;
+      if (!simCache.has(key)) simCache.set(key, this._jaccardBigrams(bigramSets[i], bigramSets[j]));
+      return simCache.get(key);
+    };
+
+    // 按相关性降序
+    const order = parentCandidates
+      .map((_, i) => i)
+      .sort((a, b) => scoreOf(parentCandidates[b]) - scoreOf(parentCandidates[a]));
+
+    const selected = [order[0]];
+    const remaining = order.slice(1);
+
+    while (selected.length < limit && remaining.length > 0) {
+      let bestIdx = -1;
+      let bestVal = -Infinity;
+      for (const i of remaining) {
+        let maxSim = 0;
+        for (const j of selected) {
+          // 相似度剔除仅限同 docId 内父段：跨文档内容高度相似时也保留，
+          // 避免把第二个相关文档整体剔掉（2026-08-09 回归修复，C01-C08 曾漏 doc_9a78）
+          if (parentCandidates[i].docId !== parentCandidates[j].docId) continue;
+          maxSim = Math.max(maxSim, similarity(i, j));
+        }
+        // 与已选父段过于相似 → 冗余，直接剔除
+        if (maxSim >= this.mmrMaxSim) continue;
+        const val = this.mmrLambda * scoreOf(parentCandidates[i]) - (1 - this.mmrLambda) * maxSim;
+        if (val > bestVal) {
+          bestVal = val;
+          bestIdx = i;
+        }
+      }
+      if (bestIdx < 0) break;
+      selected.push(bestIdx);
+      remaining.splice(remaining.indexOf(bestIdx), 1);
+    }
+
+    return selected.map(i => parentCandidates[i]);
   }
 
   _groupChunksByParent(chunks) {

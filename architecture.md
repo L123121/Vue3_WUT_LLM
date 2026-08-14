@@ -9,7 +9,7 @@ tags: [architecture, overview]
 
 ## 项目定位
 
-武汉理工大学校园 AI 助手。前后端分离，前端 Vue 3 SPA，后端 Express，向量库 Milvus，本地 ONNX 模型做 Embedding 和 Reranker，LLM 使用 StepFun 阶跃星辰。
+武汉理工大学校园 AI 助手。前后端分离，前端 Vue 3 SPA，后端 Express，向量库 Qdrant（默认，本地文件持久化可切换），本地 ONNX 模型做 Embedding 和 Reranker，LLM 使用 StepFun 阶跃星辰。
 
 ---
 
@@ -34,13 +34,13 @@ graph TB
     end
 
     subgraph 基础设施 [Infrastructure]
-        Milvus[(Milvus 向量库)]
+        Qdrant[(Qdrant 向量库)]
         SQLite[(SQLite 持久化)]
         StepFun[StepFun API]
     end
 
     前端 -->|HTTP / SSE| 后端
-    后端 --> Milvus
+    后端 --> Qdrant
     后端 --> SQLite
     后端 --> StepFun
 ```
@@ -214,7 +214,7 @@ sequenceDiagram
 |---|------|:----:|
 | 运行时 | Node.js | 20+ |
 | 框架 | Express | 4.18 |
-| 向量库 | Milvus Standalone | 2.4.17 |
+| 向量库 | Qdrant 独立服务（默认） | 1.19+（文件持久化可切换） |
 | Embedding | BGE-small-zh (ONNX) | 本地 |
 | Reranker | BGE-reranker-base (ONNX) | 本地 |
 | 主模型 | StepFun step-3.7-flash | API |
@@ -251,7 +251,8 @@ backend/
     │   ├── judge.service.js     # LLM-as-judge **（独立 Key）**
     │   ├── rag.service.js       # RAG 检索管道
     │   ├── embedding.service.js # BGE-small-zh ONNX
-    │   ├── vector-store.service.js  # Milvus 操作
+    │   ├── vector-store-qdrant.service.js  # Qdrant 独立服务（默认）
+    │   ├── vector-store.service.js  # 本地文件持久化（可切换）
     │   ├── reranker.service.js  # BGE-reranker-base
     │   ├── indexing.service.js  # 文档切片索引
     │   ├── document.service.js  # 文档 CRUD
@@ -286,8 +287,8 @@ JUDGE_API_KEY=key_b
 JUDGE_MODEL=step-3.5-flash
 
 # 向量库
-MILVUS_ADDRESS=localhost:19530
-MILVUS_COLLECTION=wuli_elf_chunks
+QDRANT_URL=http://localhost:6333
+QDRANT_COLLECTION=wuli_elf_chunks
 
 # RAG 参数
 RAG_VECTOR_TOP_K=50
@@ -303,7 +304,7 @@ RAG_MAX_CONTEXT_LENGTH=6000
 graph LR
     A[用户提问] --> B[BGE-small-zh ONNX]
     B --> C{混合检索}
-    C -->|稠密 512d COSINE ×0.6| D[Milvus]
+    C -->|稠密 512d COSINE ×0.6| D[Qdrant]
     C -->|稀疏 n-gram IP ×0.4| D
     D --> E[50 句子]
     E --> F[按 parentId 归并]
@@ -334,9 +335,10 @@ graph LR
 | 服务 | 文件 | 职责 |
 |------|------|------|
 | `embedding.service.js` | BGE-small-zh ONNX + n-gram 稀疏 | 512d 稠密 + 整数 key 哈希 |
-| `vector-store.service.js` | Milvus hybrid search | 稠密×0.6 + 稀疏×0.4 |
+| `vector-store-qdrant.service.js` | Qdrant 独立服务（默认） | dense+sparse 双查询，客户端加权融合（0.6/0.4 或 RRF 可配） |
+| `vector-store.service.js` | 本地文件持久化（可切换） | 精确检索，VECTOR_STORE_BACKEND=file 时启用 |
 | `reranker.service.js` | BGE-reranker-base cross-encoder | INT8 ONNX，~145ms/15 候选 |
-| `rag.service.js` | 检索管道 | 混合检索→归并→rerank→截断→排序→组装 |
+| `rag.service.js` | 检索管道 | 混合检索→归并→MMR 去重→rerank→截断→排序→组装 |
 | `indexing.service.js` | 文档切片 | 中文章节合并→段落→句子 |
 
 ---
@@ -396,7 +398,7 @@ graph TB
     subgraph 生产环境
         Nginx -->|反向代理| Backend[Express :3000]
         Backend --> Static[托管 dist/ 静态文件]
-        Backend --> Milvus[Milvus :19530]
+        Backend --> Qdrant[Qdrant :6333]
         Backend --> SQLite[SQLite 持久化]
         Backend --> StepFun[StepFun API]
     end
@@ -421,7 +423,7 @@ graph TB
 | `LLM_CONCURRENCY` | 生产并发数 | 3 |
 | `JUDGE_API_KEY` | 评测模型 Key（独立） | 同 AI_API_KEY |
 | `JUDGE_MODEL` | 评测模型 | step-3.5-flash |
-| `MILVUS_ADDRESS` | 向量库地址 | localhost:19530 |
+| `QDRANT_URL` | 向量库地址 | localhost:6333 |
 | `RAG_VECTOR_TOP_K` | 检索候选数 | 50 |
 | `RAG_RERANK_TOP_K` | 重排截断上限 | 10 |
 | `JWT_SECRET` | JWT 密钥 | - |
@@ -438,6 +440,31 @@ graph TB
 | API 并发 | 请求队列 LLM_CONCURRENCY=3 | 防止触发 429 限流 |
 | 评测隔离 | 独立 API Key + step-3.5-flash | 不跟生产抢配额 |
 | 父子段落 | 句子索引 + 段落上下文 | 减少 token 消耗，保留完整语义 |
-| 混合检索 | 稠密×0.6 + 稀疏×0.4 | 兼顾语义相似度和关键词精确匹配 |
+| 混合检索 | 默认稠密×0.6 + 稀疏×0.4（`RAG_FUSION=weighted`） | 兼顾语义相似度和关键词精确匹配；RRF 备选（`RAG_FUSION=rrf` + `RAG_RRF_K=10`）实测与加权打平 |
 | 认证 | httpOnly cookie | 不暴露 JWT 给前端 JS |
 | 存储 | 无 Redis 降级 MemoryStore | 降低部署依赖 |
+
+---
+
+## 九、调优记录（2026-08-09）
+
+### 9.1 前端：收藏标题实时同步
+
+- 问题：收藏时把 `conversationTitle` 快照进 localStorage，会话改名后收藏列表不更新
+- 修复：`favorites.store.js` 的 `sortedFavorites` 改为实时关联会话 store 标题（会话 store 是标题唯一事实来源），快照仅作兜底
+- 覆盖改名、后端同步覆盖 title 等所有路径；新增 `favoritesStore.test.js`
+
+### 9.2 混合检索融合：加权 → RRF → 回退加权
+
+- 背景：稠密/稀疏 cosine 量纲不可比，0.6/0.4 需校准；曾加 `_terminality` 动态调权补丁
+- 尝试：`vector-store.service.js` 支持 RRF（Σ 1/(k+rank)），删除动态调权；官方评测（32 题）RRF(k=60) Recall 74.5% < 加权 80.7%
+- k 值复测（`offline-rrf-ab.cjs`）：RRF 差主要是 **k=60 偏大**（排名差异被压扁，CT05 掉出 top5）；k=10 的 RRF 与加权打平（官方 Recall 均 97.4%，MRR/nDCG 微弱领先属噪声级）
+- 结论：默认回退 weighted（零超参、更简单）；RRF 保留 `RAG_FUSION=rrf` + `RAG_RRF_K=10` 备选
+- ⚠️ 排坑：RRF 排名必须按**句子唯一 id** 计 rank，按 docId 会让同 doc 句子互相覆盖，RRF 被严重低估
+
+### 9.3 MMR 跨文档剔除回归修复
+
+- 问题：父段 MMR 去重（bigram Jaccard ≥0.85 即剔除）把**第二个相关文档整体剔掉**——doc_9a78 与 doc_4dcd 内容几乎相同（相似度 1.0），C01-C08 全部只命中 1 个相关 doc，官方 Recall 从 99% 掉到 80.7%
+- 修复：`_mmrDedupe` 相似度剔除仅限**同 docId 内**父段，跨文档高度相似不再剔除
+- 效果：官方 Recall 80.7% → **97.4%**，学校概况类 48.5% → 97.0%，C01-C08 全部 100% 命中
+- 测试：`rag.mmr-category.test.js` 新增「跨文档高度相似不剔除」用例，后端全量 131 用例通过

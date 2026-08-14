@@ -1,6 +1,6 @@
 <script setup>
 import { ref, watch, nextTick, computed } from 'vue';
-import { Send, Sparkles, Wifi, WifiOff, Command, Search, Trash2, Download, Paperclip, X, FileText } from 'lucide-vue-next';
+import { Send, Sparkles, Wifi, WifiOff, Command, Trash2, Download, Paperclip, X, FileText } from 'lucide-vue-next';
 import { useLanguageStore } from '../../stores/language.store.js';
 import { useChatStore } from '../../stores/chat.store.js';
 import { useToastStore } from '../../stores/toast.store.js';
@@ -14,10 +14,9 @@ const props = defineProps({
   isConnected: { type: Boolean, default: true },
   isReconnecting: { type: Boolean, default: false },
   reconnectAttempt: { type: Number, default: 0 },
-  activeMode: { type: String, default: 'chat' },
 });
 
-const emit = defineEmits(['send', 'error', 'command', 'mode-change']);
+const emit = defineEmits(['send', 'error', 'command']);
 const languageStore = useLanguageStore();
 const chatStore = useChatStore();
 const toast = useToastStore();
@@ -78,8 +77,6 @@ const filteredCommands = computed(() => {
   const query = input.value.toLowerCase();
   return commands.value.filter(cmd => cmd.key.startsWith(query));
 });
-
-const isRagMode = computed(() => props.activeMode === 'rag');
 
 // 监听输入，显示命令菜单
 watch(input, (val) => {
@@ -268,39 +265,6 @@ defineExpose({
           </div>
         </div>
       </Transition>
-
-      <!-- RAG 模式切换按钮 -->
-      <div class="relative flex items-center border-r border-slate-200 dark:border-gray-700 pr-3 mr-2 shrink-0">
-        <span
-          v-if="isRagMode"
-          class="absolute left-0 right-3 h-9 rounded-full bg-blue-500/20 blur-md dark:bg-cyan-400/15"
-        ></span>
-        <button
-          type="button"
-          :aria-pressed="isRagMode"
-          :title="isRagMode ? '已开启 RAG 知识库检索' : '开启 RAG 知识库检索'"
-          @click="emit('mode-change', isRagMode ? 'chat' : 'rag')"
-          :class="[
-            'relative inline-flex min-w-[112px] items-center justify-center gap-1.5 rounded-full border px-3.5 py-2 text-xs font-bold tracking-[0.16em] transition-colors duration-300 active:scale-95',
-            isRagMode
-              ? 'border-blue-300 bg-gradient-to-r from-blue-600 via-sky-500 to-cyan-400 text-white shadow-lg shadow-blue-500/30 dark:border-cyan-400/50 dark:shadow-cyan-900/40'
-              : 'border-slate-200 bg-slate-50/90 text-slate-500 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-600 dark:border-gray-700 dark:bg-gray-800/80 dark:text-gray-400 dark:hover:border-blue-800 dark:hover:bg-blue-900/20 dark:hover:text-blue-300'
-          ]"
-        >
-          <Search :size="14" :class="isRagMode ? 'text-white' : 'text-slate-400 dark:text-gray-500'" />
-          <span>RAG</span>
-          <span
-            :class="[
-              'ml-0.5 inline-flex w-8 justify-center rounded-full px-1.5 py-0.5 text-[9px] font-black tracking-normal transition-colors',
-              isRagMode
-                ? 'bg-white/95 text-blue-600'
-                : 'bg-slate-200/80 text-slate-500 dark:bg-gray-700 dark:text-gray-300'
-            ]"
-          >
-            {{ isRagMode ? 'ON' : 'OFF' }}
-          </span>
-        </button>
-      </div>
 
       <!-- 语音识别 interim 预览 + 错误提示 -->
       <Transition name="slide-down">

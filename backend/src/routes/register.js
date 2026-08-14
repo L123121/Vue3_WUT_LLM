@@ -77,12 +77,12 @@ function applyRoutes(app, chatLimiter) {
       const isImage = file.mimetype.startsWith('image/');
       let textContent = null;
 
-      if (!isImage) {
-        try {
-          textContent = await parseFile(file.path, originalName);
-        } catch (e) {
-          console.warn('[ChatUpload] 文件解析失败:', e.message);
-        }
+      // 文档与图片都尝试解析：图片走视觉模型识别（表格截图→Markdown），
+      // 识别失败（OCR 未启用/网络异常）降级为 null，不阻塞上传
+      try {
+        textContent = await parseFile(file.path, originalName);
+      } catch (e) {
+        console.warn('[ChatUpload] 文件解析失败:', e.message);
       }
 
       if (textContent && Buffer.isBuffer(textContent)) {

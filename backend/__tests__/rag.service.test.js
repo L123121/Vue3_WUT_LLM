@@ -13,17 +13,20 @@ describe('RagService', () => {
   it('融合向量召回和关键词召回，并保留召回通道信息', () => {
     const RagService = getRagService();
     const rag = new RagService({ getCompletion: vi.fn() });
-    rag.vectorWeight = 0.6;
-    rag.keywordWeight = 0.4;
 
+    // doc-b 双通道命中（vector rank2 + keyword rank1），doc-a 仅 vector rank1
     const fused = rag.fuseRetrievalResults(
-      [{ id: 'doc-a_chunk_0', docId: 'doc-a', title: 'A', text: '语义相关', score: 0.6, chunkIndex: 0 }],
+      [
+        { id: 'doc-a_chunk_0', docId: 'doc-a', title: 'A', text: '语义相关', score: 0.6, chunkIndex: 0 },
+        { id: 'doc-b_chunk_0', docId: 'doc-b', title: '学生证补办', text: '学生证补办流程', score: 0.9, chunkIndex: 0 },
+      ],
       [{ id: 'doc-b_chunk_0', docId: 'doc-b', title: '学生证补办', text: '学生证补办流程', score: 1, _keywordScore: 1, chunkIndex: 0 }],
       5
     );
 
+    // RRF：doc-b = 1/61(keyword) + 1/62(vector) > doc-a = 1/61(vector)
     expect(fused[0].docId).toBe('doc-b');
-    expect(fused[0]._retrievalChannels).toContain('keyword');
+    expect(fused[0]._retrievalChannels).toEqual(['vector', 'keyword']);
     expect(fused.map(item => item.docId)).toEqual(['doc-b', 'doc-a']);
   });
 

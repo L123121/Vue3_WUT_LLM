@@ -18,6 +18,32 @@ const errorMessage = ref('');
 let recognition = null;
 let processedIndex = 0; // 防重叠游标
 
+// ==================== 识别成功率统计（简历/性能数据用） ====================
+// 口径：一次会话（start→end）产生 final 转写 → 成功；onerror（aborted 除外）→ 失败
+const VOICE_STATS_KEY = 'voice_recognition_stats';
+let voiceStats = { success: 0, fail: 0 };
+let sessionFinal = false;   // 本次会话是否产出了 final 转写
+let sessionFailed = false;  // 本次会话是否已记失败（避免 onend 重复计数）
+try {
+  const saved = JSON.parse(localStorage.getItem(VOICE_STATS_KEY) || '{}');
+  voiceStats.success = saved.success || 0;
+  voiceStats.fail = saved.fail || 0;
+} catch (_) { /* localStorage 不可用时忽略 */ }
+
+const persistVoiceStats = () => {
+  try {
+    localStorage.setItem(VOICE_STATS_KEY, JSON.stringify(voiceStats));
+  } catch (_) {}
+};
+
+const logVoiceStats = () => {
+  const total = voiceStats.success + voiceStats.fail;
+  if (total === 0) return;
+  const rate = ((voiceStats.success / total) * 100).toFixed(1);
+  console.log(`[VoiceStats] 识别成功率: ${rate}% (success=${voiceStats.success}, fail=${voiceStats.fail})`);
+  persistVoiceStats();
+};
+
 // ==================== 音频可视化 ====================
 let audioCtx = null;
 let analyser = null;
@@ -131,6 +157,9 @@ const initRecognition = () => {
     errorMessage.value = '';
     state.value = 'listening';
     recognizing.value = true;
+    // 新会话重置统计标志
+    sessionFinal = false;
+    sessionFailed = false;
     emit('state-change', 'listening');
     // nextTick 保证 v-if="state === 'listening'" 的 canvas 已渲染到 DOM
     nextTick().then(() => setupAudioVisualization());
@@ -144,6 +173,8 @@ const initRecognition = () => {
       const transcript = event.results[i][0].transcript;
       if (event.results[i].isFinal) {
         final += transcript;
+        // 产生 final 转写即记为成功会话
+        if (transcript.trim()) sessionFinal = true;
       } else if (i >= event.resultIndex) {
         interim += transcript;
       }
@@ -169,6 +200,11 @@ const initRecognition = () => {
     recognizing.value = false;
     stopAudioVisualization();
     const code = event.error;
+    // 统计失败：aborted（用户主动取消）不计入失败
+    if (code !== 'aborted' && !sessionFailed) {
+      sessionFailed = true;
+      voiceStats.fail += 1;
+    }
     if (code === 'not-allowed' || code === 'service-not-allowed') {
       errorMessage.value = '未授予麦克风权限';
     } else if (code === 'no-speech') {
@@ -190,6 +226,13 @@ const initRecognition = () => {
   recognition.onend = () => {
     recognizing.value = false;
     stopAudioVisualization();
+    // 统计成功：会话结束且产出过 final 转写且未记失败 → 成功
+    if (sessionFinal && !sessionFailed) {
+      voiceStats.success += 1;
+      logVoiceStats();
+    } else if (sessionFailed) {
+      logVoiceStats();
+    }
     if (state.value !== 'error') {
       state.value = 'idle';
       emit('state-change', 'idle');

@@ -45,6 +45,20 @@ module.exports = {
     apiKey: process.env.XUNFEI_API_KEY || '',
     appId: process.env.XUNFEI_APP_ID || '',
   },
+  // OCR / 视觉识别配置（扫描件 PDF 与图片表格识别，走 StepFun step-1o-turbo-vision）
+  ocr: {
+    enabled: process.env.OCR_ENABLED !== 'false',
+    model: process.env.OCR_MODEL || 'step-1o-turbo-vision',
+    // detail=low ~169 token/图（默认）；表格等细节场景可切 high（按图大小计费）
+    detail: process.env.OCR_DETAIL || 'low',
+    maxPages: parseInt(process.env.OCR_MAX_PAGES, 10) || 30,
+    // 页级识别并发上限（成本与限流闸门）
+    concurrency: parseInt(process.env.OCR_CONCURRENCY, 10) || 2,
+    // pdf-parse 提取文本低于该阈值视为扫描件，触发 OCR 兜底
+    pdfMinChars: parseInt(process.env.OCR_PDF_MIN_CHARS, 10) || 30,
+    // 文本型 PDF 表格页检测 + 按页 OCR 重建 Markdown 表格（复用视觉模型，零新依赖）
+    tableOcrEnabled: process.env.OCR_TABLE_ENABLED !== 'false',
+  },
   // Embedding 配置（本地 BGE-small-zh dense + n-gram sparse）
   embedding: {
     model: process.env.EMBEDDING_MODEL || 'Xenova/bge-small-zh-v1.5',
@@ -57,16 +71,25 @@ module.exports = {
     secret: process.env.JWT_SECRET,
     expiresIn: '7d',
   },
-  // 向量数据库（Milvus / Milvus Lite，dense + sparse 混合检索）
+  // 向量数据库（Qdrant 独立服务 / Milvus 兼容字段保留，实际由 vector-store 按 backend 分发）
   vectorStore: {
-    backend: process.env.VECTOR_STORE_BACKEND || 'milvus',
+    backend: process.env.VECTOR_STORE_BACKEND || 'qdrant',
+    // Qdrant（VECTOR_STORE_BACKEND=qdrant 时启用）
+    qdrantUrl: process.env.QDRANT_URL || 'http://localhost:6333',
+    qdrantApiKey: process.env.QDRANT_API_KEY || '',
+    collectionName: process.env.QDRANT_COLLECTION || process.env.MILVUS_COLLECTION || 'wuli_elf_chunks',
+    // Milvus 兼容字段（遗留，未启用时忽略）
     milvusAddress: process.env.MILVUS_ADDRESS || process.env.MILVUS_URI || 'localhost:19530',
     milvusToken: process.env.MILVUS_TOKEN || '',
-    collectionName: process.env.MILVUS_COLLECTION || process.env.CHROMA_COLLECTION || 'wuli_elf_chunks',
     denseField: process.env.MILVUS_DENSE_FIELD || 'dense_vector',
     sparseField: process.env.MILVUS_SPARSE_FIELD || 'sparse_vector',
     vectorWeight: Number.parseFloat(process.env.MILVUS_DENSE_WEIGHT || process.env.RAG_VECTOR_WEIGHT || '0.6'),
     sparseWeight: Number.parseFloat(process.env.MILVUS_SPARSE_WEIGHT || process.env.RAG_SPARSE_WEIGHT || '0.4'),
+    // RRF 融合常数（文件后端默认融合方式，RAG_RRF_K 全局共享）
+    rrfK: parseInt(process.env.RAG_RRF_K, 10) || 60,
+    // 混合检索融合方式：weighted（默认，0.6/0.4 加权打分，官方评测优于 RRF）
+    // | rrf（倒数排名融合，RAG_FUSION=rrf 可切换，2026-08-09 实测 Recall 74.5% vs 加权 80.7%）
+    fusion: process.env.RAG_FUSION || 'weighted',
   },
   // RAG 检索链路配置
   rag: {
@@ -79,6 +102,24 @@ module.exports = {
     vectorWeight: Number.parseFloat(process.env.RAG_VECTOR_WEIGHT || '0.6'),
     keywordWeight: Number.parseFloat(process.env.RAG_KEYWORD_WEIGHT || '0.4'),
     rrfK: parseInt(process.env.RAG_RRF_K, 10) || 60,
+    // 父段归并后 MMR 去重：剔除与已选父段高度相似的冗余段落
+    mmrEnabled: process.env.RAG_MMR_ENABLED !== 'false',
+    mmrLambda: Number.parseFloat(process.env.RAG_MMR_LAMBDA || '0.7'),
+    mmrMaxSim: Number.parseFloat(process.env.RAG_MMR_MAX_SIM || '0.85'),
+    // 元数据过滤（Multi-faceted Filtering）：按问题关键词自动推断文档类别过滤候选
+    autoCategoryFilter: process.env.RAG_AUTO_CATEGORY_FILTER !== 'false',
+    // 意图识别自动路由（V2.0）：前端不再手动开关 RAG，后端自动路由
+    // rag=知识库检索 / chat=纯对话 / agent=工具调度（INTENT_ROUTING_ENABLED=false 可整体关闭，退回原链路）
+    intentRoutingEnabled: process.env.INTENT_ROUTING_ENABLED !== 'false',
+    // LLM 意图分类兜底（默认关：避免每条消息多一次 LLM 调用拖慢首包延迟；fastRoute 零成本路由常开）
+    intentClassifyEnabled: process.env.INTENT_CLASSIFY_ENABLED === 'true',
+  },
+  // 轻量 Agent 工具调度（V2.0）：单轮工具调度，默认关（灰度，不影响现有评测基线）
+  agent: {
+    toolEnabled: process.env.AGENT_TOOL_ENABLED === 'true',
+    // 工具决策/执行超时（毫秒）
+    decideTimeoutMs: parseInt(process.env.AGENT_DECIDE_TIMEOUT_MS, 10) || 15000,
+    toolTimeoutMs: parseInt(process.env.AGENT_TOOL_TIMEOUT_MS, 10) || 15000,
   },
   // 自有账号系统配置
   auth: {

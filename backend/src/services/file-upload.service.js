@@ -7,6 +7,10 @@ const mammoth = require('mammoth');
 const JSZip = require('jszip');
 const TurndownService = require('turndown');
 const { gfm } = require('turndown-plugin-gfm');
+const config = require('../config');
+// OCR 服务懒加载（mupdf 为 ESM 动态导入，require 本身无副作用）
+const { OcrService } = require('./ocr.service');
+const ocrService = new OcrService();
 
 // 延迟加载 pdf-parse（可能在新版本中有兼容性问题）
 let pdfParse = null;
@@ -183,21 +187,194 @@ async function parseFile(filePath, originalName) {
     case '.md':
       return parseText(filePath);
 
+    case '.jpg':
+    case '.jpeg':
+    case '.png':
+    case '.gif':
+    case '.webp':
+      return parseImage(filePath, ext);
+
     default:
       throw new Error(`不支持的文件类型: ${ext}`);
   }
 }
 
+// ==================== 表格页检测（文本层启发式，零成本） ====================
+
+// 表头常见关键词（辅助判断：多字段行 + 表头词 → 强信号）
+const TABLE_HEADER_KEYWORDS = [
+  '序号', '名称', '数量', '金额', '价格', '单价', '日期', '姓名', '学号',
+  '电话', '部门', '项目', '备注', '合计', '成绩', '编号', '型号', '规格',
+];
+
+/**
+ * 文本型 PDF 表格页检测（纯启发式，零 API 成本）
+ *
+ * 背景：pdf-parse 对表格只输出纯文本流，行列结构丢失。这里在文本层上做廉价
+ * 检测，命中页交给视觉模型按页 OCR 重建 Markdown 表格（复用 ocr.service.js）。
+ *
+ * @param {string} text pdf-parse 提取的全文（页间以 \f 分页符分隔）
+ * @returns {number[]} 疑似表格页的 0-based 页索引数组
+ */
+function detectTablePages(text) {
+  const pages = String(text || '').split('\f');
+  // 无分页符（无法定位页）或单页：不做按页 OCR，避免整本误伤
+  if (pages.length <= 1) return [];
+  const hits = [];
+  pages.forEach((pageText, i) => {
+    if (isTableLikePage(pageText)) hits.push(i);
+  });
+  return hits;
+}
+
+/**
+ * 单页表格特征判断（任一强信号命中即判为表格页）
+ * 信号：① | 竖线密度 ② ASCII 表格分隔符 ③ 列对齐（多字段行）④ 表头关键词
+ */
+function isTableLikePage(pageText) {
+  const lines = String(pageText || '')
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (lines.length < 3) return false;
+
+  let pipeLines = 0; // 含 | 的行数
+  let separatorLines = 0; // ASCII 表格分隔符行（---- / +---+ / ====）
+  let headerHintLines = 0; // 含表头关键词且字段数 ≥2 的行数
+  const fieldCountMap = new Map(); // 字段数 → 出现次数（列对齐信号）
+
+  for (const line of lines) {
+    if (line.includes('|')) pipeLines++;
+    // ASCII 表格分隔符：去空格后全是 + - = | 且长度 ≥ 4
+    const compact = line.replace(/ /g, '');
+    if (/^[+\-=|]+$/.test(compact) && compact.length >= 4) separatorLines++;
+
+    // 按 2+ 连续空格切分字段（列对齐场景，如 "姓名    学号    电话"）
+    const fields = line.split(/\s{2,}/).filter(Boolean);
+    if (fields.length >= 2) {
+      fieldCountMap.set(fields.length, (fieldCountMap.get(fields.length) || 0) + 1);
+      if (TABLE_HEADER_KEYWORDS.some((kw) => line.includes(kw))) headerHintLines++;
+    }
+  }
+
+  const totalMultiField = [...fieldCountMap.values()].reduce((a, b) => a + b, 0);
+
+  // 信号①：Markdown/CSV 竖线表格
+  if (pipeLines >= 3) return true;
+  // 信号②：ASCII 表格（分隔符行 ≥2 且存在多字段行）
+  if (separatorLines >= 2 && totalMultiField >= 3) return true;
+  // 信号③：列对齐（同一字段数出现 ≥4 次且多字段总行数 ≥5）
+  if ([...fieldCountMap.values()].some((n) => n >= 4) && totalMultiField >= 5) return true;
+  // 信号④：表头关键词 + 多字段行 ≥2 行
+  if (headerHintLines >= 2 && totalMultiField >= 4) return true;
+  return false;
+}
+
+/**
+ * 将视觉模型 OCR 结果按页替换回 pdf-parse 原文（页间以 \f 分隔）
+ * @param {string} text pdf-parse 原文
+ * @param {Array<{pageIndex:number, text:string}>} ocrResults 按页 OCR 结果
+ * @returns {string} 替换后的全文
+ */
+function replaceTablePages(text, ocrResults) {
+  const pages = String(text || '').split('\f');
+  for (const { pageIndex, text: pageText } of ocrResults) {
+    if (pageIndex >= 0 && pageIndex < pages.length && pageText && pageText.trim().length > 0) {
+      // 整页替换：视觉模型输出包含整页 Markdown（含重建后的表格结构）
+      pages[pageIndex] = pageText.trim();
+    }
+  }
+  return pages.join('\f');
+}
+
 /**
  * 解析 PDF 文件
+ * 优先 pdf-parse 提取文本层；提取文本过短（如扫描件无文本层）时，
+ * 自动降级到视觉模型 OCR（mupdf 渲染逐页识别）。
  */
 async function parsePDF(filePath) {
-  if (!pdfParse) {
-    throw new Error('PDF 解析功能不可用，请检查 pdf-parse 安装');
+  const minChars = config.ocr.pdfMinChars;
+  let text = '';
+
+  // 第一步：pdf-parse 文本层提取（免费、快）
+  if (pdfParse) {
+    try {
+      const dataBuffer = await fs.promises.readFile(filePath);
+      const data = await pdfParse(dataBuffer);
+      text = data.text || '';
+    } catch (err) {
+      console.warn(`[FileUpload] pdf-parse 提取失败: ${err.message}`);
+    }
   }
-  const dataBuffer = await fs.promises.readFile(filePath);
-  const data = await pdfParse(dataBuffer);
-  return data.text;
+
+  // 第二步：文本过短 → 判定为扫描件 → OCR 兜底
+  if (text.trim().length < minChars) {
+    if (!ocrService.enabled) {
+      if (pdfParse) return text;
+      throw new Error('PDF 解析功能不可用，请检查 pdf-parse 安装');
+    }
+    console.log(`[FileUpload] PDF 文本层过短(${text.trim().length}字)，判定为扫描件，转 OCR 识别`);
+    try {
+      const ocrText = await ocrService.ocrPdf(filePath);
+      if (ocrText && ocrText.trim().length > 0) {
+        // 前置说明，标注识别来源，便于排查
+        return `> 📄 该 PDF 为扫描件，已通过视觉模型 OCR 识别\n\n${ocrText}`;
+      }
+    } catch (err) {
+      console.warn(`[FileUpload] 扫描件 OCR 失败: ${err.message}`);
+    }
+    return text;
+  }
+
+  // 第三步：文本型 PDF 表格页重建（2026-08-13）
+  // pdf-parse 对表格只输出纯文本流（行列结构丢失），此处检测疑似表格页，
+  // 按页渲染走视觉模型重建 Markdown 表格（复用扫描件 OCR 基建，成本仅命中页）。
+  // 关闭（OCR_TABLE_ENABLED=false）或检测失败时回退原文，不阻塞入库。
+  if (config.ocr.tableOcrEnabled && ocrService.enabled) {
+    try {
+      const tablePages = detectTablePages(text);
+      if (tablePages.length > 0) {
+        console.log(
+          `[FileUpload] 检测到 ${tablePages.length} 个疑似表格页（第 ${tablePages
+            .map((p) => p + 1)
+            .join(',')} 页），按页 OCR 重建表格结构`,
+        );
+        const ocrResults = await ocrService.ocrPdf(filePath, {
+          pages: tablePages,
+          returnMap: true,
+        });
+        if (ocrResults.length > 0) {
+          text = replaceTablePages(text, ocrResults);
+        }
+      }
+    } catch (err) {
+      console.warn(`[FileUpload] 表格页 OCR 失败，回退原文: ${err.message}`);
+    }
+  }
+
+  return text;
+}
+
+/**
+ * 解析图片文件（表格截图等）→ 视觉模型识别为 Markdown
+ */
+async function parseImage(filePath, ext) {
+  const mimeTypes = {
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+  };
+  if (!ocrService.enabled) {
+    throw new Error('图片识别未启用（OCR_ENABLED=false）');
+  }
+  const buffer = await fs.promises.readFile(filePath);
+  const text = await ocrService.recognizeImage(buffer, mimeTypes[ext] || 'image/png');
+  if (!text || text.trim().length === 0) {
+    throw new Error('图片识别结果为空');
+  }
+  return text;
 }
 
 /**
@@ -357,6 +534,9 @@ module.exports = {
   chatUpload,
   parseFile,
   cleanupFile,
+  detectTablePages,
+  isTableLikePage,
+  replaceTablePages,
   uploadDir,
   mediaDir,
 };
