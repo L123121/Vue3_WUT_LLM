@@ -69,6 +69,18 @@ const intentLabel = computed(() => {
   return map[route] || '';
 });
 const showIntentBadge = computed(() => isModel.value && !isError.value && !!intentLabel.value);
+
+// L2 工具调度可视化：message.toolCalls/toolResults（useStreaming onToolCall/onToolResult 写入）
+const toolCalls = computed(() => props.message.toolCalls || []);
+const toolResults = computed(() => props.message.toolResults || []);
+const showToolPanel = computed(() => toolCalls.value.length > 0);
+const toolPanelOpen = ref(false);
+const toolResultText = (name) => {
+  const r = toolResults.value.find((tr) => tr.name === name);
+  if (!r) return '执行中...';
+  const text = String(r.content || '').replace(/\s+/g, ' ').trim();
+  return text.length > 120 ? `${text.slice(0, 120)}…` : text;
+};
 const questionText = computed(() => props.questionMessage?.content ?? props.questionMessage?.text ?? '');
 
 // 行内引用弹窗
@@ -263,6 +275,30 @@ const timeClasses = computed(() => {
         <div v-if="showIntentBadge" class="mt-2 inline-flex items-center gap-1 rounded-full bg-blue-50/80 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800/40 px-2 py-0.5">
           <span class="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
           <span class="text-[10px] font-medium text-blue-600 dark:text-blue-300">{{ intentLabel }}</span>
+        </div>
+
+        <!-- L2 工具调度卡片：展示 tool_call / tool_result（Agent 路径透明化） -->
+        <div v-if="isModel && !isError && showToolPanel" class="mt-2 rounded-xl border border-indigo-100 dark:border-indigo-900/50 bg-indigo-50/50 dark:bg-indigo-950/20 overflow-hidden">
+          <button
+            type="button"
+            class="w-full flex items-center gap-2 px-3 py-2 text-left text-xs font-medium text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100/50 dark:hover:bg-indigo-900/20 transition-colors"
+            @click="toolPanelOpen = !toolPanelOpen"
+          >
+            <span class="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse"></span>
+            <span>工具调用 {{ toolCalls.length }} 次</span>
+            <span class="ml-auto text-indigo-400 dark:text-indigo-500 transition-transform" :class="toolPanelOpen ? 'rotate-180' : ''">▾</span>
+          </button>
+          <div v-if="toolPanelOpen" class="px-3 pb-3 space-y-2">
+            <div v-for="(tc, i) in toolCalls" :key="i" class="rounded-lg bg-white/70 dark:bg-gray-900/40 border border-indigo-100/70 dark:border-indigo-900/40 px-2.5 py-2">
+              <div class="flex items-center gap-2 text-[11px]">
+                <span class="font-mono font-semibold text-indigo-700 dark:text-indigo-300">{{ tc.name }}</span>
+                <span class="ml-auto text-slate-400 dark:text-gray-500">
+                  {{ tc.arguments && Object.keys(tc.arguments).length ? JSON.stringify(tc.arguments).slice(0, 60) : '无参数' }}
+                </span>
+              </div>
+              <div class="mt-1 text-[11px] text-slate-600 dark:text-gray-400 leading-relaxed break-all">{{ toolResultText(tc.name) }}</div>
+            </div>
+          </div>
         </div>
 
         <!-- 检索过程可视化（RAG 回答） -->

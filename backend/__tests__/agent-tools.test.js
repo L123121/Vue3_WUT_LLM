@@ -18,6 +18,7 @@ vi.mock('../src/config', () => ({
     toolEnabled: true,
     decideTimeoutMs: 15000,
     toolTimeoutMs: 15000,
+    maxToolRounds: 2,
   },
 }));
 
@@ -163,56 +164,58 @@ describe('agent-tools（内置工具）', () => {
   });
 });
 
-describe('AgentService（单轮工具调度）', () => {
-  it('decide：LLM 返回合法 JSON 时解析工具与参数', async () => {
+describe('AgentService（单轮工具调度，原生 function calling）', () => {
+  it('decide：LLM 返回原生 toolCalls 时解析', async () => {
     const fakeAi = {
       getCompletion: async () => ({
-        content: '{"tool": "search_knowledge_base", "args": {"query": "食堂"}, "reason": "知识问题"}',
+        content: '',
+        toolCalls: [{ id: 'call_1', type: 'function', function: { name: 'search_knowledge_base', arguments: '{"query":"食堂"}' } }],
         isMock: false,
       }),
     };
     const svc = new agentMod.AgentService(fakeAi);
     const d = await svc.decide('食堂几点关门');
-    expect(d.tool).toBe('search_knowledge_base');
-    expect(d.args.query).toBe('食堂');
+    expect(d.toolCalls).toHaveLength(1);
+    expect(d.toolCalls[0].function.name).toBe('search_knowledge_base');
+    expect(JSON.parse(d.toolCalls[0].function.arguments)).toEqual({ query: '食堂' });
   });
 
-  it('decide：tool 为 null 时直接回答', async () => {
+  it('decide：无 toolCalls 时直接回答', async () => {
     const fakeAi = {
-      getCompletion: async () => ({ content: '{"tool": null, "args": {}, "reason": "无需工具"}', isMock: false }),
+      getCompletion: async () => ({ content: '你好呀', toolCalls: null, isMock: false }),
     };
     const svc = new agentMod.AgentService(fakeAi);
     const d = await svc.decide('你好呀');
-    expect(d.tool).toBeNull();
+    expect(d.toolCalls).toBeNull();
+    expect(d.content).toBe('你好呀');
   });
 
-  it('decide：LLM 请求不可用工具时降级直接回答', async () => {
-    const fakeAi = {
-      getCompletion: async () => ({ content: '{"tool": "query_grades", "args": {}, "reason": "x"}', isMock: false }),
-    };
-    const svc = new agentMod.AgentService(fakeAi);
-    const d = await svc.decide('查成绩');
-    expect(d.tool).toBeNull();
-    expect(d.reason).toContain('不可用');
-  });
-
-  it('decide：无法解析 JSON 时降级直接回答', async () => {
-    const fakeAi = {
-      getCompletion: async () => ({ content: '我不是 JSON', isMock: false }),
-    };
-    const svc = new agentMod.AgentService(fakeAi);
-    const d = await svc.decide('随便问问');
-    expect(d.tool).toBeNull();
-  });
-
-  it('chatStream：决策 → 工具执行 → 流式回答（事件齐全）', async () => {
+  it('decide：多工具调用（parallel）时全部保留', async () => {
     const fakeAi = {
       getCompletion: async () => ({
-        content: '{"tool": "calculate", "args": {"expression": "2+2"}, "reason": "计算"}',
+        content: '',
+        toolCalls: [
+          { id: 'a', function: { name: 'calculate', arguments: '{"expression":"2+2"}' } },
+          { id: 'b', function: { name: 'calculate', arguments: '{"expression":"3+3"}' } },
+        ],
         isMock: false,
       }),
-      async *getCompletionStream() {
-        yield { content: '4', done: false };
+    };
+    const svc = new agentMod.AgentService(fakeAi);
+    const d = await svc.decide('算两个数');
+    expect(d.toolCalls).toHaveLength(2);
+  });
+
+  it('chatStream：原生决策 → 工具执行 → 结果回注生成（事件齐全）', async () => {
+    const fakeAi = {
+      async *getCompletionStream(message, history, opts) {
+        // 第一次调用（带 tools）：返回 tool_calls
+        if (opts.tools && opts.tools.length > 0) {
+          yield { content: '', done: true, tool_calls: [{ id: 'c1', type: 'function', function: { name: 'calculate', arguments: '{"expression":"2+2"}' } }] };
+          return;
+        }
+        // 第二次调用（工具结果回注）：返回最终答案
+        yield { content: '计算结果是 4', done: false };
         yield { content: '', done: true };
       },
     };
@@ -227,9 +230,148 @@ describe('AgentService（单轮工具调度）', () => {
     expect(types).toContain('content');
     const toolCall = events.find(e => e.type === 'tool_call');
     expect(toolCall.tool_call.name).toBe('calculate');
+    expect(toolCall.tool_call.arguments).toEqual({ expression: '2+2' });
     const toolResult = events.find(e => e.type === 'tool_result');
     expect(toolResult.tool_result.content).toContain('= 4');
-    const done = events.find(e => e.type === 'content' && e.content.done === true) || events.find(e => e.type === 'content' && e.done === true);
+    const content = events.filter(e => e.type === 'content' && e.content !== '' && e.content !== undefined);
+    expect(content.some(c => c.content === '计算结果是 4')).toBe(true);
+    const done = events.find(e => e.type === 'content' && (e.content === '' || e.done === true) && e.content !== '计算结果是 4');
     expect(done).toBeTruthy();
+  });
+
+  it('chatStream：LLM 未调工具（直接回答）时透传流式内容', async () => {
+    const fakeAi = {
+      async *getCompletionStream(message, history, opts) {
+        yield { content: '直接回答，不需要工具', done: false };
+        yield { content: '', done: true, tool_calls: null };
+      },
+    };
+    const svc = new agentMod.AgentService(fakeAi);
+    const events = [];
+    for await (const ev of svc.chatStream('随便聊聊', [])) {
+      events.push(ev);
+    }
+    const contents = events.filter(e => e.type === 'content').map(e => e.content).join('');
+    expect(contents).toContain('直接回答，不需要工具');
+    // 未调工具 → 无 tool_call/tool_result 事件
+    expect(events.some(e => e.type === 'tool_call' && e.tool_call.name !== 'direct')).toBe(false);
+  });
+
+  it('chatStream：两轮工具调用（第 1 轮工具 → 第 2 轮再决策）', async () => {
+    const fakeAi = {
+      async *getCompletionStream(message, history, opts) {
+        // 带 tools 的调用是"决策轮"；不带 tools 是"收尾生成"
+        if (opts.tools && opts.tools.length > 0) {
+          // 轮次判断依据：opts.messages 中是否已含 tool 角色消息（chatStream 的 history 参数恒为 []）
+          const hasToolResult = opts.messages?.some((m) => m.role === 'tool');
+          if (!hasToolResult) {
+            // 第 1 轮决策：调 calculate
+            yield { content: '', done: true, tool_calls: [{ id: 'r1', function: { name: 'calculate', arguments: '{"expression":"2+2"}' } }] };
+          } else {
+            // 第 2 轮决策（已含工具结果）：直接回答
+            yield { content: '第一轮结果已获得', done: true, tool_calls: null };
+          }
+          return;
+        }
+        yield { content: '最终答案', done: false };
+        yield { content: '', done: true };
+      },
+    };
+    const svc = new agentMod.AgentService(fakeAi);
+    const events = [];
+    for await (const ev of svc.chatStream('算一下', [])) {
+      events.push(ev);
+    }
+    const types = events.map(e => e.type);
+    expect(types.filter(t => t === 'tool_call').length).toBeGreaterThanOrEqual(1);
+    expect(types).toContain('tool_result');
+    expect(types).toContain('trace');
+    const trace = events.find(e => e.type === 'trace');
+    expect(trace.trace.finishReason).toBe('direct_answer');
+    expect(trace.trace.toolCalls.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('chatStream：连续相同工具调用 → 无进展检测强制收尾', async () => {
+    let calls = 0;
+    const fakeAi = {
+      async *getCompletionStream(message, history, opts) {
+        calls++;
+        if (opts.tools && opts.tools.length > 0) {
+          // 每次决策都返回同一个工具调用（模拟死循环）
+          yield { content: '', done: true, tool_calls: [{ id: `r${calls}`, function: { name: 'calculate', arguments: '{"expression":"1+1"}' } }] };
+          return;
+        }
+        yield { content: '收尾回答', done: false };
+        yield { content: '', done: true };
+      },
+    };
+    const svc = new agentMod.AgentService(fakeAi);
+    const events = [];
+    for await (const ev of svc.chatStream('1+1', [])) {
+      events.push(ev);
+    }
+    const trace = events.find(e => e.type === 'trace');
+    expect(trace.trace.finishReason).toBe('no_progress');
+    // 决策轮次应被限制（2 轮 + 收尾生成，不会无限循环）
+    expect(calls).toBeLessThan(6);
+  });
+
+  it('chatStream：达到最大轮次 → round_limit 收尾', async () => {
+    let round = 0;
+    const fakeAi = {
+      async *getCompletionStream(message, history, opts) {
+        if (opts.tools && opts.tools.length > 0) {
+          round++;
+          // 每轮都调不同参数的工具，但始终不直接回答
+          yield { content: '', done: true, tool_calls: [{ id: `r${round}`, function: { name: 'calculate', arguments: `{"expression":"${round}+1"}` } }] };
+          return;
+        }
+        yield { content: '轮次用尽后的收尾', done: false };
+        yield { content: '', done: true };
+      },
+    };
+    const svc = new agentMod.AgentService(fakeAi);
+    const events = [];
+    for await (const ev of svc.chatStream('多步计算', [])) {
+      events.push(ev);
+    }
+    const trace = events.find(e => e.type === 'trace');
+    expect(trace.trace.finishReason).toBe('round_limit');
+    // 默认 maxToolRounds=2，应只决策 2 轮
+    expect(round).toBe(2);
+  });
+});
+
+describe('AgentService 会话记忆（L3）', () => {
+  it('buildMemorySummary：提取最近提问主题与上一轮回答结论', () => {
+    const history = [
+      { role: 'user', content: '高数极限怎么求' },
+      { role: 'assistant', content: '用洛必达法则，步骤是……' },
+      { role: 'user', content: '那道题再讲讲' },
+    ];
+    const summary = agentMod.buildMemorySummary(history);
+    expect(summary).toContain('最近提问');
+    // 最近提问 = 最后一条用户消息（"那道题再讲讲"），而非更早的
+    expect(summary).toContain('那道题再讲讲');
+    expect(summary).toContain('上一轮回答结论');
+    expect(summary).toContain('洛必达');
+  });
+
+  it('buildMemorySummary：空历史返回 null', () => {
+    expect(agentMod.buildMemorySummary([])).toBeNull();
+    expect(agentMod.buildMemorySummary(null)).toBeNull();
+  });
+
+  it('buildDecisionMessages：注入会话记忆到 system prompt', () => {
+    const history = [
+      { role: 'user', content: '帮我算 2+2' },
+      { role: 'assistant', content: '结果是 4' },
+    ];
+    const messages = agentMod.buildDecisionMessages('那道题呢', history);
+    const system = messages.find(m => m.role === 'system').content;
+    expect(system).toContain('此前对话的摘要');
+    expect(system).toContain('结果是 4');
+    // history 原样保留 + 当前问题在末尾
+    expect(messages.filter(m => m.role === 'user').length).toBeGreaterThanOrEqual(2);
   });
 });
