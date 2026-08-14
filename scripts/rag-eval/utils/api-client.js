@@ -74,10 +74,15 @@ async function fetchWithAuth(url, options = {}) {
  * @returns {Promise<{answer: string, sources: Array, retrieval: Object}>}
  */
 export async function ragQuery(question, history = [], options = {}) {
+  // 阈值覆盖参数（A/B 评测用）：透传给后端 /api/rag/chat/stream
+  const body = { message: question, history, category: options.category };
+  for (const key of ['rerankMinScore', 'rerankDropoff', 'rerankTopK', 'maxContextLength']) {
+    if (options[key] !== undefined && options[key] !== null && options[key] !== '') body[key] = options[key];
+  }
   const response = await fetchWithAuth(`${BACKEND_URL}/api/rag/chat/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message: question, history, category: options.category })
+    body: JSON.stringify(body)
   });
 
   if (!response.ok) {
