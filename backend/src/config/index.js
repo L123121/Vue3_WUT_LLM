@@ -21,6 +21,8 @@ module.exports = {
     maxTokens: 4000,
     temperature: 0.7,
     timeout: 60000,
+    // 推理模型思考链开关（默认关闭，避免思考 token 耗尽输出预算导致空回复）
+    enableThinking: process.env.AI_ENABLE_THINKING === 'true',
     // 备用 provider（可选，主 provider 失败时自动切换）
     fallback: {
       apiKey: process.env.AI_FALLBACK_API_KEY || '',

@@ -43,10 +43,14 @@ function quotaMiddleware(req, res, next) {
       });
     }
 
-    // 请求成功后递增配额
+    // 请求成功后递增配额（原子检查+递增，并发下不会突破限额）
     res.on("finish", function() {
       if (res.statusCode >= 200 && res.statusCode < 300) {
-        quotaService.increment(req.userId).catch(function() {});
+        try {
+          quotaService.incrementIfAllowed(req.userId);
+        } catch (err) {
+          console.error("[Quota] 递增失败:", err.message);
+        }
       }
     });
 

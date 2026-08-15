@@ -113,7 +113,9 @@ router.get('/quota', async (req, res) => {
 
 // POST /api/auth/logout
 router.post('/logout', (req, res) => {
-  res.clearCookie(COOKIE_NAME, { httpOnly: true, sameSite: 'lax', path: '/', maxAge: 0 });
+  // secure 标志需与设置时一致（setAuthCookie），否则 HTTPS 下 Secure cookie 无法清除
+  const isSecure = req.protocol === 'https' || req.headers['x-forwarded-proto'] === 'https';
+  res.clearCookie(COOKIE_NAME, { httpOnly: true, sameSite: 'lax', secure: isSecure, path: '/', maxAge: 0 });
   res.json({ success: true, message: '已退出登录' });
 });
 

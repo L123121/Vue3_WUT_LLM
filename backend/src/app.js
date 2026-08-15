@@ -38,13 +38,12 @@ app.use((err, req, res, next) => {
 // 启动
 const server = app.listen(PORT, '0.0.0.0', async () => {
   const hasApi = !!config.ai.apiKey;
-  const dbType = process.env.DATABASE_URL ? 'PostgreSQL' : 'SQLite';
   console.log('='.repeat(60));
   console.log('[Server] Backend started successfully.');
   console.log(`[Server] URL: http://localhost:${PORT}`);
   console.log(`[Server] AI Model: ${config.ai.model || 'step-3.7-flash'}`);
   console.log(`[Server] Mode: ${hasApi ? 'online' : 'mock'}`);
-  console.log(`[Server] Storage: ${dbType}`);
+  console.log('[Server] Storage: SQLite（store.db，WAL）');
   console.log('[Server] Vector: 本地文件持久化（精确检索）');
   console.log('='.repeat(60));
 
@@ -64,6 +63,23 @@ const server = app.listen(PORT, '0.0.0.0', async () => {
   } catch (err) {
     console.warn(`[Server] 向量库初始化失败（不影响启动）: ${err.message}`);
   }
+
+  // 上传目录定期清理（聊天上传孤儿文件，7 天过期）
+  try {
+    const { startUploadsCleanup } = require('./services/file-upload.service');
+    startUploadsCleanup();
+  } catch (err) {
+    console.warn(`[Server] 上传目录清理任务启动失败: ${err.message}`);
+  }
+});
+
+// 全局异步错误兜底：fire-and-forget 调用（记忆保存、索引、tracer 等）的
+// rejection/uncaughtException 不应让整个进程崩溃（Node 默认行为）。
+process.on('unhandledRejection', (reason) => {
+  console.error('[Server] 未处理的 Promise rejection:', reason instanceof Error ? reason.stack || reason.message : reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[Server] 未捕获异常（进程继续运行）:', err.stack || err);
 });
 
 // 优雅关闭：先停向量库保存，再关 server
