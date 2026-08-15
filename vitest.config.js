@@ -10,5 +10,7 @@ export default defineConfig({
     // 提高超时避免全量并行时误报（单独运行均通过）
     testTimeout: 30000,
     hookTimeout: 30000,
+    // 排除 .claude 目录（worktree / 临时脚本）与 backend/node_modules（第三方库测试）
+    exclude: ['node_modules', 'backend/node_modules', 'dist', '.claude/**'],
   },
 });

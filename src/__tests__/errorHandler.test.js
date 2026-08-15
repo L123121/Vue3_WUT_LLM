@@ -43,7 +43,8 @@ describe('setupGlobalErrorHandler', () => {
 
     mockApp.config.errorHandler(error, instance, info);
 
-    expect(consoleErrorSpy).toHaveBeenCalledWith('[Vue Error]', error, 'render');
+    // reportError 输出: [VueError] Test error | context: {"info":"render"}
+    expect(consoleErrorSpy).toHaveBeenCalledWith('[VueError] Test error | context: {"info":"render"}');
     expect(mockToastStore.error).toHaveBeenCalledWith('操作失败，请稍后重试');
   });
 
@@ -69,7 +70,8 @@ describe('setupGlobalErrorHandler', () => {
 
     window.dispatchEvent(rejectionEvent);
 
-    expect(consoleErrorSpy).toHaveBeenCalledWith('[Unhandled Rejection]', rejectionEvent.reason);
+    // reportError('UnhandledRejection', reason) 无 context,输出: [UnhandledRejection] Network error
+    expect(consoleErrorSpy).toHaveBeenCalledWith('[UnhandledRejection] Network error');
     expect(mockToastStore.error).toHaveBeenCalledWith('网络连接失败，请确认后端服务已启动');
     expect(rejectionEvent.preventDefault).toHaveBeenCalled();
   });
@@ -110,7 +112,8 @@ describe('setupGlobalErrorHandler', () => {
 
     window.dispatchEvent(errorEvent);
 
-    expect(consoleErrorSpy).toHaveBeenCalledWith('[Global Error]', errorEvent.error);
+    // reportError('GlobalError', event.error || event.message) 无 context,输出: [GlobalError] Script error
+    expect(consoleErrorSpy).toHaveBeenCalledWith('[GlobalError] Script error');
     expect(mockToastStore.error).toHaveBeenCalledWith('操作失败，请稍后重试');
   });
 
