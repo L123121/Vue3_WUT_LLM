@@ -97,11 +97,13 @@ let _imageCounter = 0;
 function saveBase64Image(dataUri, alt) {
   _imageCounter++;
   const match = dataUri.match(/^data:image\/(\w+);base64,(.+)$/);
-  if (!match) return `image-${_imageCounter}.png`;
+  // 文件名用时间戳+随机后缀保证唯一（全局计数器并发时会冲突）
+  const rand = Math.random().toString(36).slice(2, 8);
+  if (!match) return `image-${Date.now()}-${rand}.png`;
 
   const ext = match[1] === 'jpeg' ? 'jpg' : match[1];
   const data = Buffer.from(match[2], 'base64');
-  const filename = `img-${Date.now()}-${_imageCounter}.${ext}`;
+  const filename = `img-${Date.now()}-${rand}.${ext}`;
   const filePath = path.join(mediaDir, filename);
 
   try {
@@ -177,8 +179,11 @@ async function parseFile(filePath, originalName) {
       return parsePDF(filePath);
 
     case '.docx':
-    case '.doc':
       return parseDocx(filePath);
+
+    case '.doc':
+      // mammoth 仅支持 .docx；旧版二进制 .doc 直接明确报错，避免解析失败后误判
+      throw new Error('暂不支持旧版 .doc 格式，请将文档另存为 .docx 后重试');
 
     case '.pptx':
       return parsePptx(filePath);
@@ -386,8 +391,8 @@ async function parseImage(filePath, ext) {
  * - 公式 → mammoth 不直接支持 Office Math，尝试提取原始 XML 中的公式文本
  */
 async function parseDocx(filePath) {
-  // 重置图片计数器
-  _imageCounter = 0;
+  // 记录本次解析前的全局计数，用差值统计本次保存的图片数（不重置，避免并发解析互相干扰）
+  const counterBefore = _imageCounter;
 
   // 第一步：用 convertToHtml 保留表格和图片
   const { value: html, messages } = await mammoth.convertToHtml({
@@ -406,8 +411,9 @@ async function parseDocx(filePath) {
 
   // 第四步：在顶部添加摘要
   const notes = [];
-  if (imageCount > 0 || _imageCounter > 0) {
-    const totalImages = Math.max(imageCount, _imageCounter);
+  const savedImages = _imageCounter - counterBefore; // 本次解析实际保存的图片数
+  if (imageCount > 0 || savedImages > 0) {
+    const totalImages = Math.max(imageCount, savedImages);
     notes.push(`> 📷 本文档包含 ${totalImages} 张图片，已保存至附件目录 (media/)`);
   }
   if (formulas.length > 0) {
@@ -529,6 +535,46 @@ function cleanupFile(filePath) {
   }
 }
 
+// ==================== 上传目录定期清理 ====================
+// 聊天上传的文件（upload-*.ext）目前前端只用本地预览，文件本身无引用，
+// RAG 文档上传解析后即 cleanupFile 删除。此任务定期清除残留的孤儿文件。
+
+const UPLOADS_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 天
+const UPLOADS_CLEAN_INTERVAL_MS = 24 * 60 * 60 * 1000; // 每天一次
+
+function cleanOldUploads() {
+  try {
+    if (!fs.existsSync(uploadDir)) return;
+    const now = Date.now();
+    let removed = 0;
+    for (const name of fs.readdirSync(uploadDir)) {
+      const fullPath = path.join(uploadDir, name);
+      try {
+        const stat = fs.statSync(fullPath);
+        if (stat.isFile() && now - stat.mtimeMs > UPLOADS_MAX_AGE_MS) {
+          fs.unlinkSync(fullPath);
+          removed++;
+        }
+      } catch (err) {
+        console.warn(`[FileUpload] 清理 ${name} 失败:`, err.message);
+      }
+    }
+    if (removed > 0) console.log(`[FileUpload] 已清理 ${removed} 个过期上传文件`);
+  } catch (error) {
+    console.warn('[FileUpload] 上传目录清理失败:', error.message);
+  }
+}
+
+/**
+ * 启动上传目录定期清理（启动时立即执行一次，之后每天执行）
+ */
+function startUploadsCleanup() {
+  cleanOldUploads();
+  const timer = setInterval(cleanOldUploads, UPLOADS_CLEAN_INTERVAL_MS);
+  timer.unref();
+  return timer;
+}
+
 module.exports = {
   upload,
   chatUpload,
@@ -539,4 +585,5 @@ module.exports = {
   replaceTablePages,
   uploadDir,
   mediaDir,
+  startUploadsCleanup,
 };

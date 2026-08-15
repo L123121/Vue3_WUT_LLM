@@ -179,6 +179,29 @@ class SQLiteStore {
     return obj;
   }
 
+  /**
+   * 同步读取整个 hash（供需要原子读-改-写的场景）。
+   * better-sqlite3 为同步 API，在 Node 单线程内调用时不会让出执行权，
+   * 配合 hsetSync 可实现无竞态的计数操作。
+   */
+  hgetallSync(key) {
+    const rows = this._stmt.hgetall.all(key);
+    if (rows.length === 0) return null;
+    const obj = {};
+    for (const r of rows) {
+      obj[r.field] = this._tryParse(r.value);
+    }
+    return obj;
+  }
+
+  /**
+   * 同步写入 hash 字段（配合 hgetallSync 使用）
+   */
+  hsetSync(key, field, value) {
+    const val = typeof value === 'object' ? JSON.stringify(value) : String(value);
+    return this._stmt.hset.run(key, field, val).changes;
+  }
+
   async hget(key, field) {
     const row = this._stmt.hget.get(key, field);
     return row ? this._tryParse(row.value) : null;
@@ -196,14 +219,25 @@ class SQLiteStore {
     return m + 2; // 返回新长度
   }
 
+  /**
+   * 将 Redis 风格区间（支持负索引，-1 表示末尾）规范化为 [start, end] 正索引。
+   * 区间为空时返回 null。
+   */
+  _normalizeRange(len, start, end) {
+    if (len <= 0) return null;
+    const toPos = (i) => (i < 0 ? Math.max(len + i, 0) : i);
+    const s = toPos(start);
+    if (s >= len) return null;
+    const e = Math.min(end === -1 ? len - 1 : toPos(end), len - 1);
+    if (s > e) return null;
+    return [s, e];
+  }
+
   async lrange(key, start, end) {
-    if (end === -1) {
-      // 查全部直到末尾
-      return this._db.prepare(
-        'SELECT value FROM list WHERE key = ? AND idx >= ? ORDER BY idx'
-      ).all(key, start).map(r => r.value);
-    }
-    return this._stmt.lrange.all(key, start, end).map(r => r.value);
+    const len = await this.llen(key);
+    const range = this._normalizeRange(len, start, end);
+    if (!range) return [];
+    return this._stmt.lrange.all(key, range[0], range[1]).map(r => r.value);
   }
 
   async llen(key) {
@@ -211,11 +245,13 @@ class SQLiteStore {
   }
 
   async ltrim(key, start, end) {
-    if (end === -1) {
-      this._stmt.ltrimBefore.run(key, start);
-    } else {
-      this._stmt.ltrimRange.run(key, start, end);
+    const len = await this.llen(key);
+    const range = this._normalizeRange(len, start, end);
+    if (!range) {
+      this._stmt.delList.run(key); // 区间为空：清空整个列表
+      return;
     }
+    this._stmt.ltrimRange.run(key, range[0], range[1]);
   }
 
   // ==================== 通用 ====================

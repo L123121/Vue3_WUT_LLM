@@ -1,12 +1,14 @@
 "use strict";
 
 const path = require('path');
+const crypto = require('crypto');
 const config = require('../config');
 
 const DEFAULT_DENSE_DIM = 512;   // BGE-small-zh 输出 512 维
 const DEFAULT_SPARSE_DIM = 250002;
 const DEFAULT_MODEL = 'Xenova/bge-small-zh-v1.5';
 const DEFAULT_CACHE_DIR = path.resolve(__dirname, '../../../.model-cache');
+const EMBED_CACHE_MAX = 2000;    // 向量缓存上限，防止无限增长
 
 /**
  * BGE-small-zh Embedding 服务
@@ -68,7 +70,7 @@ class EmbeddingService {
     if (this._cache.has(cacheKey)) return this._cache.get(cacheKey);
 
     const localResult = await this._localHybridEmbed(text);
-    this._cache.set(cacheKey, localResult);
+    this._cacheSet(cacheKey, localResult);
     return localResult;
   }
 
@@ -96,7 +98,7 @@ class EmbeddingService {
     // 批量走本地 BGE 模型
     for (const item of pending) {
       const embedding = await this._localHybridEmbed(item.text);
-      this._cache.set(item.cacheKey, embedding);
+      this._cacheSet(item.cacheKey, embedding);
       results[item.index] = embedding;
     }
 
@@ -190,7 +192,20 @@ class EmbeddingService {
   }
 
   _cacheKey(text) {
-    return `emb:${this.model}:${String(text).trim().substring(0, 200)}`;
+    // 用全文哈希做 key：之前截前 200 字符，两个同前缀长文本会错误命中同一向量
+    const digest = crypto.createHash('md5').update(String(text).trim()).digest('hex');
+    return `emb:${this.model}:${digest}`;
+  }
+
+  /**
+   * 写入向量缓存（超过上限时淘汰最旧条目，防止无限增长）
+   */
+  _cacheSet(key, value) {
+    this._cache.set(key, value);
+    if (this._cache.size > EMBED_CACHE_MAX) {
+      const oldestKey = this._cache.keys().next().value;
+      if (oldestKey !== undefined) this._cache.delete(oldestKey);
+    }
   }
 
   _hashStr(str) {

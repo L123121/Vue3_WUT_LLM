@@ -24,7 +24,7 @@ class ChatService {
       return {
         reply: result.content,
         timestamp: new Date(),
-        model: config.ai.model || 'Qwen3.6-35B-A3B',
+        model: config.ai.model || 'step-3.7-flash',
         isMock: result.isMock,
       };
     } catch (error) {
@@ -32,7 +32,7 @@ class ChatService {
       return {
         reply: '抱歉，AI服务处理出错，请稍后重试',
         timestamp: new Date(),
-        model: config.ai.model || 'Qwen3.6-35B-A3B',
+        model: config.ai.model || 'step-3.7-flash',
         isMock: true,
         error: error.message,
       };

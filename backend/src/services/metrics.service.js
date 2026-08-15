@@ -63,6 +63,11 @@ class MetricsService {
   recordLatency(type, ms) {
     if (!this.latencies[type]) return;
     this.latencies[type].push(ms);
+    // 限制样本数：防止长期运行内存无限增长（getSummary 每次对全量数组排序）
+    const MAX_SAMPLES = 1000;
+    if (this.latencies[type].length > MAX_SAMPLES) {
+      this.latencies[type].splice(0, this.latencies[type].length - MAX_SAMPLES);
+    }
     this.latencyBuckets[type].total += ms;
     this.latencyBuckets[type].count++;
   }
@@ -288,7 +293,15 @@ const { aiService } = require('./ai.service');
     const faithfulness = gtKeywords.length > 0 ? gtKeywordsInAnswer.length / gtKeywords.length : 0;
 
     // 4. Context Precision: 检索到的文档中相关文档的比例
-    const contextPrecision = sources.length > 0 ? Math.min(1, 0.5 + (sources.length * 0.1)) : 0;
+    // 近似：包含 ground_truth 关键词的检索文档 / 检索文档总数（无检索结果时为 0）
+    let relevantSources = 0;
+    for (const s of sources || []) {
+      const snippet = String(s.snippet || s.content || s.text || '').toLowerCase();
+      if (snippet && gtKeywords.some(kw => snippet.includes(kw.toLowerCase()))) {
+        relevantSources++;
+      }
+    }
+    const contextPrecision = (sources || []).length > 0 ? relevantSources / sources.length : 0;
 
     const overall = (contextRecall + answerRelevancy + faithfulness + contextPrecision) / 4;
 

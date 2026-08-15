@@ -194,7 +194,9 @@ function _sendRequest(options, body) {
     req.on('error', reject);
     req.on('timeout', () => {
       req.destroy();
-      reject(new Error('请求超时'));
+      const err = new Error('请求超时');
+      err.code = 'ETIMEDOUT';
+      reject(err);
     });
 
     if (body) req.write(body);

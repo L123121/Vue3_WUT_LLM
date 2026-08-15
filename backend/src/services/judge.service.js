@@ -191,7 +191,8 @@ ${answer}`;
     return {
       faithfulness: recall,
       answer_relevancy: recall,
-      context_precision: 0.7,
+      // 降级路径没有检索上下文，无法计算真正的 precision，用 recall 近似
+      context_precision: recall,
       context_recall: recall,
       reason: `关键词匹配: ${matched.length}/${keywords.length}`,
     };

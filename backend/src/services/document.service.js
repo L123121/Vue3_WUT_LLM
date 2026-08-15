@@ -151,6 +151,17 @@ class DocumentService {
     return { message: '文档删除成功', docId };
   }
 
+  /**
+   * 轻量判断文档库是否为空（无分类时用 scard，避免 listDocuments 的全量读取）
+   */
+  async hasDocuments(category) {
+    if (!category) {
+      return (await store.scard('documents:all')) > 0;
+    }
+    const docs = await this.listDocuments({ category, limit: 1 });
+    return docs.documents.length > 0;
+  }
+
   async listDocuments(options = {}) {
     const { category, page = 1, limit = 20 } = options;
 
