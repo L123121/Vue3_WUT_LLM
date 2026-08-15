@@ -7,7 +7,6 @@
 import { ref, onUnmounted } from 'vue';
 import { sendMessageStream, connectionManager } from '../api/chat.js';
 import { useConversationStore } from '../stores/conversation.store.js';
-import { useSkillStore } from '../stores/skill.store.js';
 import {
   createMessageId,
   getMessageText,
@@ -224,7 +223,6 @@ export function useStreaming() {
     let firstFramePainted = false;
 
     const history = buildHistory(convStore.conversations[convIndex].messages || [], userMsg.id);
-    const skillPrompt = useSkillStore().buildSystemPrompt();
 
     const aiMsgId = createMessageId();
     const aiMsg = { id: aiMsgId, role: 'model', content: '', timestamp: new Date(), sources: [] };
@@ -255,7 +253,7 @@ export function useStreaming() {
           // 切换会话自中止检测：用户已切到别的会话时，停止向旧会话写消息并中止请求，
           // 否则 currentStreamingId 仍指向旧会话消息，新会话 UI 状态会错乱
           if (convStore.currentConversationId !== conversationId) {
-            console.log('[Stream] 检测到会话已切换，中止旧流式');
+            if (import.meta.env.DEV) console.log('[Stream] 检测到会话已切换，中止旧流式');
             abortCurrentRequest();
             return;
           }
@@ -263,7 +261,7 @@ export function useStreaming() {
           if (!firstChunkReceived) {
             firstChunkReceived = true;
             const firstChunkMs = Math.round(performance.now() - streamStartTime);
-            console.log(`[TTFT] 首字上屏(RAF前): ${firstChunkMs}ms`);
+            if (import.meta.env.DEV) console.log(`[TTFT] 首字上屏(RAF前): ${firstChunkMs}ms`);
           }
           pendingContent += content;
           if (!rafId) {
@@ -272,7 +270,7 @@ export function useStreaming() {
               if (!firstFramePainted) {
                 firstFramePainted = true;
                 const firstFrameMs = Math.round(performance.now() - streamStartTime);
-                console.log(`[TTFT] 首字渲染(DOM写入): ${firstFrameMs}ms`);
+                if (import.meta.env.DEV) console.log(`[TTFT] 首字渲染(DOM写入): ${firstFrameMs}ms`);
                 try {
                   const key = 'ttft_frame_measurements';
                   const arr = JSON.parse(localStorage.getItem(key) || '[]');
@@ -328,6 +326,10 @@ export function useStreaming() {
         onRetry: () => {
           isReconnecting.value = true;
           reconnectAttempt.value = reconnectAttempt.value + 1;
+          // 重试会从头开始流：清空已写入的部分内容，避免"半截+完整"重复拼接
+          cancelPendingRaf();
+          pendingContent = '';
+          updateMessage(convStore, conversationId, aiMsgId, (m) => ({ ...m, text: '', content: '' }));
         },
         onDone: () => {
           // 必须在 cancelPendingRaf 之前捕获剩余内容（它会清空 pendingContent）
