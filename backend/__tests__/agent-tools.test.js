@@ -162,6 +162,31 @@ describe('agent-tools（内置工具）', () => {
     const r = await agentTools.executeTool('calculate', { expression: '1/0+??' });
     expect(r).toContain('计算失败');
   });
+
+  it('executeToolDetailed 返回结构化 { ok, content }（替代中文正则猜成败）', async () => {
+    const ok = await agentTools.executeToolDetailed('calculate', { expression: '2+2' });
+    expect(ok.ok).toBe(true);
+    expect(ok.content).toBe('2+2 = 4');
+
+    const fail = await agentTools.executeToolDetailed('calculate', { expression: '1/0+??' });
+    expect(fail.ok).toBe(false);
+    expect(fail.content).toContain('计算失败');
+
+    const unknown = await agentTools.executeToolDetailed('not_exist', {});
+    expect(unknown.ok).toBe(false);
+    expect(unknown.content).toContain('未知工具');
+  });
+
+  it('search_knowledge_base 仅检索不生成（retrieveOnly，避免双重生成）', async () => {
+    // 走真实 rag 链路（CJS mock 不生效），契约：content 以"检索结果/检索失败/超时"开头
+    const r = await agentTools.executeToolDetailed('search_knowledge_base', { query: '食堂几点关门' });
+    expect(typeof r.content).toBe('string');
+    expect(/^(检索结果|知识库检索失败|工具.*超时)/.test(r.content)).toBe(true);
+    // 命中时 data.sources 为数组（结构化透传给 agent → 前端引用展示）
+    if (r.content.startsWith('检索结果：\n')) {
+      expect(Array.isArray(r.data?.sources)).toBe(true);
+    }
+  });
 });
 
 describe('AgentService（单轮工具调度，原生 function calling）', () => {
@@ -373,5 +398,106 @@ describe('AgentService 会话记忆（L3）', () => {
     expect(system).toContain('结果是 4');
     // history 原样保留 + 当前问题在末尾
     expect(messages.filter(m => m.role === 'user').length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('buildDecisionMessages：不再注入 JSON schema（schema 由 API tools 参数携带）', () => {
+    const messages = agentMod.buildDecisionMessages('你好', []);
+    const system = messages.find(m => m.role === 'system').content;
+    // 只含工具名+简述，不含 JSON schema 结构（省 token）
+    expect(system).toContain('search_knowledge_base');
+    expect(system).not.toContain('"parameters"');
+    expect(system).not.toContain('{tool_list}');
+  });
+});
+
+describe('AgentService 2026-08-15 优化', () => {
+  it('stableStringify：key 顺序无关（无进展检测签名不被绕过）', () => {
+    const a = agentMod.stableStringify({ query: '食堂', category: '学校概况' });
+    const b = agentMod.stableStringify({ category: '学校概况', query: '食堂' });
+    expect(a).toBe(b);
+    expect(agentMod.stableStringify({ list: [1, { b: 2, a: 1 }] })).toBe('{"list":[1,{"a":1,"b":2}]}');
+  });
+
+  it('chat()：drain chatStream，返回 reply + 工具名 + sources', async () => {
+    const fakeAi = {
+      async *getCompletionStream(message, history, opts) {
+        if (opts.tools && opts.tools.length > 0) {
+          // 已含工具结果回注（tool 角色消息）→ 直接流出最终答案，不再调工具
+          const hasToolResult = opts.messages?.some((m) => m.role === 'tool');
+          if (!hasToolResult) {
+            yield { content: '', done: true, tool_calls: [{ id: 'c1', function: { name: 'calculate', arguments: '{"expression":"2+2"}' } }] };
+          } else {
+            yield { content: '计算结果是 4', done: false };
+            yield { content: '', done: true, tool_calls: null };
+          }
+          return;
+        }
+        yield { content: '计算结果是 4', done: false };
+        yield { content: '', done: true };
+      },
+    };
+    const svc = new agentMod.AgentService(fakeAi);
+    const result = await svc.chat('2+2等于多少', []);
+    expect(result.reply).toBe('计算结果是 4');
+    expect(result.tool.name).toBe('calculate');
+    expect(Array.isArray(result.sources)).toBe(true);
+    expect(result.trace?.toolCalls?.[0]?.ok).toBe(true);
+    // 单工具耗时为独立计时（非累计）
+    expect(result.trace.toolCalls[0].durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('chatStream：决策失败且未输出内容 → error 事件（AgentDecisionError，控制器降级 RAG）', async () => {
+    const fakeAi = {
+      async *getCompletionStream() {
+        throw new Error('上游 429');
+      },
+    };
+    const svc = new agentMod.AgentService(fakeAi);
+    const events = [];
+    for await (const ev of svc.chatStream('食堂几点关门', [])) {
+      events.push(ev);
+    }
+    const errEvent = events.find(e => e.type === 'error');
+    expect(errEvent).toBeTruthy();
+    expect(errEvent.error.agentShouldFallback).toBe(true);
+    // 不应输出误导性兜底文案
+    expect(events.some(e => e.type === 'content' && String(e.content).includes('没有理解'))).toBe(false);
+  });
+
+  it('chat()：决策失败时抛出 AgentDecisionError（非流式降级入口）', async () => {
+    const fakeAi = {
+      async *getCompletionStream() {
+        throw new Error('上游 500');
+      },
+    };
+    const svc = new agentMod.AgentService(fakeAi);
+    await expect(svc.chat('图书馆怎么借书', [])).rejects.toMatchObject({ agentShouldFallback: true });
+  });
+
+  it('chatStream：知识库工具命中时透传 sources 事件', async () => {
+    const fakeAi = {
+      async *getCompletionStream(message, history, opts) {
+        if (opts.tools && opts.tools.length > 0) {
+          yield { content: '', done: true, tool_calls: [{ id: 's1', function: { name: 'search_knowledge_base', arguments: '{"query":"食堂"}' } }] };
+          return;
+        }
+        yield { content: '食堂 21 点关门', done: false };
+        yield { content: '', done: true };
+      },
+    };
+    const svc = new agentMod.AgentService(fakeAi);
+    const events = [];
+    for await (const ev of svc.chatStream('食堂几点关门', [])) {
+      events.push(ev);
+    }
+    const sourcesEvent = events.find(e => e.type === 'sources');
+    // 走真实 rag 链路：只要检索命中就应有 sources 事件（未命中则无，两种都合法）
+    if (sourcesEvent) {
+      expect(Array.isArray(sourcesEvent.sources)).toBe(true);
+      expect(sourcesEvent.sources.length).toBeGreaterThan(0);
+    }
+    // trace 中工具调用 ok 字段来自结构化返回（非中文正则）
+    const trace = events.find(e => e.type === 'trace');
+    expect(typeof trace.trace.toolCalls[0].ok).toBe('boolean');
   });
 });
