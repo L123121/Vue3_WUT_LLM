@@ -90,6 +90,8 @@ class AiService {
       temperature: cfg.temperature || 0.7,
       timeout: cfg.timeout || 60000,
       anthropicMode: baseUrl.includes('/anthropic'),
+      // 推理模型思考链开关（默认关闭，思考 token 会挤占 max_tokens 预算导致正文为空）
+      enableThinking: !!cfg.enableThinking,
     };
   }
 
@@ -234,6 +236,10 @@ class AiService {
       temperature: provider.temperature,
       stream: false,
     };
+    // 推理模型（如 step-3.7-flash）默认关闭思考链，避免思考 token 耗尽预算导致 content 为空
+    if (!provider.anthropicMode && !provider.enableThinking) {
+      payload.enable_thinking = false;
+    }
     // 原生 function calling（OpenAI 兼容）：调用方传 opts.tools 时携带工具描述
     if (!provider.anthropicMode && Array.isArray(opts.tools) && opts.tools.length > 0) {
       payload.tools = opts.tools;
@@ -291,13 +297,19 @@ class AiService {
 
     // 滚动摘要：先压缩 history，再排队（async generator 内 await 后仍保留 yield 语义）
     const compacted = await this._compactHistory(history);
+    // 客户端已断开：不再占用队列槽位，直接结束
+    if (opts.signal?.aborted) {
+      const err = new Error('客户端已断开');
+      err.name = 'AbortError';
+      throw err;
+    }
 
     // 排队等待 LLM 槽位，整个流式过程占用一个槽位
     const release = await llmQueue.acquire();
     console.log(`[AI 队列] 流式获取到槽位，队列中待处理: ${llmQueue.pending}`);
 
     try {
-      yield* this._doGetCompletionStream(message, history, opts);
+      yield* this._doGetCompletionStream(message, compacted, opts);
     } finally {
       release();
     }
@@ -310,6 +322,8 @@ class AiService {
         yield* this._streamProvider(this.primary, message, history, opts);
         return; // 主 provider 成功完成
       } catch (err) {
+        // 客户端已断开：不切备用 provider，直接结束（避免白烧备用额度）
+        if (err.name === 'AbortError' || opts.signal?.aborted) throw err;
         console.warn(`[AI 流式] 主 provider 失败 (${err.message})，切换到备用 provider`);
       }
       // 主 provider 失败，尝试备用
@@ -328,6 +342,10 @@ class AiService {
       temperature: provider.temperature,
       stream: true,
     };
+    // 推理模型（如 step-3.7-flash）默认关闭思考链，避免思考 token 耗尽预算导致 content 为空
+    if (!provider.anthropicMode && !provider.enableThinking) {
+      payload.enable_thinking = false;
+    }
     // 原生 function calling（OpenAI 兼容）：调用方传 opts.tools 时携带工具描述
     if (!provider.anthropicMode && Array.isArray(opts.tools) && opts.tools.length > 0) {
       payload.tools = opts.tools;
@@ -341,8 +359,14 @@ class AiService {
 
     let res;
     try {
-      res = await requestStream(options, body);
+      res = await requestStream(options, body, opts.signal);
     } catch (err) {
+      // 客户端主动取消：向上抛出，不再尝试 fallback
+      if (err.name === 'AbortError' || opts.signal?.aborted) {
+        const abortErr = new Error('客户端已断开');
+        abortErr.name = 'AbortError';
+        throw abortErr;
+      }
       // 连接建立前失败 → 抛出，让外层决定是否 fallback
       throw new Error(`连接失败: ${err.message}`);
     }

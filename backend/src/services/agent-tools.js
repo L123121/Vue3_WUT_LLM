@@ -51,10 +51,16 @@ const builtinTools = [
     },
     handler: async (args) => {
       try {
-        const result = await ragService.chat(args.query, [], { category: args.category });
-        if (!result || !result.reply) return '知识库中未找到相关信息';
-        const sources = result.sources?.map(s => s.title).join(', ') || '无';
-        return `检索结果：${result.reply}\n来源：${sources}`;
+        // 仅检索不生成（retrieveOnly）：agent 链路只生成一次（收尾统一生成），
+        // 避免"决策 + RAG 内部生成 + 收尾"三次 LLM 调用；sources 结构化透传给 agent → 前端引用展示
+        const result = await ragService.localSearchChat(args.query, [], { category: args.category, retrieveOnly: true });
+        if (!result || !result.context) return '检索结果：知识库中未找到相关信息';
+        const sources = Array.isArray(result.sources) ? result.sources : [];
+        const titles = sources.map(s => s.title).filter(Boolean).join(', ') || '无';
+        return {
+          content: `检索结果：\n${result.context}\n来源：${titles}`,
+          data: { sources },
+        };
       } catch (err) {
         return `知识库检索失败：${err.message}`;
       }
@@ -83,11 +89,12 @@ const builtinTools = [
         // 使用 mathjs 安全求值（模块级 create(all) 实例），避免 new Function() 注入风险
         const result = math.evaluate(expr);
         if (typeof result !== 'number' || !isFinite(result)) {
-          return `计算结果无效: ${result}`;
+          return { ok: false, content: `计算结果无效: ${result}` };
         }
         return `${args.expression} = ${result}`;
       } catch (err) {
-        return `计算失败: ${err.message}`;
+        // 结构化失败（executeToolDetailed 识别 ok=false），兼容字符串契约（executeTool 取 content）
+        return { ok: false, content: `计算失败: ${err.message}` };
       }
     }
   },
@@ -105,7 +112,7 @@ function getToolSchemas() {
 }
 
 /**
- * 执行工具
+ * 执行工具（兼容契约：返回 content 字符串）
  * @param {string} name - 工具名
  * @param {Object} args - 参数
  * @param {Object} context - { userId }
@@ -114,8 +121,15 @@ function executeTool(name, args, context = {}) {
   return toolRegistry.executeTool(name, args, context);
 }
 
+/**
+ * 执行工具（结构化返回 { ok, content, data }，Agent 调度用）
+ */
+function executeToolDetailed(name, args, context = {}) {
+  return toolRegistry.executeToolDetailed(name, args, context);
+}
+
 function getToolNames() {
   return toolRegistry.getToolNames();
 }
 
-module.exports = { toolRegistry, getToolSchemas, executeTool, getToolNames };
+module.exports = { toolRegistry, getToolSchemas, executeTool, executeToolDetailed, getToolNames };

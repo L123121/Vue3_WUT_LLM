@@ -148,27 +148,44 @@ class ToolRegistry {
   }
 
   /**
-   * 执行指定工具
+   * 执行工具并返回结构化结果（Agent 调度用，替代靠中文正则猜成败）
+   * handler 可返回字符串，或 { content, data, ok? }（data 用于 sources 等结构化数据透传）
+   * @param {string} name - 工具名称
+   * @param {Object} args - 工具参数
+   * @param {Object} context - 用户上下文
+   * @returns {Promise<{ok: boolean, content: string, data: any}>}
+   */
+  async executeToolDetailed(name, args, context = {}) {
+    const tool = this.tools.get(name);
+    if (!tool) return { ok: false, content: `未知工具: ${name}`, data: null };
+    if (!tool.enabled) return { ok: false, content: `工具 ${name} 已禁用`, data: null };
+    const timeoutMs = tool.timeoutMs || DEFAULT_TOOL_TIMEOUT_MS;
+    try {
+      // 超时不 reject——返回语义化提示，让 LLM 能基于已有信息继续
+      const raw = await withTimeout(tool.handler(args, context), timeoutMs);
+      if (raw && typeof raw === 'object' && typeof raw.content === 'string') {
+        return { ok: raw.ok !== false, content: raw.content, data: raw.data ?? null };
+      }
+      return { ok: true, content: String(raw), data: null };
+    } catch (err) {
+      if (err instanceof ToolTimeoutError) {
+        console.warn(`[ToolRegistry] 工具 ${name} 执行超时（${timeoutMs}ms），返回超时提示`);
+        return { ok: false, content: `工具 ${name} 执行超时（${timeoutMs}ms）。请基于已有信息继续回答，或换一种方式获取数据。`, data: null };
+      }
+      return { ok: false, content: `工具 ${name} 执行失败: ${err.message}`, data: null };
+    }
+  }
+
+  /**
+   * 执行指定工具（兼容旧契约：只返回 content 字符串）
    * @param {string} name - 工具名称
    * @param {Object} args - 工具参数
    * @param {Object} context - 用户上下文
    * @returns {Promise<string>}
    */
   async executeTool(name, args, context = {}) {
-    const tool = this.tools.get(name);
-    if (!tool) return `未知工具: ${name}`;
-    if (!tool.enabled) return `工具 ${name} 已禁用`;
-    const timeoutMs = tool.timeoutMs || DEFAULT_TOOL_TIMEOUT_MS;
-    try {
-      // 超时不 reject——返回语义化提示，让 LLM 能基于已有信息继续
-      return await withTimeout(tool.handler(args, context), timeoutMs);
-    } catch (err) {
-      if (err instanceof ToolTimeoutError) {
-        console.warn(`[ToolRegistry] 工具 ${name} 执行超时（${timeoutMs}ms），返回超时提示`);
-        return `工具 ${name} 执行超时（${timeoutMs}ms）。请基于已有信息继续回答，或换一种方式获取数据。`;
-      }
-      return `工具 ${name} 执行失败: ${err.message}`;
-    }
+    const r = await this.executeToolDetailed(name, args, context);
+    return r.content;
   }
 
   /**

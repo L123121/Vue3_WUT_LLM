@@ -221,27 +221,29 @@ class QdrantVectorStore {
     const sparseWeight = weights?.sparse ?? this.sparseWeight;
     const qdrantFilter = this._buildFilter(filter);
 
-    // dense 查询（Cosine，score 即余弦相似度）
-    const denseRes = await this._client.query(this.collectionName, {
-      query: embedding.dense,
-      using: 'dense',
-      limit: topK,
-      filter: qdrantFilter,
-      with_payload: true,
-    });
-
-    // sparse 查询（dot + idf modifier）
-    const sparseVector = this._toSparseVector(embedding.sparse);
-    let sparseRes = { points: [] };
-    if (sparseVector.indices.length > 0) {
-      sparseRes = await this._client.query(this.collectionName, {
-        query: sparseVector,
-        using: 'sparse',
+    // dense + sparse 并行查询（RAG 首包延迟关键路径）
+    const [denseRes, sparseRes] = await Promise.all([
+      // dense 查询（Cosine，score 即余弦相似度）
+      this._client.query(this.collectionName, {
+        query: embedding.dense,
+        using: 'dense',
         limit: topK,
         filter: qdrantFilter,
         with_payload: true,
-      });
-    }
+      }),
+      // sparse 查询（dot + idf modifier）
+      (async () => {
+        const sparseVector = this._toSparseVector(embedding.sparse);
+        if (sparseVector.indices.length === 0) return { points: [] };
+        return this._client.query(this.collectionName, {
+          query: sparseVector,
+          using: 'sparse',
+          limit: topK,
+          filter: qdrantFilter,
+          with_payload: true,
+        });
+      })(),
+    ]);
 
     // 客户端融合：按原始 id 合并，score = w·dense + (1-w)·sparse
     const merged = new Map();

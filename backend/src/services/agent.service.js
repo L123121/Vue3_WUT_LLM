@@ -1,37 +1,41 @@
 "use strict";
 
+const fs = require("fs");
+const path = require("path");
 const { AiService } = require("./ai.service");
-const { executeTool, getToolSchemas, getToolNames } = require("./agent-tools");
+const { executeToolDetailed, getToolSchemas, getToolNames } = require("./agent-tools");
 const config = require("../config");
 
 /**
  * AgentService — 轻量 Agent 工具调度层（V2.0，面试官反馈②）
  *
  * 吸取存档回退教训（2026-07-21：ReAct 多步循环延迟高、前端展示思考过程对校园用户是减分项），
- * 不做 ReAct 多步循环，做**单轮工具调度（tool routing）+ 原生 function calling**：
+ * 不做 ReAct 多步循环，做**有界工具调度（tool routing）+ 原生 function calling**：
  *
  *   用户问题
  *     ↓
  *   ① LLM 原生工具调用（opts.tools 携带 schema，流式解析 delta.tool_calls）
  *     → 决定调 search_knowledge_base / calculate / 直接回答
  *     ↓
- *   ② 确定性执行工具（本地/秒级，含超时闸门）
+ *   ② 确定性执行工具（本地/秒级，含超时闸门，多工具并行）
  *     ↓
  *   ③ 工具结果以 tool 角色消息回注（assistant tool_calls + tool result）
  *     → LLM 二次流式生成最终答案
  *
- * 全程最多 1 轮工具调用 + 1 次回注生成，无多步循环。
- * 延迟 ≈ RAG 链路 + 2 次 LLM 调用（决策 + 回注生成）。
- * 多轮上下文：复用 aiService._compactHistory 滚动压缩。
+ * 2026-08-15 优化：
+ *   - search_knowledge_base 改为仅检索（retrieveOnly），全链路只生成一次，sources 透传前端
+ *   - chat() 统一 drain chatStream()，消除两套循环逻辑 drift 风险
+ *   - 决策失败且未输出内容时 yield error 事件（AgentDecisionError），控制器据此降级 RAG
+ *   - trace 持久化 data/agent-traces.jsonl（灰度分析：finishReason 分布/工具失败率）
  *
  * 开关：AGENT_TOOL_ENABLED=true 启用（默认 false，先灰度，不影响现有评测基线）。
  */
 
-// 系统提示：说明工具用法，要求基于工具结果回答（首次调用带 tools，回注后不带 tools 复用）
+// 系统提示：只注入工具名+简述（参数 schema 已由 API tools 参数携带，不再重复注入 JSON，省 token）
 const SYSTEM_PROMPT = `你是"武理小精灵"，武汉理工大学校园助手。
 
-你可以调用以下工具来获取信息：
-{tool_schemas}
+你可以调用以下工具来获取信息（工具参数定义已通过 function calling 提供）：
+{tool_list}
 
 规则：
 1. 如果问题需要检索校园知识库（食堂/图书馆/宿舍/课程/政策/奖学金/面试题等）→ 调用 search_knowledge_base
@@ -39,6 +43,58 @@ const SYSTEM_PROMPT = `你是"武理小精灵"，武汉理工大学校园助手�
 3. 如果不需要任何工具，直接回答即可
 4. 调用工具后，必须基于工具结果给出最终回答；如果工具结果不足以回答，请如实说明
 5. 回答用简洁的中文`;
+
+/**
+ * Agent 决策失败专用错误：控制器据 agentShouldFallback 标记降级回 RAG 链路
+ */
+class AgentDecisionError extends Error {
+  constructor(message, cause = null) {
+    super(message);
+    this.name = "AgentDecisionError";
+    this.agentShouldFallback = true;
+    this.cause = cause;
+  }
+}
+
+/**
+ * trace 持久化（JSONL，fire-and-forget）：灰度期分析 finishReason 分布、工具失败率
+ * 测试环境（NODE_ENV=test / VITEST）跳过，避免污染数据
+ */
+const TRACE_LOG_PATH = path.join(__dirname, "..", "..", "data", "agent-traces.jsonl");
+function persistTrace(trace) {
+  if (process.env.NODE_ENV === "test" || process.env.VITEST) return;
+  try {
+    const line = JSON.stringify({ ...trace, ts: new Date().toISOString() }) + "\n";
+    fs.appendFile(TRACE_LOG_PATH, line, () => {});
+  } catch (_) {
+    // 持久化失败不影响主链路
+  }
+}
+
+/**
+ * 稳定序列化（key 排序）：无进展检测签名用，避免 JSON key 顺序/空白差异绕过检测
+ */
+function stableStringify(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  const keys = Object.keys(value).sort();
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(value[k])}`).join(",")}}`;
+}
+
+/**
+ * 合并 sources（按 docId/title 去重），保持出现顺序
+ */
+function mergeSources(target, incoming) {
+  const seen = new Set(target.map((s) => s.docId || s.title || JSON.stringify(s)));
+  for (const s of incoming || []) {
+    const key = s.docId || s.title || JSON.stringify(s);
+    if (!seen.has(key)) {
+      seen.add(key);
+      target.push(s);
+    }
+  }
+  return target;
+}
 
 /**
  * 会话级结构化记忆提取（L3，无 Redis）
@@ -76,12 +132,9 @@ function buildMemorySummary(history = []) {
  * 组装首次调用的 messages：system（含会话记忆）+ history + 当前问题
  */
 function buildDecisionMessages(message, history = []) {
-  const schemas = getToolSchemas();
-  const schemaText = schemas.length
-    ? schemas.map((s) => JSON.stringify(s.function)).join("\n")
-    : "（无可用工具）";
-
-  let system = SYSTEM_PROMPT.replace("{tool_schemas}", schemaText);
+  // 只注入工具名+简述（schema 由 API tools 参数携带，避免每次决策重复烧几百 token）
+  const toolLines = getToolSchemas().map((s) => `- ${s.function.name}：${s.function.description}`);
+  let system = SYSTEM_PROMPT.replace("{tool_list}", toolLines.length ? toolLines.join("\n") : "（无可用工具）");
   // L3 会话记忆：跨轮指代（"那道题"）依赖它
   const memory = buildMemorySummary(history);
   if (memory) {
@@ -144,17 +197,20 @@ class AgentService {
   /**
    * ① 原生 function calling 决策：返回 { toolCalls, content }
    * 优先走 getCompletion（非流式，一次拿全 tool_calls）；无 Key 时返回空
+   * （单轮决策 API，agent 评测脚本复用）
    */
   async decide(message, history = []) {
     const tools = getToolSchemas();
     const messages = buildDecisionMessages(message, history);
 
+    let timer;
     const response = await Promise.race([
       this.aiService.getCompletion(message, [], { tools, messages, timeout: 15000, retries: 0 }),
-      new Promise((resolve) =>
-        setTimeout(() => resolve({ content: "", toolCalls: null, _timeout: true }), 15000)
-      ),
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve({ content: "", toolCalls: null, _timeout: true }), 15000);
+      }),
     ]);
+    clearTimeout(timer);
     if (response._timeout) {
       console.warn("[Agent] 工具决策超时(15s)，直接回答");
       return { toolCalls: null, content: "", reason: "决策超时，直接回答" };
@@ -166,12 +222,12 @@ class AgentService {
   }
 
   /**
-   * ② 确定性执行工具
+   * ② 确定性执行工具（结构化返回 { ok, content, data }）
    */
   async runTool(name, args, context = {}) {
     console.log(`[Agent] 执行工具: ${name}, 参数: ${JSON.stringify(args)}`);
-    const result = await executeTool(name, args, context);
-    console.log(`[Agent] 工具 ${name} 结果: ${String(result).substring(0, 300)}`);
+    const result = await executeToolDetailed(name, args, context);
+    console.log(`[Agent] 工具 ${name} ${result.ok ? "成功" : "失败"}: ${String(result.content).substring(0, 300)}`);
     return result;
   }
 
@@ -187,7 +243,7 @@ class AgentService {
    * @param {string} message
    * @param {Array} history
    * @param {Object} options { userId, traceId, conversationId }
-   * @yields {type: 'tool_call'|'tool_result'|'content'}
+   * @yields {type: 'tool_call'|'tool_result'|'sources'|'trace'|'content'|'error'}
    */
   async *chatStream(message, history = [], options = {}) {
     const totalStart = Date.now();
@@ -210,6 +266,7 @@ class AgentService {
     let lastSignature = null;
     let repeatCount = 0;
     let toolSummary = [];
+    let collectedSources = [];
     let reachedLimit = false;
 
     for (let round = 0; round < maxRounds; round++) {
@@ -217,7 +274,7 @@ class AgentService {
       let toolCalls = null;
       let streamedText = "";
       try {
-        for await (const chunk of this.aiService.getCompletionStream("", [], { tools, messages })) {
+        for await (const chunk of this.aiService.getCompletionStream("", [], { tools, messages, signal: options.signal })) {
           if (chunk.done) {
             toolCalls = chunk.tool_calls || null;
           } else if (chunk.content) {
@@ -227,14 +284,18 @@ class AgentService {
           }
         }
       } catch (err) {
-        console.warn(`[Agent] 第 ${round + 1} 轮决策失败，直接回答:`, err.message);
+        console.warn(`[Agent] 第 ${round + 1} 轮决策失败:`, err.message);
         trace.finishReason = "error";
         trace.totalMs = Date.now() - totalStart;
+        persistTrace(trace);
         if (!streamedText) {
-          yield { type: "content", content: "抱歉，我没有理解您的问题。", done: false };
+          // 尚未输出任何内容 → 通知控制器降级 RAG 链路（而非误导性的兜底文案）
+          yield { type: "error", error: new AgentDecisionError(`agent 决策失败: ${err.message}`, err) };
+        } else {
+          // 已有部分内容流出，无法回退 → 保留已输出内容，礼貌收尾
+          yield { type: "trace", trace };
+          yield { type: "content", content: "", done: true };
         }
-        yield { type: "trace", trace };
-        yield { type: "content", content: "", done: true };
         return;
       }
 
@@ -246,6 +307,7 @@ class AgentService {
           yield { type: "content", content: "抱歉，我没有理解您的问题。", done: false };
         }
         trace.totalMs = Date.now() - totalStart;
+        persistTrace(trace);
         yield { type: "trace", trace };
         yield { type: "content", content: "", done: true };
         console.log(`[Agent] 完成（直接回答，第 ${round + 1} 轮），总耗时 ${Date.now() - totalStart}ms`);
@@ -257,32 +319,36 @@ class AgentService {
         yield { type: "tool_call", tool_call: { name: tc.function.name, arguments: parseToolArgs(tc.function.arguments) } };
       }
 
-      // 执行工具（含超时闸门）
-      const execStart = Date.now();
-      const results = [];
-      for (const tc of validCalls) {
-        let result;
-        let ok = true;
-        try {
-          result = await this.runTool(tc.function.name, parseToolArgs(tc.function.arguments), { userId: options.userId });
-          if (/^(工具.*失败|工具.*超时|未知工具)/.test(String(result))) ok = false;
-        } catch (err) {
-          result = `工具执行失败: ${err.message}`;
-          ok = false;
-        }
-        results.push({ tc, result });
+      // 执行工具（并行：多工具延迟从求和降为取最大值；单工具独立计时；含超时闸门）
+      const results = await Promise.all(
+        validCalls.map(async (tc) => {
+          const start = Date.now();
+          let r;
+          try {
+            r = await this.runTool(tc.function.name, parseToolArgs(tc.function.arguments), { userId: options.userId });
+          } catch (err) {
+            r = { ok: false, content: `工具执行失败: ${err.message}`, data: null };
+          }
+          return { tc, ok: r.ok, result: r.content, data: r.data, durationMs: Date.now() - start };
+        })
+      );
+      for (const r of results) {
         trace.toolCalls.push({
-          name: tc.function.name,
-          args: parseToolArgs(tc.function.arguments),
-          ok,
-          durationMs: Date.now() - execStart,
+          name: r.tc.function.name,
+          args: parseToolArgs(r.tc.function.arguments),
+          ok: r.ok,
+          durationMs: r.durationMs,
         });
+        mergeSources(collectedSources, r.data?.sources);
       }
-      const durationMs = Date.now() - execStart;
 
-      // 下发 tool_result 事件（前端展示）
-      for (const { tc, result } of results) {
+      // 下发 tool_result 事件（前端展示，单工具独立耗时）
+      for (const { tc, result, durationMs } of results) {
         yield { type: "tool_result", tool_result: { name: tc.function.name, content: result, status: "done", durationMs } };
+      }
+      // 知识库检索命中 → 透传 sources（前端引用展示，与 RAG 路径一致）
+      if (collectedSources.length > 0) {
+        yield { type: "sources", sources: collectedSources };
       }
       toolSummary.push(validCalls.map((t) => t.function.name).join(","));
 
@@ -298,7 +364,8 @@ class AgentService {
       ];
 
       // ---- 无进展检测：连续 2 轮相同工具调用 → 强制收尾 ----
-      const signature = validCalls.map((t) => `${t.function.name}:${t.function.arguments}`).join("|");
+      // 签名用 stableStringify 规范化（解析后 key 排序），避免 JSON key 顺序/空白差异绕过检测
+      const signature = validCalls.map((t) => `${t.function.name}:${stableStringify(parseToolArgs(t.function.arguments))}`).join("|");
       if (signature === lastSignature) {
         repeatCount++;
         if (repeatCount >= 2) {
@@ -325,10 +392,11 @@ class AgentService {
 
     // 收尾生成：不带 tools，强制 LLM 基于已回注的工具结果给出最终答案
     const finalTools = reachedLimit ? [] : tools;
-    for await (const chunk of this.aiService.getCompletionStream("", [], { messages, tools: finalTools })) {
+    for await (const chunk of this.aiService.getCompletionStream("", [], { messages, tools: finalTools, signal: options.signal })) {
       if (chunk.done) {
         trace.totalMs = Date.now() - totalStart;
         console.log(`[Agent] 完成，工具=${toolSummary.join(";")}, 总耗时 ${trace.totalMs}ms`);
+        persistTrace(trace);
         yield { type: "trace", trace };
         yield { type: "content", content: "", done: true };
         return;
@@ -340,98 +408,37 @@ class AgentService {
   }
 
   /**
-   * 非流式多轮调度（原生 function calling，L2）
-   * 逻辑与 chatStream 一致：最多 maxToolRounds 轮，无进展检测 + 强制收尾
+   * 非流式调度：统一 drain chatStream()（单一实现，消除两套循环逻辑的 drift 风险）
+   * AgentDecisionError 原样上抛，由控制器降级 RAG 链路
    */
   async chat(message, history = [], options = {}) {
-    const tools = getToolSchemas();
-    const maxRounds = config.agent?.maxToolRounds || 2;
-    let messages = buildDecisionMessages(message, history || []);
+    let reply = "";
+    const toolNames = [];
+    let sources = [];
+    let trace = null;
 
-    let lastSignature = null;
-    let repeatCount = 0;
-    let toolSummary = [];
-
-    for (let round = 0; round < maxRounds; round++) {
-      let response;
-      try {
-        response = await this.aiService.getCompletion("", [], { tools, messages, timeout: 15000, retries: 0 });
-      } catch (err) {
-        console.warn(`[Agent] 第 ${round + 1} 轮决策失败，直接回答:`, err.message);
-        return {
-          reply: "抱歉，我没有理解您的问题。",
-          isMock: false,
-          model: config.ai.model || "step-3.7-flash",
-          sources: [],
-          tool: { name: null, args: [], result: null },
-        };
-      }
-
-      const validCalls = (response.toolCalls || []).filter((tc) => tc.function?.name);
-
-      // LLM 直接回答 → 收尾
-      if (validCalls.length === 0) {
-        return {
-          reply: response.content || "抱歉，我没有理解您的问题。",
-          isMock: !!response.isMock,
-          model: response.model || config.ai.model || "step-3.7-flash",
-          sources: [],
-          tool: { name: null, args: [], result: null },
-        };
-      }
-
-      // 执行工具
-      const results = [];
-      for (const tc of validCalls) {
-        let r;
-        try {
-          r = await this.runTool(tc.function.name, parseToolArgs(tc.function.arguments), { userId: options.userId });
-        } catch (err) {
-          r = `工具执行失败: ${err.message}`;
-        }
-        results.push({ tc, result: r });
-      }
-      toolSummary.push(validCalls.map((t) => t.function.name).join(","));
-
-      // 工具结果回注
-      messages = [
-        ...messages,
-        { role: "assistant", content: null, tool_calls: toAssistantToolCalls(validCalls) },
-        ...results.map(({ tc, result }) => ({
-          role: "tool",
-          tool_call_id: tc.id,
-          content: String(result).substring(0, 4000),
-        })),
-      ];
-
-      // 无进展检测：连续 2 轮相同工具调用 → 强制收尾
-      const signature = validCalls.map((t) => `${t.function.name}:${t.function.arguments}`).join("|");
-      if (signature === lastSignature) {
-        repeatCount++;
-        if (repeatCount >= 2) {
-          console.warn(`[Agent] 检测到无进展循环（${signature}），强制收尾`);
-          messages = [
-            ...messages,
-            { role: "user", content: "你已多次调用相同工具。请基于已有信息直接给出最终回答，不要再调用任何工具。" },
-          ];
-          break;
-        }
-      } else {
-        lastSignature = signature;
-        repeatCount = 1;
+    for await (const ev of this.chatStream(message, history, options)) {
+      if (ev.type === "content") {
+        if (!ev.done) reply += ev.content || "";
+      } else if (ev.type === "tool_call") {
+        if (ev.tool_call?.name) toolNames.push(ev.tool_call.name);
+      } else if (ev.type === "sources") {
+        sources = ev.sources || [];
+      } else if (ev.type === "trace") {
+        trace = ev.trace || null;
+      } else if (ev.type === "error") {
+        throw ev.error; // AgentDecisionError（agentShouldFallback=true）→ 控制器降级 RAG
       }
     }
 
-    // 收尾生成：不带 tools，强制基于已回注的工具结果给出最终答案
-    const final = await this.aiService.getCompletion("", [], { messages });
-
     return {
-      reply: final.content,
-      isMock: !!final.isMock,
-      model: final.model || config.ai.model || "step-3.7-flash",
-      sources: [],
+      reply: reply || "抱歉，我没有理解您的问题。",
+      isMock: false,
+      model: config.ai.model || "step-3.7-flash",
+      sources,
+      trace,
       tool: {
-        name: toolSummary.join(";") || null,
+        name: toolNames.join(";") || null,
         args: [],
         result: null,
       },
@@ -439,4 +446,4 @@ class AgentService {
   }
 }
 
-module.exports = { AgentService, SYSTEM_PROMPT, buildDecisionMessages, buildMemorySummary, parseToolArgs };
+module.exports = { AgentService, AgentDecisionError, SYSTEM_PROMPT, buildDecisionMessages, buildMemorySummary, parseToolArgs, stableStringify, mergeSources };

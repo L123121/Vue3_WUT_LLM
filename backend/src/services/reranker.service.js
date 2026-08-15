@@ -94,9 +94,9 @@ class RerankerService {
       const texts = slices.map(c => String(c.text || ''));
 
       // Batch tokenize: 构造 (query, text) 对
-      // BGE-reranker: [CLS] query [SEP] passage [SEP]
-      const inputs = await tokenizer(texts, {
-        text_pair: texts.map(() => query),
+      // BGE-reranker 官方格式: [CLS] query [SEP] passage [SEP] —— query 必须是主输入
+      const inputs = await tokenizer(texts.map(() => query), {
+        text_pair: texts,
         padding: true,
         truncation: true,
         max_length: 512,
