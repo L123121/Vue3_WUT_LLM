@@ -1,420 +1,375 @@
 # WUT RAG Copilot / 武理小精灵
 
-![状态](https://img.shields.io/badge/status-active-success) ![版本](https://img.shields.io/badge/version-2.0.0-blue) ![Vue](https://img.shields.io/badge/Vue-3.5-brightgreen) ![Node](https://img.shields.io/badge/Node-20+-yellow)
+![状态](https://img.shields.io/badge/status-active-success) ![版本](https://img.shields.io/badge/version-2.0.0-blue) ![Vue](https://img.shields.io/badge/Vue-3.5-brightgreen) ![Node](https://img.shields.io/badge/Node-20-yellow) ![Vector DB](https://img.shields.io/badge/Qdrant-1.12.5-red)
 
-武理小精灵是面向武汉理工大学校园场景的 AI 助手。项目采用 **Vue 3 + Pinia + Express** 架构，围绕 AI 流式聊天、RAG 知识库、语音输入、多会话管理、评测体系构建完整的前后端应用。
+武理小精灵是面向武汉理工大学校园场景的 AI 助手。当前版本以 **Vue 3 + Pinia + Express + Qdrant** 为核心，通过统一会话编排层自动选择普通对话、RAG 检索或 Agent 工具调用，并以 SSE 向前端流式返回内容、来源和执行轨迹。
 
----
+> 当前仓库不包含成绩、课表、考试安排等教务系统查询工具；账号体系为项目自有注册与登录。
 
-## 功能概览
+## 核心能力
 
-### 用户侧能力
+### 用户功能
 
-- **AI 流式聊天**：通过 Fetch + ReadableStream 解析 SSE，支持边生成边渲染。
-- **RAG 知识库**：支持文档上传、批量录入、列表查看、统计查询和检索增强问答。
-- **语音输入**：基于 Web Speech API 的语音识别，实时转文字填入输入框。
-- **文件上传对话**：聊天页支持图片、PDF、Word、TXT 上传，文档内容会被解析后参与回答。
-- **多会话管理**：支持创建、切换、重命名、删除会话，已登录用户会话通过后端存储。
-- **教务系统集成**：使用教务账号登录后，可查询成绩、课表、考试安排和学期列表。
-- **评测体系**：离线测试集（32 题/6 文档）、LLM-as-judge（独立 Key）、人工抽检、线上反馈、回归评估。
-- **Agent 能力编排**：统一编排 Chat、RAG 与工具调用；数学计算自动进入 Agent，校园知识问答直接走 RAG，并支持失败降级。
-- **Markdown 渲染**：支持代码高亮、表格、富文本内容清洗和 Worker 渲染优化。
-- **个性化体验**：支持主题切换、中英文文案、头像与个人资料管理。
+- **流式 AI 对话**：基于 Fetch、ReadableStream 和 SSE 增量渲染回答。
+- **自动意图路由**：后端自动决定进入 `chat`、`rag` 或 `agent`，前端无需手动切换 RAG。
+- **RAG 知识库**：支持文档上传、批量录入、两级分类、统计、重索引、来源引用和反馈。
+- **Agent 工具调用**：内置知识库检索 `search_knowledge_base` 与数学计算 `calculate`。
+- **文件对话与 OCR**：支持图片、PDF、DOCX、PPTX、TXT、Markdown；扫描件和图片可走视觉 OCR。
+- **会话管理**：创建、切换、重命名、删除、重试、收藏和后端持久化。
+- **公开分享**：登录用户可生成只读分享快照，访问 `/share/:code` 无需登录。
+- **语音输入**：浏览器支持 Web Speech API 时可实时转写。
+- **评测与反馈**：包含检索评测、RAGAS、LLM-as-judge、Agent 路由评测和人工评分页面。
+- **个性化体验**：主题、语言、头像、个人资料与用户授权记忆。
 
-### 工程侧能力
+### 工程能力
 
-- **前后端分离**：开发阶段 Vite 代理 `/api` 到 Express，生产阶段后端托管 `dist/`。
-- **Cookie 鉴权**：登录成功后后端写入 httpOnly JWT cookie，前端只缓存用户展示信息。
-- **存储自适应**：配置 `REDIS_URL` 时使用 Redis；未配置时使用本地 SQLite（`backend/data/store.db`，WAL）。
-- **安全防护**：启用 Helmet、CORS 白名单、速率限制、上传文件 MIME 嗅探防护。
-- **容器部署**：提供 Dockerfile、Docker Compose、nginx 配置和 GitHub Actions 部署流水线。
-- **测试覆盖**：包含前端 store/composable 测试，以及后端 RAG、路由和中间件测试。
-- **执行可靠性**：工具参数校验、超时取消、客户端断开传播、持久记忆读取与原子化写入。
+- httpOnly JWT Cookie 鉴权，支持注册、登录、退出和修改密码。
+- SQLite WAL 默认持久化；配置 `REDIS_URL` 时切换为 RedisStore。
+- Qdrant 默认向量后端，本地文件向量存储可作为离线降级方案。
+- Helmet、CORS 白名单、接口限流、用户配额和上传文件 MIME 校验。
+- 工具参数 Schema 校验、超时取消、客户端断开传播、循环检测与失败降级。
+- Docker 多阶段构建、Docker Compose、GitHub Actions 和健康检查。
 
----
-
-## 页面与演示
-
-| 页面 | 路由 | 说明 |
-| --- | --- | --- |
-| 登录页 | `/login` | 账号密码登录，成功后设置 httpOnly cookie |
-| 聊天页 | `/chat` | AI 对话、文件上传、语音输入、会话列表 |
-| 知识库 | `/knowledge` | RAG 文档上传、文档管理、两级分类、统计信息 |
-| 评测页 | `/eval` | 人工评分、LLM-as-judge 结果、系统指标 |
-| 反馈页 | `/feedback` | 线上反馈看板（管理员） |
-
----
-
-## RAG 检索链路设计
-
-### 整体流程
-
-```
-用户提问
-  ↓
-① BGE-small-zh ONNX 向量化
-   生成稠密向量 512d + n-gram 稀疏向量（整数 key 哈希）
-  ↓
-② 本地向量库精确检索 (topK=50)
-   稠密 COSINE 相似度 ×0.6 + 稀疏 IP 相似度 ×0.4
-   （文件持久化 data/vectors.json，精确计算无 ANN 近似误差）
-  ↓
-③ 50 个候选句子 → 按 parentId 归并
-   从句子级命中回溯到父段落，得到 ~15 个完整段落
-  ↓
-④ BGE-reranker-base cross-encoder
-   逐对（query, 段落）计算语义相关性分数 → sigmoid 归一化
-  ↓
-⑤ 自适应截断
-   断崖检测（相邻分差 > 0.05 截断）
-   低分过滤（< 0.3 丢弃）
-   硬上限（rerankTopK=10）
-  ↓
-⑥ 二级排序
-   按 (docId, parentIdx) 排序，保证上下文按文档阅读顺序排列
-  ↓
-⑦ 上下文组装
-   拼接段落原文，最大 6000 字
-  ↓
-⑧ step-3.7-flash LLM 生成
-   基于检索上下文生成回答，附带 sources 引用
-```
-
-### 父子段落架构
-
-```
-文档
-  ├─ 章节合并（按"一、二、三"中文章节标题合并）
-  ├─ 段落（父级）← 检索后返回的上下文单位
-  │   └─ 句子（子级，512 维向量化）← 检索命中单位
-  │
-  检索时：命中句子 → 按 parentId 去重 → 返回完整父段落
-  目的：减少 token 消耗（~6000→~300 字），保留完整语义
-```
-
-### 为什么这样设计
-
-| 设计决策 | 解决的问题 | 具体方案 |
-|---------|-----------|---------|
-| 父子段落 | 直接返回句子上下文太碎片，大段原文 token 太多 | 句子索引 + 段落上下文，降 95% token |
-| 混合检索 | 纯语义检索可能漏掉精确关键词匹配 | 稠密×0.6 + 稀疏×0.4 |
-| BGE-reranker | 向量检索的排序不够精确 | cross-encoder 逐对打分，~145ms/15 候选 |
-| 自适应截断 | reranker 分数低的段落反而污染上下文 | 断崖检测 + 低分过滤 + 硬上限 |
-
-### 涉及的核心服务
-
-| 服务 | 文件 | 职责 |
-|------|------|------|
-| Embedding | `embedding.service.js` | BGE-small-zh ONNX + n-gram 稀疏 |
-| 向量检索 | `vector-store-qdrant.service.js` / `vector-store.service.js` | Qdrant 默认后端，本地文件精确检索可切换 |
-| 重排 | `reranker.service.js` | BGE-reranker-base cross-encoder |
-| 检索管道 | `rag.service.js` | 混合检索→归并→rerank→截断→排序→组装 |
-| 文档索引 | `indexing.service.js` | 章节合并→段落→句子三层切片 |
-
----
-
-## 流式聊天架构
-
-### 前端链路
-
-```
-ChatBox 输入框
-  ↓ @send 事件
-AIChat.vue 页面
-  ↓ chatStore.sendMessage()
-useStreaming composable
-  ├─ 插入用户消息 + 空 AI 消息
-  ├─ 构建历史上下文（最近 20 条，去重连续同角色）
-  ├─ 合并 skillPrompt（来自 skill.store）
-  ├─ 调用 sendMessageStream() → POST /api/stream
-  └─ 绑定回调
-       ├─ onChunk → RAF 合并文本 → 更新消息
-       ├─ onSources → 写入来源引用
-       ├─ onTrace → 写入检索链路追踪
-       ├─ onDone → 自动生成标题、持久化
-       └─ onError → 标记错误消息、可重试
-```
-
-### SSE 解析
-
-```js
-// 核心：fetch + ReadableStream + TextDecoder 解析 data: 行
-fetch('/api/stream', { body: {...} })
-  → response.body.getReader()
-  → TextDecoder('utf-8') 增量解码
-  → buffer 按 \n 拆行
-  → 只处理 data: 开头的行
-  → data: [DONE] 结束
-  → JSON.parse 后分发回调
-```
-
-### 关键设计
-
-| 问题 | 解决方案 |
-|------|---------|
-| 频繁更新触发大量重渲染 | `requestAnimationFrame` 合并 chunk，每帧只写一次 |
-| 浏览器后台 Tab 暂停 RAF | `visibilitychange` 事件监听，切后台时立即落盘 |
-| 快速切换会话导致 UI 错乱 | 每个 chunk 校验 `conversationId`，切换时自动 `abortCurrentRequest()` |
-| 会话列表重排写错消息 | 不缓存 `convIndex`，每次写操作重新 `findIndex` 解析 |
-| 流式响应超过 60s 无数据 | `STREAM_STALL_TIMEOUT=60000` 超时兜底 |
-| 连接断开 | 指数退避重连（1s→2s→4s→...→30s），最多 3 次 |
-
----
-
-## 状态管理设计
-
-### Pinia 三层拆分
-
-```
-chat.store（聚合层）→ 页面统一接口
-  ├─ conversation.store（会话数据）
-  │   ├─ 会话列表、当前会话 ID
-  │   ├─ localStorage 缓存（300ms 防抖增量保存）
-  │   ├─ 后端 API 同步（500ms 防抖）
-  │   └─ 本地 fallback（未登录时创建 local_ 会话）
-  └─ message.store（流式过程）
-      ├─ isLoading / currentStreamingId / isConnected
-      ├─ sendMessage() / retryMessage() / abortCurrentRequest()
-      └─ 委托 useStreaming composable
-```
-
-### 为什么这样拆
-
-| 拆分 | 原因 |
-|------|------|
-| 会话 vs 消息 | 会话是"数据"（列表、ID、缓存），消息是"过程"（loading、流式状态），生命周期不同 |
-| 聚合层 | 页面只关心 `chatStore.sendMessage()`，不关心内部组合 |
-| 独立 store | 避免一个 store 同时承担数据建模、网络请求和 UI 状态 |
-
----
-
-## 评测体系
-
-### 整体架构
-
-```
-离线测试集（32 题，覆盖 6 个文档）
-  ├─ eval-retrieval.js → 检索指标
-  │   Recall@K / Precision@K / MRR / nDCG@5
-  ├─ LLM-as-judge → 生成质量
-  │   ├─ 独立 API Key（不跟生产抢配额）
-  │   ├─ step-3.5-flash（temperature=0）
-  │   ├─ 4 指标合并 1 次请求
-  │   │   faithfulness / answer_relevancy
-  │   │   context_precision / context_recall
-  │   └─ 失败降级 → 关键词匹配
-  ├─ 人工抽检（EvalScoring.vue）
-  │   1-5 分打分、键盘快捷键、导入导出
-  └─ 线上反馈（RagFeedback.vue）
-      用户 like/dislike、来源追踪、分页筛选
-
-回归评估：基线比对，指标变化 > 2% 告警
-```
-
-### LLM-as-judge 设计
-
-| 属性 | 值 | 原因 |
-|------|:---:|------|
-| 模型 | step-3.5-flash | 小模型做 judge 够用，不浪费配额 |
-| API Key | 独立 Key | 跟生产流量（step-3.7-flash）完全隔离，互不抢占 5 并发/10 RPM |
-| Temperature | 0 | 评测需要确定性，不要创造力 |
-| 请求合并 | 4 指标→1 次 | 128 次 API 调用降到 32 次 |
-| 降级 | 关键词匹配 | API 失败时自动兜底，不卡死 |
-
----
-
-## 流式聊天示例
-
-请求：
-
-```json
-{
-  "message": "武汉理工大学有几个校区？",
-  "history": [],
-  "conversationId": "conv_123",
-  "files": []
-}
-```
-
-SSE 响应：
+## 会话编排
 
 ```text
-data: {"content":"武汉理工大学有"}
-data: {"content":"三个校区，分别是"}
-data: {"content":"马房山校区、余家头校区和南湖校区。"}
-data: {"sources":[{"title":"校园手册","snippet":"..."}]}
-data: [DONE]
+用户消息
+   │
+   ▼
+ConversationOrchestrator
+   ├── IntentRouter ── 普通问候/闲聊 ───────────────► chat
+   ├── IntentRouter ── 校园或知识型问题/默认兜底 ─► rag
+   └── IntentRouter ── 数学计算/复合任务 ─────────► agent
+                                                   │
+                                                   ├── calculate
+                                                   └── search_knowledge_base
 ```
 
----
+路由原则：
+
+1. 高置信规则优先，避免每条消息额外调用一次 LLM。
+2. 无法明确分类时默认进入 RAG，RAG 无可靠来源时再降级为普通模型回答。
+3. Agent 决策或工具执行失败时自动降级至 RAG。
+4. `INTENT_CLASSIFY_ENABLED=true` 可开启 LLM 意图分类；默认关闭以降低首包延迟。
+5. `AGENT_TOOL_ENABLED=false` 可关闭工具调度并回退 RAG 链路。
+
+Agent 默认最多执行两轮工具调度，并包含无进展循环检测。流式接口会按执行过程返回 `intent`、`tool_call`、`tool_result`、`sources`、`content` 和 `trace` 事件。
+
+## RAG 检索链路
+
+```text
+用户问题
+  │
+  ├── BGE-small-zh-v1.5：生成 dense embedding
+  └── n-gram：生成 sparse vector
+          │
+          ▼
+Qdrant 混合检索（默认 topK=50）
+          │
+          ▼
+子片段候选选择与父段归并
+          │
+          ▼
+BGE-reranker-base 重排
+          │
+          ▼
+自适应分数截断 + MMR 去重
+          │
+          ▼
+父段上下文组装（默认最多 6000 字符）
+          │
+          ▼
+StepFun LLM 生成回答并附带 sources
+```
+
+### 关键服务
+
+| 服务 | 文件 | 职责 |
+| --- | --- | --- |
+| 会话编排 | `backend/src/services/conversation-orchestrator.service.js` | 统一处理 chat、RAG、Agent 与记忆 |
+| 意图路由 | `backend/src/services/intent-router.service.js` | 快速规则、可选 LLM 分类和默认兜底 |
+| Agent | `backend/src/services/agent.service.js` | 多轮工具决策、执行、收尾和轨迹输出 |
+| 工具注册 | `backend/src/services/tool-registry.service.js` | Schema 校验、超时、取消和结构化结果 |
+| 内置工具 | `backend/src/services/agent-tools.js` | 知识库检索与安全数学计算 |
+| RAG 管道 | `backend/src/services/rag.service.js` | 检索、重排、父子上下文和生成 |
+| 排序策略 | `backend/src/services/rag-ranking.service.js` | 问题分类、自适应截断和 MMR 去重 |
+| Embedding | `backend/src/services/embedding.service.js` | 本地 BGE dense 与 n-gram sparse |
+| Reranker | `backend/src/services/reranker.service.js` | BGE cross-encoder 语义重排 |
+| 向量存储 | `backend/src/services/vector-store-qdrant.service.js` | Qdrant collection 与混合检索 |
+| 向量适配 | `backend/src/services/vector-store.service.js` | Qdrant / file 后端选择 |
+
+## 页面路由
+
+| 页面 | 路由 | 权限 | 说明 |
+| --- | --- | --- | --- |
+| 登录与注册 | `/login` | 公开 | 自有账号注册、登录 |
+| AI 对话 | `/chat` | 登录 | SSE 对话、文件、语音、会话与工具轨迹 |
+| 知识库 | `/knowledge` | 登录 | 已登录用户查看；管理员上传、删除和重索引 |
+| 评测 | `/eval` | 登录 | 人工评分、Judge 结果与系统指标 |
+| 反馈看板 | `/feedback` | 管理员 | RAG 反馈分页和筛选 |
+| 分享快照 | `/share/:code` | 公开只读 | 查看已生成的对话快照 |
+
+## 主要 API
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `GET` | `/api/health` | 服务健康检查 |
+| `POST` | `/api/stream` | 主 SSE 会话接口 |
+| `POST` | `/api/chat/upload` | 登录用户上传聊天文件 |
+| `POST` | `/api/auth/register` | 注册并写入认证 Cookie |
+| `POST` | `/api/auth/login` | 登录并写入认证 Cookie |
+| `GET` | `/api/auth/me` | 获取当前用户 |
+| `GET` | `/api/conversations` | 会话列表与持久化接口 |
+| `GET` | `/api/rag/documents` | 查看知识库文档 |
+| `POST` | `/api/rag/documents/upload` | 管理员上传知识库文档 |
+| `POST` | `/api/rag/documents/reindex` | 管理员重建索引 |
+| `POST` | `/api/share` | 创建分享快照 |
+| `GET` | `/api/share/:code` | 公开读取分享快照 |
+| `GET` | `/api/memory` | 用户记忆接口 |
+
+## 快速开始
+
+### 环境要求
+
+- Node.js 20
+- npm
+- StepFun 或其他 OpenAI-compatible 模型服务 Key
+- Docker（使用 Qdrant 或生产部署时需要）
+
+### 安装依赖
+
+根目录安装会通过 `postinstall` 同时安装后端依赖：
+
+```bash
+npm install
+```
+
+### 配置后端
+
+```bash
+cp backend/.env.example backend/.env
+```
+
+至少配置：
+
+```dotenv
+AI_API_KEY=your_api_key
+AI_BASE_URL=https://api.stepfun.com/v1
+AI_MODEL=step-3.7-flash
+JWT_SECRET=replace_with_a_long_random_secret
+```
+
+使用 Qdrant：
+
+```dotenv
+VECTOR_STORE_BACKEND=qdrant
+QDRANT_URL=http://localhost:6333
+```
+
+然后启动 Qdrant：
+
+```bash
+docker compose -p wuli-elf up -d qdrant
+```
+
+不使用 Qdrant 时，可临时切换本地文件后端：
+
+```dotenv
+VECTOR_STORE_BACKEND=file
+```
+
+### 启动开发环境
+
+终端一：
+
+```bash
+npm start
+```
+
+终端二：
+
+```bash
+npm run dev
+```
+
+- 前端：`http://localhost:5173`
+- 后端：`http://localhost:3000`
+- 健康检查：`http://localhost:3000/api/health`
+
+## 常用命令
+
+```bash
+npm run dev          # 启动 Vite
+npm start            # 启动 Express
+npm run lint:check   # ESLint 检查
+npm run lint         # ESLint 自动修复
+npm test             # 前后端 Vitest
+npm run build        # 生产前端构建
+npm run format       # Prettier
+```
+
+RAG 与 Agent 评测脚本位于 `scripts/rag-eval/`，主要数据集位于 `scripts/rag-eval/dataset/`。
 
 ## 环境变量
 
-后端读取 `backend/.env`，生产部署读取 `deploy/.env.production`。前端只在需要跨域部署时读取根目录 `.env` 中的 `VITE_API_BASE_URL`。
+### 必填配置
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `PORT` | `3000` | 后端服务端口 |
-| `NODE_ENV` | `development` | 运行环境；生产环境会托管 `dist/` |
-| `AI_API_KEY` | 无 | 模型服务 Key，后端启动必填 |
-| `AI_BASE_URL` | `https://api.stepfun.com/step_plan/v1` | OpenAI-compatible API 地址 |
-| `AI_MODEL` | `step-3.7-flash` | 默认模型名称 |
-| `LLM_CONCURRENCY` | `3` | 生产并发数（控制 API 请求排队） |
-| `JUDGE_API_KEY` | 同 AI_API_KEY | LLM-as-judge 独立 Key（不跟生产抢配额） |
-| `JUDGE_MODEL` | `step-3.5-flash` | 评测模型 |
-| `JWT_SECRET` | 无 | JWT 签名密钥，后端启动必填 |
-| `XUNFEI_API_KEY` | 空 | 讯飞相关 Key，可选 |
-| `XUNFEI_APP_ID` | 空 | 讯飞 App ID |
-| `EMBEDDING_MODEL` | `Xenova/bge-small-zh-v1.5` | 本地 Embedding 模型 |
-| `EMBEDDING_CACHE_DIR` | `.model-cache` | 本地模型缓存目录 |
-| `EMBEDDING_LOCAL_FILES_ONLY` | `true` | 是否只使用本地缓存模型 |
-| `EMBEDDING_SPARSE_DIM` | `250002` | n-gram sparse 哈希空间大小 |
-| `VECTOR_STORE_BACKEND` | `qdrant` | 向量库后端；生产 Compose 使用 `qdrant`，离线单机可切换为 `file` |
-| `MILVUS_ADDRESS` | `localhost:19530` | 预留：Milvus gRPC 地址（本地方案下不使用） |
-| `MILVUS_COLLECTION` | `wuli_elf_chunks` | 预留：Milvus collection（本地方案下不使用） |
-| `MILVUS_DENSE_FIELD` | `dense_vector` | 预留：dense 向量字段（本地方案下不使用） |
-| `MILVUS_SPARSE_FIELD` | `sparse_vector` | 预留：sparse 向量字段（本地方案下不使用） |
-| `MILVUS_DENSE_WEIGHT` | `0.6` | 混合检索 dense 权重 |
-| `MILVUS_SPARSE_WEIGHT` | `0.4` | 混合检索 sparse 权重 |
-| `RAG_VECTOR_TOP_K` | `50` | 向量检索候选数 |
-| `RAG_RERANK_TOP_K` | `10` | 重排后进入父文档上下文的片段数 |
-| `RAG_MAX_CONTEXT_LENGTH` | `6000` | 上下文最大字符数 |
-| `RAG_MIN_SOURCE_SCORE` | `0.03` | 低于该分数时触发无可靠来源拒答 |
-| `REDIS_URL` | 无 | Redis 连接串；不填则使用本地 MemoryStore |
-| `CORS_ORIGIN` | 无 | 生产环境必填，多个域名用英文逗号分隔 |
-| `VITE_API_BASE_URL` | `/api` | 前端 API 基础路径，跨域部署时设置 |
+| `AI_API_KEY` | 无 | 模型服务 Key，非测试环境必须设置 |
+| `JWT_SECRET` | 无 | JWT 签名密钥，非测试环境必须设置 |
+| `AI_BASE_URL` | `https://api.stepfun.com/v1` | OpenAI-compatible API 地址 |
+| `AI_MODEL` | `step-3.7-flash` | 主对话模型 |
+| `CORS_ORIGIN` | 无 | 生产跨域白名单，多个来源用逗号分隔 |
 
----
+### Agent 与路由
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `INTENT_ROUTING_ENABLED` | `true` | 启用自动路由 |
+| `INTENT_CLASSIFY_ENABLED` | `false` | 启用 LLM 意图分类兜底 |
+| `AGENT_TOOL_ENABLED` | `true` | 启用 Agent 工具调用 |
+| `AGENT_MAX_TOOL_ROUNDS` | `2` | 最大工具调度轮数 |
+| `AGENT_DECIDE_TIMEOUT_MS` | `15000` | Agent 决策超时 |
+| `AGENT_TOOL_TIMEOUT_MS` | `15000` | Agent 工具执行总超时 |
+
+### RAG 与模型
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `VECTOR_STORE_BACKEND` | `qdrant` | `qdrant` 或 `file` |
+| `QDRANT_URL` | `http://localhost:6333` | Qdrant REST 地址 |
+| `QDRANT_COLLECTION` | `wuli_elf_chunks` | Collection 名称 |
+| `EMBEDDING_MODEL` | `Xenova/bge-small-zh-v1.5` | Embedding 模型标识 |
+| `EMBEDDING_CACHE_DIR` | `.model-cache` | 本地模型缓存目录 |
+| `EMBEDDING_LOCAL_FILES_ONLY` | `true` | 是否禁止运行时下载模型 |
+| `RAG_HYBRID_SEARCH` | `true` | 启用 dense + sparse 混合检索 |
+| `RAG_VECTOR_TOP_K` | `50` | 初始候选数 |
+| `RAG_RERANK_TOP_K` | `10` | 重排后最大候选数 |
+| `RAG_MAX_CONTEXT_LENGTH` | `6000` | 最大上下文字符数 |
+| `RAG_MIN_SOURCE_SCORE` | `0.03` | 可靠来源最低分数 |
+| `RAG_FUSION` | `weighted` | `weighted` 或 `rrf` |
+| `RAG_MMR_ENABLED` | `true` | 启用父段 MMR 去重 |
+
+### 可选能力
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `AI_FALLBACK_API_KEY` | 空 | 主模型失败时的备用 Provider |
+| `AI_ENABLE_THINKING` | `false` | 是否开启模型思考模式 |
+| `JUDGE_API_KEY` | `AI_API_KEY` | LLM-as-judge 独立 Key |
+| `JUDGE_MODEL` | `step-3.5-flash` | Judge 模型 |
+| `OCR_ENABLED` | `true` | 图片与扫描 PDF OCR |
+| `OCR_MODEL` | `step-1o-turbo-vision` | OCR 视觉模型 |
+| `REDIS_URL` | 空 | 设置后使用 Redis；否则使用 SQLite |
+| `AUTH_INVITE_CODE` | 空 | 注册邀请码；为空时不要求邀请码 |
+| `ADMIN_USERNAME` | `admin` | 管理员用户名 |
+| `ADMIN_PASSWORD` | 随机生成 | 生产环境应显式设置 |
+| `QUOTA_DAILY_LIMIT` | `100` | 普通用户每日调用额度 |
+| `QUOTA_ANONYMOUS_LIMIT` | `20` | 匿名额度 |
+| `QUOTA_ADMIN_LIMIT` | `1000` | 管理员额度 |
+
+完整模板见 `backend/.env.example` 与 `deploy/.env.production.example`。
+
+## 数据与持久化
+
+| 数据 | 默认实现 | 容器路径 / 持久化方式 |
+| --- | --- | --- |
+| 用户、会话、分享、反馈、配额 | SQLite WAL | `/app/backend/data/store.db`，`backend-data` volume |
+| 向量索引 | Qdrant 1.12.5 | `/qdrant/storage`，`qdrant-storage` volume |
+| 上传文件 | 本地目录 | `/app/backend/uploads`，`uploads-data` volume |
+| 知识库源文件 | `ragdata/` | 只读挂载到 `/app/ragdata` |
+| Embedding / Reranker 模型 | `.model-cache/` | 只读挂载到 `/app/.model-cache` |
+
+`REDIS_URL` 存在时，RedisStore 会替代默认 SQLiteStore。首次从旧版升级时，SQLiteStore 可迁移已有 `store.json`。
 
 ## 项目结构
 
 ```text
 .
-├── src/                         # Vue 3 前端源码
-│   ├── api/                     # fetch 封装、聊天/SSE、RAG、评测 API
-│   ├── components/              # 聊天、通用、评测、布局组件
-│   ├── composables/             # 流式输出、Markdown、懒加载、指标等复用逻辑
-│   ├── i18n/                    # 多语言文案
-│   ├── router/                  # Vue Router 与登录守卫
-│   ├── stores/                  # Pinia：认证、会话、消息、收藏、主题、语言等
-│   ├── utils/                   # Markdown、错误、缓存、加密等工具
-│   ├── views/                   # Login、AIChat、KnowledgeBase、EvalScoring、Settings
+├── src/
+│   ├── api/                     # API 与 SSE 客户端
+│   ├── components/              # 聊天、布局、通用和评测组件
+│   ├── composables/             # 流式、Markdown、知识库等复用逻辑
+│   ├── router/                  # Vue Router 与权限守卫
+│   ├── stores/                  # Pinia 状态
+│   ├── views/                   # Chat、Knowledge、Eval、Feedback、Share、Login
 │   ├── workers/                 # Markdown Worker
 │   └── __tests__/               # 前端测试
 ├── backend/
 │   ├── src/
-│   │   ├── app.js               # Express 入口
-│   │   ├── config/              # 环境变量配置
-│   │   ├── controllers/         # 聊天控制器
-│   │   ├── middleware/          # CORS、Helmet、认证、限流等中间件
-│   │   ├── routes/              # 会话、RAG、评测路由
-│   │   ├── services/            # AI、RAG、Embedding、Reranker、Judge、指标服务
-│   │   └── utils/               # HTTP 客户端、响应、文本切分工具
+│   │   ├── config/              # 环境配置
+│   │   ├── controllers/         # Chat 与 RAG 控制器
+│   │   ├── middleware/          # 认证、安全、限流、配额
+│   │   ├── routes/              # Auth、Conversation、RAG、Eval、Share、Memory
+│   │   ├── services/            # Orchestrator、Agent、RAG、模型与存储
+│   │   └── utils/               # HTTP、文本与响应工具
 │   ├── __tests__/               # 后端测试
-│   ├── data/                    # 本地 MemoryStore 数据
-│   ├── uploads/                 # 后端上传文件
-│   └── package.json
-├── deploy/                      # nginx、生产 env 模板、部署脚本
-├── scripts/rag-eval/            # RAG 评测脚本与数据集
-├── data/                        # 项目数据目录
-├── uploads/                     # 上传文件目录
-├── Dockerfile                   # 前端构建 + 后端运行镜像
-├── docker-compose.yml           # nginx + backend + redis 生产编排
-├── vite.config.js               # Vite 配置与开发代理
+│   ├── data/                    # SQLite 数据
+│   └── uploads/                 # 上传文件
+├── deploy/                      # nginx、生产变量模板与部署文档
+├── ragdata/                     # 知识库源文档
+├── scripts/rag-eval/            # 检索、RAGAS、Agent 与性能评测
+├── Dockerfile                   # 前端 + 后端多阶段镜像
+├── docker-compose.yml           # backend + Qdrant 生产编排
 └── README.md
 ```
 
----
+## 测试与质量门禁
 
-## 模型与数据库
+提交前建议执行：
 
-### AI 模型
-
-| 用途 | 模型 | 部署方式 | 说明 |
-|------|------|---------|------|
-| 主对话 | step-3.7-flash | StepFun API | 生产聊天，支持图文多模态 |
-| 评测 judge | step-3.5-flash | StepFun API（独立 Key） | LLM-as-judge，不跟生产抢配额 |
-| Embedding | BGE-small-zh-v1.5 | 本地 ONNX（@huggingface/transformers） | 512 维稠密向量，24MB |
-| Reranker | BGE-reranker-base | 本地 ONNX（cross-encoder） | 语义重排，INT8，278MB |
-
-### 数据库与存储
-
-| 类型 | 技术 | 用途 | 部署方式 |
-|------|------|------|---------|
-| 向量库 | Qdrant（默认）/ 本地文件（可选） | 稠密+稀疏向量混合检索 | Compose 独立服务 / 单机精确检索 |
-| 业务数据 | SQLite | 文档元数据、用户信息、会话记录 | 文件持久化（backend/data/） |
-| 缓存 | MemoryStore | 会话列表缓存 | 内存（无 Redis 时降级） |
-| 可选缓存 | Redis | 高性能会话缓存 | 配置 REDIS_URL 启用 |
-
-### 部署架构
-
-```text
-用户浏览器
-  │
-  ▼
-nginx:80/443（SSL 终止）
-  │
-  ▼
-Express:3000（API + 静态资源）
-  │
-  ├── Qdrant:6333（默认向量检索）
-  ├── data/vectors.json（`VECTOR_STORE_BACKEND=file` 时启用）
-  ├── SQLite（文档/用户/会话持久化）
-  └── StepFun API（LLM 推理）
+```bash
+npm run lint:check
+npm test
+npm run build
+docker compose config --quiet
 ```
 
----
+GitHub Actions 工作流包含：
 
-## 技术栈
+1. 安装前后端依赖。
+2. ESLint、`npm audit` 和 Vitest。
+3. 构建并推送提交 SHA 与 `latest` 镜像。
+4. ECS 健康检查，失败时回滚上一镜像。
 
-### 前端
-
-- Vue 3.5、Composition API、Vue Router 4、Pinia
-- Vite 6、Tailwind CSS 4、lucide-vue-next、Element Plus Icons
-- markdown-it、highlight.js、DOMPurify、Web Worker
-- Vitest、Vue Test Utils、jsdom
-
-### 后端
-
-- Node.js 20、Express 4、cookie-parser、jsonwebtoken
-- ONNX 本地模型：BGE-small-zh（Embedding）、BGE-reranker-base（重排）
-- 本地向量库：文件持久化（data/vectors.json）+ 精确相似度检索（稠密×0.6 + 稀疏×0.4）
-- LLM：StepFun step-3.7-flash（生产）、step-3.5-flash（评测，独立 Key）
-- multer、pdf-parse、mammoth
-- Helmet、CORS、express-rate-limit、morgan
-
-### 部署
-
-- Docker 多阶段构建：前端构建产物 + 后端运行环境
-- Docker Compose：nginx SSL 反代 + backend（向量/业务均本地持久化，无需外部向量数据库）
-- GitHub Actions：Lint、Test、Build、Push、Deploy to ECS
-
----
+使用工作流前必须修改 `.github/workflows/deploy.yml` 中的占位 `IMAGE_NAME`，并配置 Docker Registry 与 ECS Secrets。
 
 ## 生产部署
 
-推荐使用 Docker Compose 部署：
+### 当前 Compose 结构
+
+`docker-compose.yml` 默认管理：
+
+- `backend`：Express API，监听宿主机 `127.0.0.1:3000`。
+- `qdrant`：固定为 `qdrant/qdrant:v1.12.5`，监听宿主机 `127.0.0.1:6333-6334`。
+- `backend-data`、`uploads-data`、`qdrant-storage` 三个持久化卷。
+
+仓库中的容器 nginx 服务默认已停用。当前生产方式是宿主机 nginx 提供静态文件并反向代理 `/api`、`/uploads` 到 `127.0.0.1:3000`。
+
+### 部署命令
 
 ```bash
 cp deploy/.env.production.example deploy/.env.production
-# 编辑 deploy/.env.production，填写 AI_API_KEY、JWT_SECRET、CORS_ORIGIN 等
+# 编辑 deploy/.env.production，至少设置 AI_API_KEY、JWT_SECRET、CORS_ORIGIN、ADMIN_PASSWORD
 
-docker compose -p wuli-elf up -d --build
-docker compose -p wuli-elf logs -f
-curl http://localhost:3000/api/health
+docker compose -p wuli-elf config --quiet
+docker compose -p wuli-elf up -d qdrant backend
+docker compose -p wuli-elf ps
+curl http://127.0.0.1:3000/api/health
 ```
 
-生产结构：
+### 生产注意事项
 
-```text
-用户 → nginx(80/443, SSL 终止) → backend(Express API + dist 静态资源) → data/vectors.json（本地向量检索）
-```
+- `deploy/.env.production`、`.env`、`backend/.env` 不得提交到 Git。
+- `EMBEDDING_LOCAL_FILES_ONLY=true` 时，必须提前准备 `.model-cache/`。
+- Qdrant 数据卷当前使用 `v1.12.5` 格式；升级镜像前必须备份并验证存储兼容性。
+- `@huggingface/transformers`、ONNX Runtime、Sharp 和 better-sqlite3 包含原生依赖，受限网络环境建议在 CI 构建镜像后由服务器拉取，不建议直接在 ECS 上首次构建。
+- 部署时使用提交 SHA 镜像标签，并在切换前保留旧镜像和数据备份。
 
-完整证书、ECS 安全组、CI/CD 和运维命令见 [deploy/README.md](deploy/README.md)。
+更完整的 nginx、证书、CI/CD、备份和排障说明见 `deploy/README.md`。
 
----
+## 项目地址
 
-## 许可与联系
-
-- 项目地址：https://github.com/L123121/Vue3_WUT_LLM
+- GitHub：[L123121/Vue3_WUT_RAG](https://github.com/L123121/Vue3_WUT_RAG)
 - 问题反馈：GitHub Issues
