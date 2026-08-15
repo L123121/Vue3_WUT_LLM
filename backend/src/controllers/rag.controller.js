@@ -18,6 +18,12 @@ const FEEDBACK_EVENT_LIMIT = 500;
 const FEEDBACK_ALL_KEY = 'rag_feedback:all';
 const FEEDBACK_ALL_EVENTS_KEY = 'rag_feedback_events:all';
 
+function saveChatMemory(userId, message, reply) {
+  Promise.resolve(memoryService.saveChatMemory(userId, message, reply)).catch((error) => {
+    console.error('[RAG Memory] 保存失败:', error.message);
+  });
+}
+
 function truncateFeedbackText(value, limit = FEEDBACK_TEXT_LIMIT) {
   const text = String(value || '').trim();
   return text.length > limit ? `${text.slice(0, limit)}...` : text;
@@ -91,7 +97,7 @@ const ragChat = async (req, res, next) => {
     const result = await ragService.chat(message, history || [], getTraceOptions(req, { category, ...getRerankOverrides(req) }));
     res.setHeader('X-Trace-Id', result.traceId || req.traceId);
     successResponse(res, result, 'RAG 处理完成');
-    memoryService.saveChatMemory(req.userId, message, result.reply);
+    saveChatMemory(req.userId, message, result.reply);
   } catch (error) {
     console.error('[RAG Controller] 错误:', error);
     next(error);
@@ -102,6 +108,12 @@ const ragChat = async (req, res, next) => {
  * RAG 增强流式聊天接口
  */
 const ragChatStream = async (req, res, next) => {
+  let abortController = null;
+  let onClientClose = null;
+  const cleanupClientClose = () => {
+    if (onClientClose) res.removeListener('close', onClientClose);
+  };
+
   try {
     const { message, history, category } = req.body;
 
@@ -109,7 +121,7 @@ const ragChatStream = async (req, res, next) => {
       return res.status(400).json({ error: '消息内容不能为空' });
     }
 
-    var _fullReply = '';
+    let fullReply = '';
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
@@ -117,8 +129,8 @@ const ragChatStream = async (req, res, next) => {
     res.flushHeaders();
 
     // 客户端断开 → 中止上游 LLM 流（注意监听 res 的 close，req 的 close 读完请求体即触发）
-    const abortController = new AbortController();
-    const onClientClose = () => abortController.abort();
+    abortController = new AbortController();
+    onClientClose = () => abortController.abort();
     res.on('close', onClientClose);
     const streamOptions = getTraceOptions(req, {
       category,
@@ -139,23 +151,28 @@ const ragChatStream = async (req, res, next) => {
         if (chunk.done) {
           res.write(`data: [DONE]\n\n`);
         } else {
-          _fullReply += chunk.content || "";
+          fullReply += chunk.content || "";
           res.write(`data: ${JSON.stringify({ traceId: req.traceId, content: chunk.content })}\n\n`);
         }
       }
     }
 
+    cleanupClientClose();
     res.end();
-    res.removeListener('close', onClientClose);
 
-    memoryService.saveChatMemory(req.userId, message, _fullReply);
+    saveChatMemory(req.userId, message, fullReply);
   } catch (error) {
-    res.removeListener('close', onClientClose);
+    cleanupClientClose();
     // 客户端已断开：不再向其写入错误事件
-    if (abortController.signal.aborted) return;
+    if (abortController?.signal.aborted) return;
     console.error('[RAG Stream] 错误:', error);
-    res.write(`data: ${JSON.stringify({ traceId: req.traceId, error: error.message })}\n\n`);
-    res.end();
+    if (!res.headersSent) return next(error);
+    try {
+      res.write(`data: ${JSON.stringify({ traceId: req.traceId, error: error.message })}\n\n`);
+      res.end();
+    } catch {
+      // 连接已关闭，忽略
+    }
   }
 };
 
@@ -407,7 +424,7 @@ const getDocument = async (req, res, next) => {
 /**
  * 获取知识库统计
  */
-const getStats = async (req, res, next) => {
+const getStats = async (req, res, _next) => {
   try {
     const docCount = await store.scard('documents:all');
 
@@ -535,8 +552,6 @@ module.exports = {
   uploadMiddleware,
   reindexAll,
 };
-
-
 
 
 

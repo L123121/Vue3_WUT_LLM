@@ -130,6 +130,47 @@ class RedisStore {
     return this._redis.hdel(key, field);
   }
 
+  async reserveDailyQuota(key, date, limit) {
+    const script = `
+      local storedDate = redis.call('HGET', KEYS[1], 'date')
+      local quotedDate = '"' .. ARGV[1] .. '"'
+      if storedDate ~= ARGV[1] and storedDate ~= quotedDate then
+        redis.call('HSET', KEYS[1], 'date', ARGV[1], 'count', 0)
+      end
+
+      local count = tonumber(redis.call('HGET', KEYS[1], 'count')) or 0
+      local limit = tonumber(ARGV[2])
+      if count >= limit then
+        return { 0, count }
+      end
+
+      count = count + 1
+      redis.call('HSET', KEYS[1], 'count', count)
+      redis.call('EXPIRE', KEYS[1], 172800)
+      return { 1, count }
+    `;
+    const result = await this._redis.eval(script, 1, key, date, String(limit));
+    return { ok: Number(result[0]) === 1, count: Number(result[1]) || 0 };
+  }
+
+  async releaseDailyQuota(key, date) {
+    const script = `
+      local storedDate = redis.call('HGET', KEYS[1], 'date')
+      local quotedDate = '"' .. ARGV[1] .. '"'
+      if storedDate ~= ARGV[1] and storedDate ~= quotedDate then
+        return 0
+      end
+
+      local count = tonumber(redis.call('HGET', KEYS[1], 'count')) or 0
+      if count > 0 then
+        count = count - 1
+        redis.call('HSET', KEYS[1], 'count', count)
+      end
+      return count
+    `;
+    return Number(await this._redis.eval(script, 1, key, date)) || 0;
+  }
+
   // ==================== List 操作 ====================
 
   async rpush(key, value) {

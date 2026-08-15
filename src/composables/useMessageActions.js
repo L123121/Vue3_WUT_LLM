@@ -5,8 +5,7 @@
  */
 
 import { useConversationStore } from '../stores/conversation.store.js';
-
-const CURRENT_CONVERSATION_KEY = 'chat_current_conversation_id';
+import { clearConversationMessages } from '../api/conversations.js';
 
 export function useMessageActions() {
   const deleteMessage = (id) => {
@@ -53,7 +52,6 @@ export function useMessageActions() {
 
     if (!convStore.isLocalSession(conv.id) && convStore.isBackendAvailable()) {
       try {
-        const { clearConversationMessages } = await import('../api/conversations.js');
         await clearConversationMessages(conv.id);
       } catch (error) {
         console.error('清空消息失败:', error);

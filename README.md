@@ -1,6 +1,6 @@
 # WUT RAG Copilot / 武理小精灵
 
-![状态](https://img.shields.io/badge/status-active-success) ![版本](https://img.shields.io/badge/version-0.0.0-blue) ![Vue](https://img.shields.io/badge/Vue-3.5-brightgreen) ![Node](https://img.shields.io/badge/Node-20+-yellow)
+![状态](https://img.shields.io/badge/status-active-success) ![版本](https://img.shields.io/badge/version-2.0.0-blue) ![Vue](https://img.shields.io/badge/Vue-3.5-brightgreen) ![Node](https://img.shields.io/badge/Node-20+-yellow)
 
 武理小精灵是面向武汉理工大学校园场景的 AI 助手。项目采用 **Vue 3 + Pinia + Express** 架构，围绕 AI 流式聊天、RAG 知识库、语音输入、多会话管理、评测体系构建完整的前后端应用。
 
@@ -17,17 +17,19 @@
 - **多会话管理**：支持创建、切换、重命名、删除会话，已登录用户会话通过后端存储。
 - **教务系统集成**：使用教务账号登录后，可查询成绩、课表、考试安排和学期列表。
 - **评测体系**：离线测试集（32 题/6 文档）、LLM-as-judge（独立 Key）、人工抽检、线上反馈、回归评估。
+- **Agent 能力编排**：统一编排 Chat、RAG 与工具调用；数学计算自动进入 Agent，校园知识问答直接走 RAG，并支持失败降级。
 - **Markdown 渲染**：支持代码高亮、表格、富文本内容清洗和 Worker 渲染优化。
-- **个性化配置**：内置提示词、Skills、MCP、主题、语言和设置等前端管理模块。
+- **个性化体验**：支持主题切换、中英文文案、头像与个人资料管理。
 
 ### 工程侧能力
 
 - **前后端分离**：开发阶段 Vite 代理 `/api` 到 Express，生产阶段后端托管 `dist/`。
 - **Cookie 鉴权**：登录成功后后端写入 httpOnly JWT cookie，前端只缓存用户展示信息。
-- **存储自适应**：配置 `REDIS_URL` 时使用 Redis；未配置时降级为本地 MemoryStore + `backend/data/store.json`。
+- **存储自适应**：配置 `REDIS_URL` 时使用 Redis；未配置时使用本地 SQLite（`backend/data/store.db`，WAL）。
 - **安全防护**：启用 Helmet、CORS 白名单、速率限制、上传文件 MIME 嗅探防护。
 - **容器部署**：提供 Dockerfile、Docker Compose、nginx 配置和 GitHub Actions 部署流水线。
 - **测试覆盖**：包含前端 store/composable 测试，以及后端 RAG、路由和中间件测试。
+- **执行可靠性**：工具参数校验、超时取消、客户端断开传播、持久记忆读取与原子化写入。
 
 ---
 
@@ -40,7 +42,6 @@
 | 知识库 | `/knowledge` | RAG 文档上传、文档管理、两级分类、统计信息 |
 | 评测页 | `/eval` | 人工评分、LLM-as-judge 结果、系统指标 |
 | 反馈页 | `/feedback` | 线上反馈看板（管理员） |
-| 设置页 | `/settings` | 模型、系统和个性化设置入口 |
 
 ---
 
@@ -105,7 +106,7 @@
 | 服务 | 文件 | 职责 |
 |------|------|------|
 | Embedding | `embedding.service.js` | BGE-small-zh ONNX + n-gram 稀疏 |
-| 向量检索 | `vector-store.service.js` | 本地文件持久化 + 精确相似度检索 |
+| 向量检索 | `vector-store-qdrant.service.js` / `vector-store.service.js` | Qdrant 默认后端，本地文件精确检索可切换 |
 | 重排 | `reranker.service.js` | BGE-reranker-base cross-encoder |
 | 检索管道 | `rag.service.js` | 混合检索→归并→rerank→截断→排序→组装 |
 | 文档索引 | `indexing.service.js` | 章节合并→段落→句子三层切片 |
@@ -268,7 +269,7 @@ data: [DONE]
 | `EMBEDDING_CACHE_DIR` | `.model-cache` | 本地模型缓存目录 |
 | `EMBEDDING_LOCAL_FILES_ONLY` | `true` | 是否只使用本地缓存模型 |
 | `EMBEDDING_SPARSE_DIM` | `250002` | n-gram sparse 哈希空间大小 |
-| `VECTOR_STORE_BACKEND` | `file` | 向量库后端；当前上线方案为本地文件持久化（`file`），无需外部向量数据库 |
+| `VECTOR_STORE_BACKEND` | `qdrant` | 向量库后端；生产 Compose 使用 `qdrant`，离线单机可切换为 `file` |
 | `MILVUS_ADDRESS` | `localhost:19530` | 预留：Milvus gRPC 地址（本地方案下不使用） |
 | `MILVUS_COLLECTION` | `wuli_elf_chunks` | 预留：Milvus collection（本地方案下不使用） |
 | `MILVUS_DENSE_FIELD` | `dense_vector` | 预留：dense 向量字段（本地方案下不使用） |
@@ -295,7 +296,7 @@ data: [DONE]
 │   ├── composables/             # 流式输出、Markdown、懒加载、指标等复用逻辑
 │   ├── i18n/                    # 多语言文案
 │   ├── router/                  # Vue Router 与登录守卫
-│   ├── stores/                  # Pinia：认证、会话、消息、提示词、Skills、MCP 等
+│   ├── stores/                  # Pinia：认证、会话、消息、收藏、主题、语言等
 │   ├── utils/                   # Markdown、错误、缓存、加密等工具
 │   ├── views/                   # Login、AIChat、KnowledgeBase、EvalScoring、Settings
 │   ├── workers/                 # Markdown Worker
@@ -333,14 +334,14 @@ data: [DONE]
 |------|------|---------|------|
 | 主对话 | step-3.7-flash | StepFun API | 生产聊天，支持图文多模态 |
 | 评测 judge | step-3.5-flash | StepFun API（独立 Key） | LLM-as-judge，不跟生产抢配额 |
-| Embedding | BGE-small-zh-v1.5 | 本地 ONNX（@xenova/transformers） | 512 维稠密向量，24MB |
+| Embedding | BGE-small-zh-v1.5 | 本地 ONNX（@huggingface/transformers） | 512 维稠密向量，24MB |
 | Reranker | BGE-reranker-base | 本地 ONNX（cross-encoder） | 语义重排，INT8，278MB |
 
 ### 数据库与存储
 
 | 类型 | 技术 | 用途 | 部署方式 |
 |------|------|------|---------|
-| 向量库 | 本地文件持久化（`backend/data/vectors.json`） | 稠密+稀疏向量混合检索 | 文件持久化 + 精确计算（无 ANN 近似误差） |
+| 向量库 | Qdrant（默认）/ 本地文件（可选） | 稠密+稀疏向量混合检索 | Compose 独立服务 / 单机精确检索 |
 | 业务数据 | SQLite | 文档元数据、用户信息、会话记录 | 文件持久化（backend/data/） |
 | 缓存 | MemoryStore | 会话列表缓存 | 内存（无 Redis 时降级） |
 | 可选缓存 | Redis | 高性能会话缓存 | 配置 REDIS_URL 启用 |
@@ -356,7 +357,8 @@ nginx:80/443（SSL 终止）
   ▼
 Express:3000（API + 静态资源）
   │
-  ├── data/vectors.json（向量持久化 + 精确检索）
+  ├── Qdrant:6333（默认向量检索）
+  ├── data/vectors.json（`VECTOR_STORE_BACKEND=file` 时启用）
   ├── SQLite（文档/用户/会话持久化）
   └── StepFun API（LLM 推理）
 ```
@@ -370,7 +372,7 @@ Express:3000（API + 静态资源）
 - Vue 3.5、Composition API、Vue Router 4、Pinia
 - Vite 6、Tailwind CSS 4、lucide-vue-next、Element Plus Icons
 - markdown-it、highlight.js、DOMPurify、Web Worker
-- vue-virtual-scroller、Vitest、Vue Test Utils、jsdom
+- Vitest、Vue Test Utils、jsdom
 
 ### 后端
 

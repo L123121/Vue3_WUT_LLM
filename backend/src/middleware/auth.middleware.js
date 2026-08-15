@@ -23,7 +23,7 @@ const authMiddleware = (req, res, next) => {
     req.userId = decoded.userId || decoded.id || null;
     req.username = decoded.username || null;
     req.role = decoded.role || null;
-  } catch (err) {
+  } catch {
     // Token 无效或过期，清除坏 cookie（secure 标志需与设置时一致）
     const isProd = process.env.NODE_ENV === 'production';
     res.clearCookie(COOKIE_NAME, { httpOnly: true, sameSite: 'lax', secure: isProd, path: '/' });

@@ -1,5 +1,5 @@
 <script setup>
-import { ref, watch, nextTick, onMounted, onUnmounted, computed } from 'vue';
+import { ref, watch, nextTick, onMounted, computed } from 'vue';
 // 改用普通滚动容器，避免 DynamicScroller 虚拟滚动导致的流式跳动
 import { RefreshCw } from 'lucide-vue-next';
 import { useChatStore } from '../../stores/chat.store.js';

@@ -1,3 +1,5 @@
+import router from '../router/index.js';
+
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
 const API_URL = API_BASE.endsWith('/') ? API_BASE.slice(0, -1) : API_BASE;
 
@@ -43,8 +45,6 @@ export const handleAuthError = async () => {
     // 登出请求失败不影响本地清理
   }
   localStorage.removeItem('user');
-  // 动态 import 避免循环依赖（client → router → auth.store → client）
-  const { default: router } = await import('../router/index.js');
   if (router.currentRoute.value.path !== '/login') {
     router.push({ path: '/login', query: { redirect: router.currentRoute.value.fullPath } });
   }
@@ -54,7 +54,8 @@ export const handleAuthError = async () => {
  * 构建 fetch options，合并默认凭据配置 + 超时控制
  */
 const buildFetchOptions = (method, extraHeaders = {}, body, options = {}) => {
-  const { headers: _ignored, timeout, signal, ...rest } = options;
+  const { timeout, signal, ...rest } = options;
+  delete rest.headers;
   return {
     ...fetchOpts,
     method,
@@ -94,7 +95,8 @@ export const apiDelete = async (path, options = {}) => {
 
 // 无 JSON 序列化的 POST（用于流式请求等自定义场景）
 export const apiPostRaw = async (path, body, options = {}) => {
-  const { headers: _ignored, timeout, signal, ...rest } = options;
+  const { timeout, signal, ...rest } = options;
+  delete rest.headers;
   const requestOptions = {
     ...fetchOpts,
     method: 'POST',

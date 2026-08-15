@@ -1,7 +1,10 @@
 <script setup>
 import { X } from 'lucide-vue-next';
 
-defineProps({ show: Boolean, currentAvatar: String });
+defineProps({
+  show: Boolean,
+  currentAvatar: { type: String, default: '' },
+});
 const emit = defineEmits(['close', 'select']);
 
 const presetAvatars = [

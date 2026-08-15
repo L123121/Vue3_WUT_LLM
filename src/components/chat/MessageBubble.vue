@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed } from 'vue';
 import { useRouter } from 'vue-router';
-import { User, Bot, Copy, RotateCcw, FileText, BookOpen, Tag, Hash, X, ThumbsUp, ThumbsDown, Star } from 'lucide-vue-next';
+import { User, Bot, Copy, RotateCcw, FileText, BookOpen, X, ThumbsUp, ThumbsDown, Star } from 'lucide-vue-next';
 import { useLanguageStore } from '../../stores/language.store.js';
 import { useChatStore } from '../../stores/chat.store.js';
 import { useAuthStore } from '../../stores/auth.store.js';
@@ -130,21 +130,6 @@ const openSourceInKnowledgeBase = () => {
 };
 
 const messageText = computed(() => props.message.content ?? props.message.text ?? '');
-
-const isParentChildSource = (source) => {
-  return source.chunkCount !== undefined || source.category !== undefined || source.matchedChunks !== undefined;
-};
-
-const getCategoryColor = (category) => {
-  const colors = {
-    '学术': 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400',
-    '教务': 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400',
-    '校园': 'bg-purple-50 text-purple-600 dark:bg-purple-900/20 dark:text-purple-400',
-    '技术': 'bg-orange-50 text-orange-600 dark:bg-orange-900/20 dark:text-orange-400',
-    'general': 'bg-slate-100 text-slate-600 dark:bg-gray-700 dark:text-gray-400',
-  };
-  return colors[category] || colors['general'];
-};
 
 const formatTime = (timestamp) => languageStore.formatTime(timestamp);
 

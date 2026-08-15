@@ -1,6 +1,6 @@
 <script setup>
 import { ref, watch, nextTick, computed } from 'vue';
-import { Send, Sparkles, Wifi, WifiOff, Command, Trash2, Download, Paperclip, X, FileText, Square } from 'lucide-vue-next';
+import { Send, Wifi, WifiOff, Command, Trash2, Download, Paperclip, X, FileText, Square } from 'lucide-vue-next';
 import { useLanguageStore } from '../../stores/language.store.js';
 import { useChatStore } from '../../stores/chat.store.js';
 import { useToastStore } from '../../stores/toast.store.js';
@@ -10,7 +10,7 @@ import ConfirmDialog from '../common/ConfirmDialog.vue';
 
 const props = defineProps({
   isLoading: Boolean,
-  placeholder: String,
+  placeholder: { type: String, default: '' },
   isConnected: { type: Boolean, default: true },
   isReconnecting: { type: Boolean, default: false },
   reconnectAttempt: { type: Number, default: 0 },

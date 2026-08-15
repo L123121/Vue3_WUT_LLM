@@ -202,6 +202,35 @@ class SQLiteStore {
     return this._stmt.hset.run(key, field, val).changes;
   }
 
+  async reserveDailyQuota(key, date, limit) {
+    const reserve = this._db.transaction(() => {
+      const raw = this.hgetallSync(key);
+      const current = raw?.date === date ? (parseInt(raw.count, 10) || 0) : 0;
+      if (current >= limit) return { ok: false, count: current };
+
+      const count = current + 1;
+      this.hsetSync(key, 'date', date);
+      this.hsetSync(key, 'count', count);
+      return { ok: true, count };
+    });
+
+    return reserve();
+  }
+
+  async releaseDailyQuota(key, date) {
+    const release = this._db.transaction(() => {
+      const raw = this.hgetallSync(key);
+      if (raw?.date !== date) return 0;
+
+      const current = parseInt(raw.count, 10) || 0;
+      const count = Math.max(0, current - 1);
+      this.hsetSync(key, 'count', count);
+      return count;
+    });
+
+    return release();
+  }
+
   async hget(key, field) {
     const row = this._stmt.hget.get(key, field);
     return row ? this._tryParse(row.value) : null;

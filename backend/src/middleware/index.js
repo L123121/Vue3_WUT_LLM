@@ -7,7 +7,6 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 const cookieParser = require('cookie-parser');
 const rateLimit = require('express-rate-limit');
-const config = require('../config');
 const { createTraceId, logEvent, sanitizeTraceId } = require('../services/observability.service');
 
 function applyMiddleware(app) {
@@ -97,6 +96,5 @@ function applyMiddleware(app) {
 }
 
 module.exports = { applyMiddleware };
-
 
 

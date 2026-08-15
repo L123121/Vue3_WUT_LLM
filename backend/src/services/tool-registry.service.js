@@ -27,17 +27,84 @@ class ToolTimeoutError extends Error {
   }
 }
 
+class ToolArgumentError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'ToolArgumentError';
+  }
+}
+
+function createAbortError() {
+  const err = new Error('工具执行已取消');
+  err.name = 'AbortError';
+  return err;
+}
+
+function validateToolArgs(schema = {}, args) {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) {
+    throw new ToolArgumentError('参数必须是对象');
+  }
+
+  for (const name of schema.required || []) {
+    if (args[name] === undefined || args[name] === null || args[name] === '') {
+      throw new ToolArgumentError(`缺少必填参数: ${name}`);
+    }
+  }
+
+  for (const [name, value] of Object.entries(args)) {
+    const rule = schema.properties?.[name];
+    if (!rule) {
+      if (schema.additionalProperties === false) {
+        throw new ToolArgumentError(`不支持的参数: ${name}`);
+      }
+      continue;
+    }
+    if (rule.type === 'string' && typeof value !== 'string') {
+      throw new ToolArgumentError(`参数 ${name} 必须是字符串`);
+    }
+    if (rule.type === 'number' && typeof value !== 'number') {
+      throw new ToolArgumentError(`参数 ${name} 必须是数字`);
+    }
+    if (rule.type === 'integer' && !Number.isInteger(value)) {
+      throw new ToolArgumentError(`参数 ${name} 必须是整数`);
+    }
+    if (rule.type === 'boolean' && typeof value !== 'boolean') {
+      throw new ToolArgumentError(`参数 ${name} 必须是布尔值`);
+    }
+    if (typeof value === 'string' && rule.maxLength && value.length > rule.maxLength) {
+      throw new ToolArgumentError(`参数 ${name} 超过最大长度 ${rule.maxLength}`);
+    }
+    if (Array.isArray(rule.enum) && !rule.enum.includes(value)) {
+      throw new ToolArgumentError(`参数 ${name} 不在允许范围内`);
+    }
+  }
+}
+
 /**
  * 给一个 Promise 套上超时：到点 reject(ToolTimeoutError)。
  * 超时后原 promise 仍在后台运行：附加 .catch 兜底，防止 unhandledRejection。
  */
-function withTimeout(promise, timeoutMs) {
+function withTimeout(promise, timeoutMs, signal = null, onTimeout = null) {
   if (!timeoutMs || timeoutMs <= 0) return promise;
   let timer;
+  let onAbort;
   const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new ToolTimeoutError(timeoutMs)), timeoutMs);
+    timer = setTimeout(() => {
+      onTimeout?.();
+      reject(new ToolTimeoutError(timeoutMs));
+    }, timeoutMs);
   });
-  const raced = Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+  const aborted = signal
+    ? new Promise((_, reject) => {
+      onAbort = () => reject(createAbortError());
+      if (signal.aborted) onAbort();
+      else signal.addEventListener('abort', onAbort, { once: true });
+    })
+    : null;
+  const raced = Promise.race([promise, timeout, ...(aborted ? [aborted] : [])]).finally(() => {
+    clearTimeout(timer);
+    if (onAbort) signal.removeEventListener('abort', onAbort);
+  });
   promise
     .then(
       () => { /* 超时后成功完成，结果被丢弃 */ },
@@ -76,6 +143,9 @@ class ToolRegistry {
       source: tool.source || TOOL_SOURCES.CUSTOM,
       enabled: tool.enabled !== false,
       timeoutMs: tool.timeoutMs || DEFAULT_TOOL_TIMEOUT_MS,
+      parallelSafe: tool.parallelSafe !== false,
+      sideEffect: tool.sideEffect === true,
+      requiresConfirmation: tool.requiresConfirmation === true,
       registeredAt: new Date(),
     });
   }
@@ -159,18 +229,53 @@ class ToolRegistry {
     const tool = this.tools.get(name);
     if (!tool) return { ok: false, content: `未知工具: ${name}`, data: null };
     if (!tool.enabled) return { ok: false, content: `工具 ${name} 已禁用`, data: null };
+    if (context.signal?.aborted) throw createAbortError();
     const timeoutMs = tool.timeoutMs || DEFAULT_TOOL_TIMEOUT_MS;
+    let timedOut = false;
     try {
-      // 超时不 reject——返回语义化提示，让 LLM 能基于已有信息继续
-      const raw = await withTimeout(tool.handler(args, context), timeoutMs);
-      if (raw && typeof raw === 'object' && typeof raw.content === 'string') {
-        return { ok: raw.ok !== false, content: raw.content, data: raw.data ?? null };
+      validateToolArgs(tool.parameters, args);
+      const controller = new AbortController();
+      const abortHandler = () => controller.abort(context.signal?.reason);
+      if (context.signal) context.signal.addEventListener('abort', abortHandler, { once: true });
+      const executionContext = {
+        ...context,
+        signal: controller.signal,
+        deadline: Date.now() + timeoutMs,
+        tool: {
+          name: tool.name,
+          parallelSafe: tool.parallelSafe,
+          sideEffect: tool.sideEffect,
+          requiresConfirmation: tool.requiresConfirmation,
+        },
+      };
+      let raw;
+      try {
+        const execution = Promise.resolve().then(() => tool.handler(args, executionContext));
+        raw = await withTimeout(execution, timeoutMs, context.signal, () => {
+          timedOut = true;
+          controller.abort(new ToolTimeoutError(timeoutMs));
+        });
+      } finally {
+        if (context.signal) context.signal.removeEventListener('abort', abortHandler);
       }
-      return { ok: true, content: String(raw), data: null };
+      if (raw && typeof raw === 'object' && typeof raw.content === 'string') {
+        return {
+          ok: raw.ok !== false,
+          content: raw.content,
+          uiSummary: raw.uiSummary || null,
+          data: raw.data ?? null,
+          errorCode: raw.errorCode || null,
+        };
+      }
+      return { ok: true, content: String(raw), uiSummary: null, data: null, errorCode: null };
     } catch (err) {
-      if (err instanceof ToolTimeoutError) {
+      if (timedOut || err instanceof ToolTimeoutError) {
         console.warn(`[ToolRegistry] 工具 ${name} 执行超时（${timeoutMs}ms），返回超时提示`);
         return { ok: false, content: `工具 ${name} 执行超时（${timeoutMs}ms）。请基于已有信息继续回答，或换一种方式获取数据。`, data: null };
+      }
+      if (err.name === 'AbortError' || context.signal?.aborted) throw err;
+      if (err instanceof ToolArgumentError) {
+        return { ok: false, content: `工具 ${name} 参数无效: ${err.message}`, data: null, errorCode: 'invalid_arguments' };
       }
       return { ok: false, content: `工具 ${name} 执行失败: ${err.message}`, data: null };
     }
@@ -205,4 +310,11 @@ class ToolRegistry {
   }
 }
 
-module.exports = { ToolRegistry, TOOL_SOURCES, ToolTimeoutError, DEFAULT_TOOL_TIMEOUT_MS };
+module.exports = {
+  ToolRegistry,
+  TOOL_SOURCES,
+  ToolTimeoutError,
+  ToolArgumentError,
+  DEFAULT_TOOL_TIMEOUT_MS,
+  validateToolArgs,
+};

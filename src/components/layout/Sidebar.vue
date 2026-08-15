@@ -23,7 +23,6 @@ watch(() => authStore.user?.avatar, () => { avatarFailed.value = false; });
 
 const showProfilePanel = ref(false);
 const showAvatarPicker = ref(false);
-const draftAvatar = ref('');
 
 const handleLogout = () => {
   authStore.logout();

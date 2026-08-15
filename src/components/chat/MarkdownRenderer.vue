@@ -14,7 +14,7 @@ import 'highlight.js/styles/atom-one-dark.css';
 // Worker for large content (>2000 chars)
 const WORKER_THRESHOLD = 2000;
 const { renderInWorker } = useMarkdownWorker();
-const { highlightCode, getLanguageLabel, isExecutableLanguage, highlightVersion, ensureLanguage } = useCodeHighlighter();
+const { getLanguageLabel, isExecutableLanguage, highlightVersion, ensureLanguage } = useCodeHighlighter();
 
 const props = defineProps({ content: { type: String, default: '' }, sources: { type: Array, default: () => [] }, highlight: { type: String, default: '' } });
 const emit = defineEmits(['copyCode', 'citation-click']);
@@ -37,7 +37,7 @@ const wrapHighlight = (html) => {
   if (!masked.includes(escaped)) return html;
   const highlighted = masked.split(escaped).join(`<mark class="search-hit">${escaped}</mark>`);
   let i = 0;
-  return highlighted.replace(/\u0001/g, () => tags[i++]);
+  return highlighted.replaceAll('\u0001', () => tags[i++]);
 };
 
 // 代码块渲染 - 使用 CodeBlock 组件的 HTML 结构

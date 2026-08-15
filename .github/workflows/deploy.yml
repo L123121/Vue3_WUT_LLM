@@ -13,6 +13,9 @@
 
 name: Deploy to Alibaba Cloud ECS
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main]
@@ -20,7 +23,13 @@ on:
     paths:
       - "backend/**"
       - "src/**"
+      - "public/**"
       - "deploy/**"
+      - "index.html"
+      - "package.json"
+      - "package-lock.json"
+      - "vite.config.js"
+      - "vite-plugin-perf.js"
       - "Dockerfile"
       - "docker-compose.yml"
       - ".github/workflows/deploy.yml"
@@ -51,11 +60,16 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Install backend dependencies
-        run: npm ci --ignore-scripts
+        run: npm ci
         working-directory: backend
 
       - name: Lint
         run: npm run lint:check
+
+      - name: Audit production dependencies
+        run: |
+          npm audit --omit=dev --audit-level=high
+          npm audit --omit=dev --audit-level=high --prefix backend
 
       - name: Run tests
         run: npm test
@@ -134,26 +148,40 @@ jobs:
               exit 1
             fi
 
-            export BACKEND_IMAGE="${{ env.IMAGE_NAME }}:latest"
+            PREVIOUS_IMAGE=$(docker inspect -f '{{.Image}}' "$(docker compose -p wuli-elf ps -q backend)" 2>/dev/null || true)
+            export BACKEND_IMAGE="${{ env.IMAGE_NAME }}:${{ github.sha }}"
 
             # 拉取最新镜像
             docker compose -p wuli-elf pull backend
 
-            # 重启服务
+            # 确保依赖服务就绪，再重启后端
+            docker compose -p wuli-elf up -d qdrant
             docker compose -p wuli-elf up -d --no-deps backend
-
-            # 清理旧镜像
-            docker image prune -f
 
             # 检查服务健康状态
             echo "等待后端启动..."
+            HEALTHY=false
             for i in $(seq 1 12); do
               if curl -sf http://localhost:3000/api/health > /dev/null 2>&1; then
                 echo "✅ 后端启动成功"
+                HEALTHY=true
                 break
               fi
               sleep 5
             done
+
+            if [ "$HEALTHY" != "true" ]; then
+              echo "❌ 新版本健康检查失败"
+              docker compose -p wuli-elf logs --tail=100 backend || true
+              if [ -n "$PREVIOUS_IMAGE" ]; then
+                echo "回滚到上一镜像 $PREVIOUS_IMAGE"
+                export BACKEND_IMAGE="$PREVIOUS_IMAGE"
+                docker compose -p wuli-elf up -d --no-deps backend
+              fi
+              exit 1
+            fi
+
+            docker image prune -f
 
             # 重启 nginx（如果有配置变更）
             docker compose -p wuli-elf exec nginx nginx -s reload 2>/dev/null || true

@@ -28,7 +28,7 @@ const config = require("../config");
  *   - 决策失败且未输出内容时 yield error 事件（AgentDecisionError），控制器据此降级 RAG
  *   - trace 持久化 data/agent-traces.jsonl（灰度分析：finishReason 分布/工具失败率）
  *
- * 开关：AGENT_TOOL_ENABLED=true 启用（默认 false，先灰度，不影响现有评测基线）。
+ * 开关：默认启用；AGENT_TOOL_ENABLED=false 可回退到 RAG 链路。
  */
 
 // 系统提示：只注入工具名+简述（参数 schema 已由 API tools 参数携带，不再重复注入 JSON，省 token）
@@ -66,7 +66,7 @@ function persistTrace(trace) {
   try {
     const line = JSON.stringify({ ...trace, ts: new Date().toISOString() }) + "\n";
     fs.appendFile(TRACE_LOG_PATH, line, () => {});
-  } catch (_) {
+  } catch {
     // 持久化失败不影响主链路
   }
 }
@@ -144,7 +144,7 @@ function buildDecisionMessages(message, history = []) {
   const hist = Array.isArray(history) ? history : [];
   const messages = [{ role: "system", content: system }];
   for (const h of hist) {
-    const role = h.role === "assistant" ? "assistant" : "user";
+    const role = h.role === "assistant" ? "assistant" : h.role === "system" ? "system" : "user";
     const content = String(h.content || "").slice(0, 2000);
     if (content) messages.push({ role, content });
   }
@@ -280,7 +280,8 @@ class AgentService {
           } else if (chunk.content) {
             // LLM 直接开始回答（未调工具）→ 实时透传
             streamedText += chunk.content;
-            yield { type: "content", content: chunk.content, done: false };
+            // 决策阶段先缓存；确认没有 tool_calls 后才下发，避免模型同时输出
+            // 文本和工具调用时把半截决策内容泄露给用户。
           }
         }
       } catch (err) {
@@ -303,7 +304,9 @@ class AgentService {
 
       // LLM 直接回答（无工具调用）→ 收尾
       if (validCalls.length === 0) {
-        if (!streamedText) {
+        if (streamedText) {
+          yield { type: "content", content: streamedText, done: false };
+        } else {
           yield { type: "content", content: "抱歉，我没有理解您的问题。", done: false };
         }
         trace.totalMs = Date.now() - totalStart;
@@ -325,11 +328,24 @@ class AgentService {
           const start = Date.now();
           let r;
           try {
-            r = await this.runTool(tc.function.name, parseToolArgs(tc.function.arguments), { userId: options.userId });
+            r = await this.runTool(tc.function.name, parseToolArgs(tc.function.arguments), {
+              userId: options.userId,
+              conversationId: options.conversationId,
+              traceId: trace.traceId,
+              signal: options.signal,
+            });
           } catch (err) {
+            if (err.name === "AbortError" || options.signal?.aborted) throw err;
             r = { ok: false, content: `工具执行失败: ${err.message}`, data: null };
           }
-          return { tc, ok: r.ok, result: r.content, data: r.data, durationMs: Date.now() - start };
+          return {
+            tc,
+            ok: r.ok,
+            result: r.content,
+            uiSummary: r.uiSummary,
+            data: r.data,
+            durationMs: Date.now() - start,
+          };
         })
       );
       for (const r of results) {
@@ -343,8 +359,17 @@ class AgentService {
       }
 
       // 下发 tool_result 事件（前端展示，单工具独立耗时）
-      for (const { tc, result, durationMs } of results) {
-        yield { type: "tool_result", tool_result: { name: tc.function.name, content: result, status: "done", durationMs } };
+      for (const { tc, result, uiSummary, durationMs } of results) {
+        yield {
+          type: "tool_result",
+          tool_result: {
+            name: tc.function.name,
+            content: uiSummary || result,
+            uiSummary: uiSummary || null,
+            status: "done",
+            durationMs,
+          },
+        };
       }
       // 知识库检索命中 → 透传 sources（前端引用展示，与 RAG 路径一致）
       if (collectedSources.length > 0) {

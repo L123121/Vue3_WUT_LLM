@@ -1,5 +1,4 @@
 import { ref, computed } from 'vue';
-import { evalApi } from '../api/eval.js';
 
 export function useEvalData() {
   const evalData = ref(null);

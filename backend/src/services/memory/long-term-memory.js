@@ -5,8 +5,22 @@ const { EmbeddingService } = require('../embedding.service');
 const { parseRedisList } = require('./helpers');
 
 const MAX_LONG_TERM = 100;
-const SEMANTIC_SIMILARITY_THRESHOLD = 0.85;
 const KEYWORD_BOOST = 0.3;
+const mutationQueues = new Map();
+
+function withMemoryLock(key, task) {
+  const previous = mutationQueues.get(key) || Promise.resolve();
+  const current = previous.catch(() => {}).then(task);
+  mutationQueues.set(key, current);
+  return current.finally(() => {
+    if (mutationQueues.get(key) === current) mutationQueues.delete(key);
+  });
+}
+
+async function replaceList(key, list) {
+  await store.del(key);
+  if (list.length > 0) await store.rpush(key, JSON.stringify(list));
+}
 
 class LongTermMemory {
   constructor() {
@@ -18,9 +32,6 @@ class LongTermMemory {
    */
   async add(userId, memory) {
     const key = `memory:${userId}:long_term`;
-    const raw = await store.lrange(key, 0, -1);
-    const list = parseRedisList(raw);
-
     const entry = {
       id: `mem_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       type: memory.type || 'fact',
@@ -32,29 +43,29 @@ class LongTermMemory {
       accessCount: 0,
       embedding: null,
     };
+    await this._computeEmbedding(entry);
 
-    // 去重：检查是否已有语义相似的内容
-    const dup = this._findDuplicate(list, entry.content);
-    if (dup) {
-      dup.lastAccessedAt = new Date().toISOString();
-      dup.accessCount += 1;
-      console.log(`[Memory] 去重: "${entry.content.slice(0, 30)}..." 合并到已有记忆 ${dup.id}`);
-    } else {
+    return withMemoryLock(key, async () => {
+      const raw = await store.lrange(key, 0, -1);
+      const list = parseRedisList(raw);
+      const dup = this._findDuplicate(list, entry.content);
+      if (dup) {
+        dup.lastAccessedAt = new Date().toISOString();
+        dup.accessCount = (dup.accessCount || 0) + 1;
+        if (!dup.embedding && entry.embedding) dup.embedding = entry.embedding;
+        console.log(`[Memory] 去重: "${entry.content.slice(0, 30)}..." 合并到已有记忆 ${dup.id}`);
+        await replaceList(key, list);
+        return dup;
+      }
+
       list.push(entry);
-
-      // 异步计算 embedding（不阻塞写入）
-      this._computeEmbedding(entry).catch(() => {});
-
-      // 限制总数
       while (list.length > MAX_LONG_TERM) {
         const removed = list.shift();
         if (removed) console.log(`[Memory] 超出上限，移除: ${removed.id}`);
       }
-    }
-
-    await store.del(key);
-    await store.rpush(key, JSON.stringify(list));
-    return entry;
+      await replaceList(key, list);
+      return entry;
+    });
   }
 
   /**
@@ -77,9 +88,10 @@ class LongTermMemory {
       : null;
 
     // 为没有 embedding 的记忆条目计算（懒加载）
-    if (queryEmbedding) {
+    const missingEmbeddings = queryEmbedding ? list.filter(m => !m.embedding) : [];
+    if (missingEmbeddings.length > 0) {
       await Promise.all(
-        list.filter(m => !m.embedding).map(m => this._computeEmbedding(m).catch(() => {}))
+        missingEmbeddings.map(m => this._computeEmbedding(m).catch(() => {}))
       );
     }
 
@@ -111,9 +123,15 @@ class LongTermMemory {
       m.accessCount = (m.accessCount || 0) + 1;
       m.lastAccessedAt = new Date().toISOString();
     });
-    if (scored.some(m => m._score > 0.1)) {
-      await store.del(key);
-      await store.rpush(key, JSON.stringify(scored.map(({ _score, ...m }) => m)));
+    const accessed = scored.some(m => m._score > 0.1);
+    if (missingEmbeddings.length > 0 || accessed) {
+      const updates = new Map(scored.map(({ _score, ...memory }) => [memory.id, memory]));
+      await withMemoryLock(key, async () => {
+        const latestRaw = await store.lrange(key, 0, -1);
+        const latest = parseRedisList(latestRaw);
+        const merged = latest.map(memory => updates.get(memory.id) || memory);
+        await replaceList(key, merged);
+      });
     }
 
     return scored.sort((a, b) => b._score - a._score);
@@ -160,12 +178,11 @@ class LongTermMemory {
 
   async remove(userId, memoryId) {
     const key = `memory:${userId}:long_term`;
-    const raw = await store.lrange(key, 0, -1);
-    const list = parseRedisList(raw);
-
-    const filtered = list.filter(m => m && m.id !== memoryId);
-    await store.del(key);
-    await store.rpush(key, JSON.stringify(filtered));
+    await withMemoryLock(key, async () => {
+      const raw = await store.lrange(key, 0, -1);
+      const list = parseRedisList(raw);
+      await replaceList(key, list.filter(m => m && m.id !== memoryId));
+    });
   }
 
   async clear(userId) {
@@ -173,4 +190,4 @@ class LongTermMemory {
   }
 }
 
-module.exports = { LongTermMemory };
+module.exports = { LongTermMemory, withMemoryLock };

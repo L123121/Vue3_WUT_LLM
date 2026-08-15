@@ -121,6 +121,20 @@ describe('ToolRegistry（移植自存档版）', () => {
     expect(r).toContain('执行超时');
   });
 
+  it('工具响应内部取消信号时仍按超时返回', async () => {
+    const { ToolRegistry } = registryMod;
+    const reg = new ToolRegistry();
+    reg.register({
+      name: 'timeout_abortable',
+      timeoutMs: 30,
+      handler: async (_args, context) => new Promise((resolve, reject) => {
+        context.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true });
+      }),
+    });
+    const result = await reg.executeTool('timeout_abortable', {});
+    expect(result).toContain('执行超时');
+  });
+
   it('getToolSchemas 输出 OpenAI function calling 格式', () => {
     const { ToolRegistry } = registryMod;
     const reg = new ToolRegistry();
@@ -133,6 +147,47 @@ describe('ToolRegistry（移植自存档版）', () => {
     expect(schemas[0].type).toBe('function');
     expect(schemas[0].function.name).toBe('calc');
     expect(schemas[0].function.parameters.properties.a.type).toBe('number');
+  });
+
+  it('执行前校验必填参数和类型', async () => {
+    const { ToolRegistry } = registryMod;
+    const reg = new ToolRegistry();
+    const handler = vi.fn(async () => 'ok');
+    reg.register({
+      name: 'validated',
+      parameters: {
+        type: 'object',
+        properties: { query: { type: 'string', maxLength: 5 } },
+        required: ['query'],
+        additionalProperties: false,
+      },
+      handler,
+    });
+    expect((await reg.executeToolDetailed('validated', {})).content).toContain('缺少必填参数');
+    expect((await reg.executeToolDetailed('validated', { query: 1 })).content).toContain('必须是字符串');
+    expect((await reg.executeToolDetailed('validated', { query: '123456' })).content).toContain('超过最大长度');
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('父级取消信号会传递给工具 handler', async () => {
+    const { ToolRegistry } = registryMod;
+    const reg = new ToolRegistry();
+    let receivedSignal;
+    reg.register({
+      name: 'abortable',
+      timeoutMs: 1000,
+      handler: async (_args, context) => {
+        receivedSignal = context.signal;
+        await new Promise((resolve, reject) => {
+          context.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true });
+        });
+      },
+    });
+    const controller = new AbortController();
+    const pending = reg.executeToolDetailed('abortable', {}, { signal: controller.signal });
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    expect(receivedSignal.aborted).toBe(true);
   });
 });
 
@@ -185,6 +240,7 @@ describe('agent-tools（内置工具）', () => {
     // 命中时 data.sources 为数组（结构化透传给 agent → 前端引用展示）
     if (r.content.startsWith('检索结果：\n')) {
       expect(Array.isArray(r.data?.sources)).toBe(true);
+      expect(r.uiSummary).toContain('知识库检索完成');
     }
   });
 });

@@ -1,6 +1,6 @@
 {
   "name": "wuli-elf-backend",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "main": "src/app.js",
   "scripts": {
     "dev": "nodemon src/app.js",
@@ -10,23 +10,22 @@
     "test:watch": "node --experimental-vm-modules ../node_modules/vitest/vitest.mjs --config ../vitest.config.js"
   },
   "dependencies": {
-    "@lancedb/lancedb": "^0.33.0",
+    "@huggingface/transformers": "^3.8.1",
     "@qdrant/js-client-rest": "^1.19.0",
-    "@xenova/transformers": "^2.17.2",
-    "axios": "^1.15.2",
+    "axios": "^1.19.0",
     "cookie-parser": "^1.4.6",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
-    "express": "^4.18.2",
-    "express-rate-limit": "^8.4.1",
+    "express": "^4.22.2",
+    "express-rate-limit": "^8.6.2",
     "helmet": "^7.0.0",
     "ioredis": "^5.11.1",
     "jsonwebtoken": "^9.0.3",
     "jszip": "^3.10.1",
     "mammoth": "^1.12.0",
     "mathjs": "^15.2.0",
-    "morgan": "^1.10.0",
-    "multer": "^2.1.1",
+    "morgan": "^1.11.0",
+    "multer": "^2.2.0",
     "mupdf": "^1.28.0",
     "pdf-parse": "^1.1.1",
     "pg": "^8.13.1",
@@ -34,6 +33,10 @@
     "turndown-plugin-gfm": "^1.0.2",
     "uuid": "^14.0.0",
     "ws": "^8.19.0"
+  },
+  "overrides": {
+    "path-to-regexp": "0.1.13",
+    "sharp": "0.35.3"
   },
   "optionalDependencies": {
     "better-sqlite3": "^12.11.1"

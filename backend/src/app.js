@@ -24,7 +24,7 @@ app.use((req, res) => {
 });
 
 // 错误处理
-app.use((err, req, res, next) => {
+app.use((err, req, res, _next) => {
   console.error('[Server] Unhandled error:', err);
   const statusCode = err.statusCode || err.status || 500;
   const message = statusCode >= 500 ? '服务器内部错误' : (err.message || '请求处理失败');
@@ -73,28 +73,35 @@ const server = app.listen(PORT, '0.0.0.0', async () => {
   }
 });
 
-// 全局异步错误兜底：fire-and-forget 调用（记忆保存、索引、tracer 等）的
-// rejection/uncaughtException 不应让整个进程崩溃（Node 默认行为）。
-process.on('unhandledRejection', (reason) => {
-  console.error('[Server] 未处理的 Promise rejection:', reason instanceof Error ? reason.stack || reason.message : reason);
-});
-process.on('uncaughtException', (err) => {
-  console.error('[Server] 未捕获异常（进程继续运行）:', err.stack || err);
-});
-
 // 优雅关闭：先停向量库保存，再关 server
-async function shutdown(signal) {
+let isShuttingDown = false;
+async function shutdown(signal, exitCode = 0) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
   console.log(`[Server] 收到 ${signal}，正在优雅关闭...`);
   try {
     const { vectorStore } = require('./services/vector-store.service');
     if (vectorStore._dirty) vectorStore._saveSync();
-  } catch (_) {}
+  } catch (error) {
+    console.warn('[Server] 向量数据落盘失败:', error.message);
+  }
   server.close(() => {
     console.log('[Server] HTTP server 已关闭');
-    process.exit(0);
+    process.exit(exitCode);
   });
   // 兜底：5s 后强制退出
-  setTimeout(() => process.exit(0), 5000).unref();
+  setTimeout(() => process.exit(exitCode), 5000).unref();
 }
-process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT', () => shutdown('SIGINT'));
+
+if (!process.env.VITEST) {
+  process.on('unhandledRejection', (reason) => {
+    console.error('[Server] 未处理的 Promise rejection:', reason instanceof Error ? reason.stack || reason.message : reason);
+    void shutdown('unhandledRejection', 1);
+  });
+  process.on('uncaughtException', (err) => {
+    console.error('[Server] 未捕获异常，进程将退出:', err.stack || err);
+    void shutdown('uncaughtException', 1);
+  });
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+}

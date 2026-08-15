@@ -13,7 +13,7 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // 流式热路径日志仅在开发环境输出（生产构建每 chunk 打日志会卡 DevTools）
 const debug = (...args) => {
-  if (import.meta.env.DEV) console.log(...args);
+  if (import.meta.env.DEV) console.debug(...args);
 };
 
 const getExponentialDelay = (attempt) => {
@@ -147,7 +147,7 @@ export const sendMessageToBackend = async (message, history = [], retries = MAX_
 
 // Streaming message with stall detection
 export const sendMessageStream = async (message, history = [], callbacks, options = {}) => {
-  console.log('[Stream] sendMessageStream called, message:', message.substring(0, 30));
+  debug('[Stream] sendMessageStream called, message:', message.substring(0, 30));
   const controller = options.signal ? { abort: () => {} } : new AbortController();
   const signal = options.signal || controller.signal;
   const maxRetries = options.maxRetries ?? MAX_RETRIES;
@@ -163,7 +163,7 @@ export const sendMessageStream = async (message, history = [], callbacks, option
   const ttftStart = performance.now();
   let ttftMeasured = false;
 
-  console.log('[Stream] fetch:', `${API_URL}/stream`, 'attempt:', attempt);
+  debug('[Stream] fetch:', `${API_URL}/stream`, 'attempt:', attempt);
   try {
     const response = await fetch(`${API_URL}/stream`, {
       ...fetchOpts,
@@ -174,7 +174,7 @@ export const sendMessageStream = async (message, history = [], callbacks, option
 
     if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
     if (!response.body) throw new Error('Response body is null');
-    console.log('[Stream] response OK, body type:', response.body?.constructor?.name, 'status:', response.status);
+    debug('[Stream] response OK, body type:', response.body?.constructor?.name, 'status:', response.status);
 
     connectionManager.setConnected(true);
     connectionManager.removePendingMessage(messageId);
@@ -200,7 +200,7 @@ export const sendMessageStream = async (message, history = [], callbacks, option
           // 只保留最近 100 条
           while (arr.length > 100) arr.shift();
           localStorage.setItem(key, JSON.stringify(arr));
-        } catch (_) {}
+        } catch {}
       }
       originalOnChunk(content);
     };

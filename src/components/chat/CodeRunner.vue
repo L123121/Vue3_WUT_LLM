@@ -103,7 +103,7 @@ const sandboxHtml = computed(() => {
         </style>
       </head>
       <body>
-        <script>${wrappedCode}<\/script>
+        <script>${wrappedCode}</scr${'ipt'}>
       </body>
     </html>
   `;

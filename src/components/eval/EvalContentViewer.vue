@@ -1,7 +1,7 @@
 <script setup>
 import { ChevronLeft, ChevronRight } from 'lucide-vue-next';
 
-const props = defineProps({
+defineProps({
   currentItem: { type: Object, required: true },
   currentIndex: { type: Number, required: true },
   totalItems: { type: Number, required: true },
@@ -12,7 +12,7 @@ const props = defineProps({
   getScoreBg: { type: Function, required: true },
 });
 
-const emit = defineEmits(['setScore', 'prev', 'next', 'updateComment']);
+defineEmits(['setScore', 'prev', 'next', 'updateComment']);
 
 </script>
 

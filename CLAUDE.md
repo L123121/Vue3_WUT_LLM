@@ -84,7 +84,7 @@ chat.store（聚合层）→ 页面统一接口
 ### Agent 架构（V2.0：意图路由 + 工具调度）
 
 > 2026-07-21 曾移除早期 Agent 系统（存档 `D:\武理小精灵_agent_存档`），V2.0 重新引入并裁剪。
-> 当前灰度状态：**工具调度默认关**（`AGENT_TOOL_ENABLED=true` 才启用），意图路由默认开但 LLM 分类默认关（避免每条消息多一次 LLM 调用拖慢首包延迟）。
+> 当前状态：工具调度默认启用，`AGENT_TOOL_ENABLED=false` 可一键回退 RAG；意图路由默认开，LLM 分类仍默认关（避免每条消息多一次分类调用）。
 
 ```
 用户消息
@@ -92,12 +92,14 @@ chat.store（聚合层）→ 页面统一接口
   ├─ fastRoute（零成本 ~0ms，不调 LLM）
   │    问候/感谢/告别 → route: chat（纯 LLM，不触发检索）
   │    明确多步任务（规划/分析/对比/权衡…）→ route: agent
+  │    明确数学表达式 + 计算提示 → route: agent / calculate
   │    其余模糊意图 → null（不硬路由，减少误判面）
   ├─ classify（LLM 分类兜底，INTENT_CLASSIFY_ENABLED=true 才启用）
   │    15s 超时 + JSON 解析失败 → 兜底，不阻塞
   └─ 兜底 _fallbackRoute → route: rag（校园问答主场景，RAG 内部自带降级）
   ↓
-  route=chat  → ChatService 纯 LLM
+  ConversationOrchestrator 注入持久记忆并统一编排：
+  route=chat  → AiService 纯 LLM
   route=agent → AgentService 工具调度（L2 有界多轮）
   route=rag   → RagService 检索管道（默认兜底）
   SSE 事件：intent / tool_call / tool_result / trace（前端展示"自动路由：知识库检索"）
@@ -126,7 +128,7 @@ chat.store（聚合层）→ 页面统一接口
 
 教务系工具（查成绩/课表等）因无教务系统接入未移植。
 
-**L3 会话记忆（buildMemorySummary）**：决策前压缩历史——取最近 6 条，提取「最近提问主题」（60 字）+「上一轮回答结论」（120 字）注入，与历史 `_compactHistory` 配合控制 token。
+**L3 记忆系统**：`ConversationOrchestrator` 调用 `MemoryService.buildMemoryContext()`，将用户画像、相关长期记忆和短期摘要作为 system history 注入 Chat/RAG/Agent；Agent 内部仍通过 `buildMemorySummary` 处理最近会话指代。长期记忆 embedding 在序列化前完成，并通过用户级写队列避免进程内并发覆盖。
 
 **L4 agent tracer（可观测性）**：每轮记录 rounds / toolCalls（名称、参数、成败、耗时）/ totalMs / finishReason（direct_answer | round_limit | no_progress | error），结束随 SSE 下发。
 
@@ -170,6 +172,8 @@ chat.store（聚合层）→ 页面统一接口
 - `intent-router.service.js` — 意图路由（V2.0）：fastRoute 零成本关键词 + LLM 分类兜底（默认关）+ 兜底 rag
 - `agent.service.js` — Agent 工具调度（V2.0）：L2 有界多轮（maxToolRounds=2 + 无进展检测）+ L3 会话记忆摘要 + L4 agent tracer
 - `agent-tools.js` — Agent 工具注册表：search_knowledge_base（复用 RAG）+ calculate（mathjs 安全求值）
+- `conversation-orchestrator.service.js` — Chat/RAG/Agent 统一编排、持久记忆注入、失败降级与结果保存
+- `tool-registry.service.js` — JSON Schema 参数校验、取消传播、超时闸门与工具元数据
 - `tool-registry.service.js` — 工具注册器（TOOL_SOURCES.BUILTIN，可扩展）
 - `config/index.js` — 集中配置
 
@@ -308,11 +312,11 @@ chat.store（聚合层）→ 页面统一接口
 
 **15. Agent V2.0：意图路由 + 工具调度（2026-08-14）**
 - 背景：2026-07-21 曾移除早期 Agent 系统（存档 `D:\武理小精灵_agent_存档`，当时因工具不全/延迟高回归纯 RAG）；V2.0 重新引入并裁剪
-- 意图路由（`intent-router.service.js`）：fastRoute 零成本关键词（问候→chat、多步任务→agent，其余不硬路由防误判）+ LLM 分类兜底（默认关，`INTENT_CLASSIFY_ENABLED`）+ 兜底 rag；`INTENT_ROUTING_ENABLED=false` 退回原链路
+- 意图路由（`intent-router.service.js`）：fastRoute 零成本关键词（问候→chat、多步任务→agent、明确计算→agent/calculate，其余不硬路由防误判）+ LLM 分类兜底（默认关，`INTENT_CLASSIFY_ENABLED`）+ 兜底 rag；`INTENT_ROUTING_ENABLED=false` 退回原链路
 - L2 有界多轮（`agent.service.js`）：maxToolRounds=2（默认）+ 无进展检测（连续 2 轮相同签名强制收尾）+ 收尾生成不带 tools + 决策/执行超时 15s，杜绝无限循环
 - 工具裁剪：只保留 `search_knowledge_base`（复用 RAG 全链路）+ `calculate`（mathjs 安全求值），教务系工具无接入不移植
 - L3 会话记忆（buildMemorySummary）+ L4 agent tracer（轮次/工具/耗时/收尾原因随 SSE 下发）
-- ⚠️ 灰度：`AGENT_TOOL_ENABLED` 默认关（agent 路径引入额外 LLM 轮次，影响首包延迟与评测基线），评估通过后再放开
+- 回退开关：`AGENT_TOOL_ENABLED=false` 时 agent 路由自动进入 RAG，便于出现上游异常时快速止损
 
 **16. Agent 链路结构性优化（2026-08-15）**
 - 背景：代码审查发现 agent 链路 12 个可提升点，本次全部修复，核心是消除"双重生成"与补齐灰度所需的观测/评测
@@ -325,7 +329,14 @@ chat.store（聚合层）→ 页面统一接口
 - ⑦ system prompt 瘦身：移除 `{tool_schemas}` JSON 注入（schema 已由 API tools 参数携带），只保留工具名+简述，每次决策省几百 token
 - ⑧ 失败降级 RAG：决策/流式失败且未输出内容时 yield `error` 事件（`AgentDecisionError`，`agentShouldFallback=true`），控制器捕获后降级 RAG 管道（流式：通知前端 route 变更后继续走 rag 分支；非流式：catch 后调 ragService.chat），替代原来的"抱歉，我没有理解您的问题"误导文案；已有内容流出时保持原收尾行为
 - ⑨ trace 持久化：`data/agent-traces.jsonl`（fire-and-forget，测试环境跳过），灰度期可离线分析 finishReason 分布/工具失败率
-- ⑩ agent 评测体系：`scripts/rag-eval/eval-agent.js` + `dataset/agent-routing-qa.json`（24 条标注）——Phase 1 fastRoute 路由准确率（零成本离线）+ Phase 2 `--with-llm` 工具选择正确率/决策延迟（avg/p95），结果落盘 `results/agent-eval-*.json`，作为 `AGENT_TOOL_ENABLED` 灰度放开的量化依据
+- ⑩ agent 评测体系：`scripts/rag-eval/eval-agent.cjs` + `dataset/agent-routing-qa.json`（24 条标注）——Phase 1 fastRoute 路由准确率（零成本离线）+ Phase 2 `--with-llm` 先走真实路由，再评估工具选择正确率/决策延迟（avg/p95），避免直接调用 `agent.decide()` 绕过生产链路
+
+**17. Agent 生产链路补强（2026-08-15）**
+- 新增 `ConversationOrchestrator`：控制器只处理 HTTP/SSE，路由、记忆注入、Chat/RAG/Agent 调度、降级和记忆保存收敛到单一应用服务
+- 计算能力可达：数值表达式与明确计算提示自动进入 Agent，`calculate` 不再只存在于孤立单测/评测链路
+- 工具执行上下文：`signal/deadline/traceId/userId/conversationId` 贯穿 Agent、ToolRegistry 与知识库工具；超时会 abort 底层检索，客户端断开不会继续消耗资源
+- 工具契约：执行前校验 required/type/enum/maxLength；工具结果拆分模型观察与 UI 摘要，知识库完整上下文不再直接下发界面
+- 持久记忆：每次回答前读取并注入 system history；长期 embedding 在写入前完成，访问统计与并发更新采用合并写入
 - 测试：`agent-tools.test.js` 新增 7 用例（executeToolDetailed 契约/retrieveOnly/stableStringify/chat drain/error 降级/sources 透传/prompt 不含 schema）
 
 ### ❌ 尝试但退回
