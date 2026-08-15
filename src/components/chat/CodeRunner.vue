@@ -111,6 +111,10 @@ const sandboxHtml = computed(() => {
 
 // 监听 iframe 消息
 const handleMessage = (event) => {
+  // 只接受沙箱 iframe 发来的消息，忽略其他页面伪造的 postMessage
+  const win = iframeRef.value?.contentWindow;
+  if (!win || event.source !== win) return;
+
   const { type, method, content, duration } = event.data || {};
 
   if (type === 'console') {
@@ -128,9 +132,21 @@ const handleMessage = (event) => {
   } else if (type === 'timing') {
     executionTime.value = duration;
   } else if (type === 'done') {
+    clearRunTimer();
     isRunning.value = false;
   }
 };
+
+let runTimer = null;
+const clearRunTimer = () => {
+  if (runTimer) {
+    clearTimeout(runTimer);
+    runTimer = null;
+  }
+};
+
+// 执行超时兜底：同步死循环会阻塞 iframe 内的 JS，只能由父页面强制停止
+const EXEC_TIMEOUT_MS = 10000;
 
 // 运行代码
 const runCode = () => {
@@ -146,10 +162,23 @@ const runCode = () => {
   output.value = [];
   executionTime.value = null;
   isRunning.value = true;
+  clearRunTimer();
 
   // 重新加载 iframe
   if (iframeRef.value) {
     iframeRef.value.srcdoc = sandboxHtml.value;
+    runTimer = setTimeout(() => {
+      if (isRunning.value) {
+        isRunning.value = false;
+        // 销毁 iframe 停止执行
+        if (iframeRef.value) iframeRef.value.srcdoc = '';
+        output.value.push({
+          type: 'error',
+          content: `执行超时（超过 ${EXEC_TIMEOUT_MS / 1000}s），可能包含死循环`,
+          timestamp: Date.now()
+        });
+      }
+    }, EXEC_TIMEOUT_MS);
   }
 };
 

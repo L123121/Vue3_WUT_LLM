@@ -1,6 +1,6 @@
 <script setup>
 import { ref, watch, nextTick, computed } from 'vue';
-import { Send, Sparkles, Wifi, WifiOff, Command, Trash2, Download, Paperclip, X, FileText } from 'lucide-vue-next';
+import { Send, Sparkles, Wifi, WifiOff, Command, Trash2, Download, Paperclip, X, FileText, Square } from 'lucide-vue-next';
 import { useLanguageStore } from '../../stores/language.store.js';
 import { useChatStore } from '../../stores/chat.store.js';
 import { useToastStore } from '../../stores/toast.store.js';
@@ -156,7 +156,7 @@ const handleKeydown = (event) => {
     }
   }
 
-  if (event.key === 'Enter' && !event.shiftKey) {
+  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
     handleSend();
   }
@@ -282,7 +282,8 @@ defineExpose({
         v-model="input"
         @keydown="handleKeydown"
         :placeholder="placeholder || languageStore.t('chat.inputPlaceholder')"
-        :disabled="isLoading || !isConnected"
+        :disabled="isLoading"
+        :aria-label="placeholder || languageStore.t('chat.inputPlaceholder')"
         rows="1"
         class="w-full bg-transparent text-slate-800 dark:text-white placeholder:text-slate-400 dark:placeholder:text-gray-500 border-none focus:ring-0 px-1 py-1.5 outline-none resize-none max-h-24 text-sm disabled:opacity-50"
         style="min-height: 32px;"
@@ -292,7 +293,7 @@ defineExpose({
       <input ref="fileInputRef" type="file" accept="image/*,.pdf,.docx,.doc,.pptx,.txt,.md" class="hidden" @change="handleFileSelect" />
       <button
         @click="fileInputRef?.click()"
-        :disabled="isLoading || !isConnected"
+        :disabled="isLoading"
         class="shrink-0 h-8 w-8 rounded-lg inline-flex items-center justify-center text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 disabled:opacity-50 transition-colors"
         title="上传文件"
       >
@@ -301,22 +302,30 @@ defineExpose({
 
       <VoiceRecorder
         ref="voiceRecorderRef"
-        :disabled="isLoading || !isConnected"
+        :disabled="isLoading"
         @transcript="handleTranscript"
         @interim="handleVoiceInterim"
         @error="handleVoiceError"
       />
 
       <button
+        v-if="isLoading"
+        @click="chatStore.abortCurrentRequest()"
+        title="停止生成"
+        class="p-2 rounded-lg transition-all duration-300 shrink-0 bg-red-100 text-red-500 hover:bg-red-200 dark:bg-red-900/40 dark:text-red-400 dark:hover:bg-red-900/60"
+      >
+        <Square :size="16" class="fill-current" />
+      </button>
+      <button
+        v-else
         @click="handleSend"
-        :disabled="(!input.trim() && !selectedFile) || isLoading || !isConnected"
+        :disabled="(!input.trim() && !selectedFile) || !isConnected"
         :class="[
           'p-2 rounded-lg transition-all duration-300 shrink-0',
-          !input.trim() || isLoading || !isConnected ? 'bg-slate-200 text-slate-400 dark:bg-gray-700 dark:text-gray-500 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-md shadow-blue-500/20 active:scale-95'
+          !input.trim() || !isConnected ? 'bg-slate-200 text-slate-400 dark:bg-gray-700 dark:text-gray-500 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-md shadow-blue-500/20 active:scale-95'
         ]"
       >
-        <Sparkles v-if="isLoading" :size="16" class="animate-spin" />
-        <Send v-else :size="16" />
+        <Send :size="16" />
       </button>
     </div>
   </div>

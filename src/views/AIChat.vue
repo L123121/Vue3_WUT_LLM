@@ -61,7 +61,12 @@ const confirmClear = () => {
 // V2.0：对话模式由后端意图识别自动路由，前端不再手动切换 RAG
 
 const handleSend = async (message, fileData = null) => {
-  await chatStore.sendMessage(message, null, fileData);
+  try {
+    await chatStore.sendMessage(message, null, fileData);
+  } catch (e) {
+    console.error('[AIChat] 发送失败:', e);
+    toast.error(e?.message || '发送失败，请检查网络后重试');
+  }
   scrollToBottom();
 };
 
