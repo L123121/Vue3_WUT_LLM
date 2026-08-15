@@ -58,3 +58,14 @@ public/benchmark-fps.*
 
 # 本地工具链配置（含历史真实凭证，禁止提交）
 .claude/settings.local.json
+
+# Eval cookies 与临时探针文件（含凭据，禁止提交）
+.eval-cookie*.txt
+scripts/rag-eval/.admin-cookie.*
+scripts/rag-eval/.plain.txt
+scripts/rag-eval/.probe-*.txt
+scripts/rag-eval/.retr.txt
+scripts/rag-eval/.trace*.txt
+
+# 大二进制产物不入库
+arrow.tar.gz
