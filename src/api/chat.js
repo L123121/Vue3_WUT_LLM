@@ -11,6 +11,11 @@ import { apiGet, apiPost, fetchOpts } from './client.js';
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// 流式热路径日志仅在开发环境输出（生产构建每 chunk 打日志会卡 DevTools）
+const debug = (...args) => {
+  if (import.meta.env.DEV) console.log(...args);
+};
+
 const getExponentialDelay = (attempt) => {
   const delayMs = Math.min(INITIAL_RETRY_DELAY * Math.pow(2, attempt), MAX_RETRY_DELAY);
   return delayMs + Math.random() * 1000;
@@ -35,10 +40,9 @@ export const connectionManager = {
   setConnected(connected) {
     const wasConnected = this.isConnected;
     this.isConnected = connected;
-    console.log('[Connection] setConnected:', connected, 'wasConnected:', wasConnected);
+    debug('[Connection] setConnected:', connected, 'wasConnected:', wasConnected);
     if (wasConnected !== connected) {
       this.notify(connected ? 'connected' : 'disconnected');
-      if (connected) this.flushPendingMessages();
     }
   },
 
@@ -74,12 +78,6 @@ export const connectionManager = {
   clearPendingMessages() {
     this.pendingMessages = [];
     localStorage.removeItem('pending_messages');
-  },
-
-  async flushPendingMessages() {
-    if (this.pendingMessages.length === 0) return;
-    // Notify listeners about pending messages to flush
-    this.notify('flush-pending', this.pendingMessages);
   },
 };
 
@@ -170,7 +168,7 @@ export const sendMessageStream = async (message, history = [], callbacks, option
     const response = await fetch(`${API_URL}/stream`, {
       ...fetchOpts,
       method: 'POST',
-      body: JSON.stringify({ message, history, conversationId, files: options.files || [], skillPrompt: options.skillPrompt || '' }),
+      body: JSON.stringify({ message, history, conversationId, files: options.files || [] }),
       signal,
     });
 
@@ -182,7 +180,7 @@ export const sendMessageStream = async (message, history = [], callbacks, option
     connectionManager.removePendingMessage(messageId);
 
     const reader = response.body.getReader();
-    console.log('[Stream] reader created');
+    debug('[Stream] reader created');
     const decoder = new TextDecoder('utf-8');
     let buffer = '';
     let lastDataTime = Date.now();
@@ -193,7 +191,7 @@ export const sendMessageStream = async (message, history = [], callbacks, option
       if (!ttftMeasured) {
         ttftMeasured = true;
         const ttftMs = Math.round(performance.now() - ttftStart);
-        console.log(`[TTFT] 首字响应延迟: ${ttftMs}ms`);
+        debug(`[TTFT] 首字响应延迟: ${ttftMs}ms`);
         // 存到 localStorage，方便批量分析
         try {
           const key = 'ttft_measurements';
@@ -214,16 +212,17 @@ export const sendMessageStream = async (message, history = [], callbacks, option
         clearInterval(stallCheck);
         reader.cancel();
         connectionManager.setConnected(false);
+        measuredCallbacks.onError(new Error('响应超时（60 秒无数据），请重试'));
       }
     }, 5000);
 
     try {
       while (true) {
         const { done, value } = await reader.read();
-        console.log('[Stream] reader.read() done:', done, 'value length:', value?.length);
+        debug('[Stream] reader.read() done:', done, 'value length:', value?.length);
         if (done) {
           clearInterval(stallCheck);
-          console.log('[Stream] stream ended (done=true), calling onDone');
+          debug('[Stream] stream ended (done=true), calling onDone');
           measuredCallbacks.onDone();
           break;
         }
@@ -236,7 +235,7 @@ export const sendMessageStream = async (message, history = [], callbacks, option
         for (const line of lines) {
           const trimmed = line.trim();
           if (!trimmed || !trimmed.startsWith('data:')) continue;
-          console.log('[Stream] SSE line:', trimmed.substring(0, 80));
+          debug('[Stream] SSE line:', trimmed.substring(0, 80));
 
           const data = trimmed.slice(5).trim();
           if (data === '[DONE]') {
@@ -256,7 +255,7 @@ export const sendMessageStream = async (message, history = [], callbacks, option
               content = json.choices[0].delta.content;
             }
             if (content) {
-              console.log('[Stream] chunk:', content.substring(0, 30));
+              debug('[Stream] chunk:', content.substring(0, 30));
               measuredCallbacks.onChunk(content);
             }
             if (json.intent) measuredCallbacks.onIntent?.(json.intent);
