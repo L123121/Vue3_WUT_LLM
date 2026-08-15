@@ -73,56 +73,80 @@ class RagService {
   }
 
   /**
-   * 本地混合检索管道
-   * query → embedding 向量召回 + BM25 关键词召回 → RRF 融合 → rerank → 父文档召回 → LLM 增强
+   * 统一 RAG 管道编排:文档检查 → 检索 → rerank → 父段处理 → 上下文组装
+   *
+   * @param {string} message - 用户消息
+   * @param {Array} history - 历史消息
+   * @param {Object} options - 选项
+   * @param {RagTracer} options.tracer - tracer 实例
+   * @param {Function} [options.onEvent] - 流式回调,收到事件时调用 ({type, ...data})
+   * @returns {Promise<Object>} { context, sources, topChunks, retrieval, questionType, rewrittenQuery, hasReliableCandidates }
    */
-  async localSearchChat(message, history = [], options = {}) {
-    const tracer = this._createTracer(message, options);
-    const ownsTracer = !options.tracer;
+  async _runRAGPipeline(message, history = [], options = {}) {
+    const { onEvent, tracer } = options;
     const totalStart = Date.now();
     const questionType = this.classifyQuestion(message);
 
+    // 文档检查
     const docsStart = Date.now();
-    const docs = await this.documentService.listDocuments({ category: options.category, limit: 1 });
+    const hasDocs = await this.documentService.hasDocuments(options.category);
     this._recordTraceStage(tracer, 'document_check', docsStart, true, {
-      docCount: docs.documents.length,
+      docCount: hasDocs ? 1 : 0,
       category: options.category || null,
     });
-    if (docs.documents.length === 0) {
-      tracer.markFallback('no_documents');
-      if (ownsTracer) tracer.finish({ usedRag: false, fallbackReason: 'no_documents' });
-      return null;
+
+    if (!hasDocs) {
+      tracer?.markFallback('no_documents');
+      if (tracer) tracer.finish({ usedRag: false, fallbackReason: 'no_documents' });
+      return {
+        context: '',
+        sources: [],
+        topChunks: [],
+        retrieval: { channels: [], hasResults: false },
+        questionType,
+        rewrittenQuery: '',
+        hasReliableCandidates: false,
+        fallbackReason: 'no_documents',
+      };
     }
 
-    const { candidates, trace, rewrittenQuery } = await this._dualRetrieve(message, history, { ...options, tracer });
+    // 检索
+    const { candidates, trace, rewrittenQuery } = await this._dualRetrieve(message, history, options);
 
     if (!this._hasReliableCandidates(candidates)) {
-      metrics.recordRagQuery({ usedRag: true, usedParentChild: false, matchedDocs: 0, retrievedChunks: 0 });
       const retrievalSummary = this._summarizeRetrievalTrace(trace);
-      tracer.setRetrieval(retrievalSummary);
-      tracer.markFallback('no_reliable_sources');
-      this._recordTraceStage(tracer, 'total', totalStart, true, { usedRag: true, matchedDocs: 0, retrievedChunks: 0 });
-      const result = {
-        reply: this._buildNoReliableSourcesReply(),
-        isMock: false,
-        sources: [],
+      tracer?.setRetrieval(retrievalSummary);
+      tracer?.markFallback('no_reliable_sources');
+      this._recordTraceStage(tracer, 'total', totalStart, true, {
+        usedRag: true,
+        matchedDocs: 0,
+        retrievedChunks: 0,
+      });
+
+      if (onEvent) {
+        onEvent({ type: 'retrieval', retrieval: retrievalSummary, questionType, rewrittenQuery });
+        onEvent({ type: 'no_reliable_sources', reply: this._buildNoReliableSourcesReply() });
+      }
+
+      return {
         context: '',
-        model: 'local-hybrid-search+no-source',
+        sources: [],
+        topChunks: [],
+        retrieval: retrievalSummary,
         questionType,
         rewrittenQuery,
-        retrieval: retrievalSummary,
-        _metrics: {
-          totalLatency: Date.now() - totalStart,
-          matchedDocs: 0,
-          retrievedChunks: 0,
-          questionType,
-          rewrittenQuery,
-          retrieval: retrievalSummary,
-        },
+        hasReliableCandidates: false,
+        fallbackReason: 'no_reliable_sources',
       };
-      return ownsTracer ? this._finishTrace(tracer, result) : { ...result, traceId: tracer.traceId, trace: tracer.toSummary() };
     }
 
+    if (onEvent) {
+      const retrievalSummary = this._summarizeRetrievalTrace(trace);
+      tracer?.setRetrieval(retrievalSummary);
+      onEvent({ type: 'retrieval', retrieval: retrievalSummary, questionType, rewrittenQuery });
+    }
+
+    // 子句选择
     const rerankStart = Date.now();
     const topChunks = await this.selectTopChunks(message, candidates);
     const childSelectLatency = Date.now() - rerankStart;
@@ -132,17 +156,18 @@ class RagService {
       outputCount: topChunks.length,
     });
 
+    // 父段处理
     let enhancedContext = '';
     let parentSources = [];
-    let parentChildLatency = 0;
     if (this.parentChildEnabled && topChunks.length > 0) {
       try {
         const pcStart = Date.now();
+
         // 1. 子句按父段落聚合
         const paraMap = this._groupChunksByParent(topChunks);
         let parentCandidates = [...paraMap.values()];
 
-        // 2. cross-encoder rerank 父段落（先按 score 粗排取前 20，避免 CPU ONNX 处理过多候选）
+        // 2. cross-encoder rerank 父段落
         if (this.rerankEnabled && parentCandidates.length > 1) {
           const RERANK_MAX_INPUT = 20;
           parentCandidates.sort((a, b) => (b.bestChunk?.score || 0) - (a.bestChunk?.score || 0));
@@ -162,11 +187,11 @@ class RagService {
           parentCandidates = allRanked.map(r => ({ ...r._match, _rerankScore: r._rerankScore, _rerankModel: r._rerankModel }));
         }
 
-        // 3. 自适应截断（按问题类型差异化阈值，支持请求级覆盖）
+        // 3. 自适应截断
         const truncateOverrides = this._evalOverrides(options);
         parentCandidates = this._adaptiveTruncate(parentCandidates, this.rerankTopK, message, truncateOverrides);
 
-        // 3.5 父段归并后 MMR 去重：剔除与已选父段高度相似的冗余段落（保留多样性）
+        // 3.5 MMR 去重
         const mmrStart = Date.now();
         const beforeDedup = parentCandidates.length;
         parentCandidates = this._mmrDedupe(parentCandidates, this.rerankTopK);
@@ -179,7 +204,7 @@ class RagService {
           method: 'mmr',
         });
 
-        // 4. 按 (docId, parentIdx) 二级排序，让同文档连续段落按阅读顺序排列
+        // 4. 按 (docId, parentIdx) 二级排序
         parentCandidates.sort((a, b) => {
           const docCmp = (a.docId || '').localeCompare(b.docId || '');
           if (docCmp !== 0) return docCmp;
@@ -187,11 +212,11 @@ class RagService {
         });
 
         // 5. 组装上下文（由 maxContextLength 控制长度）
-        const { context, sources } = await this._buildContextFromParents(parentCandidates);
+        const { context, sources } = await this._buildContextFromParents(parentCandidates, truncateOverrides);
         enhancedContext = context;
         parentSources = sources;
-        parentChildLatency = Date.now() - pcStart;
-        metrics.recordLatency('parentChild', parentChildLatency);
+
+        metrics.recordLatency('parentChild', Date.now() - pcStart);
         this._recordTraceStage(tracer, 'parent_child', pcStart, true, {
           inputChunks: topChunks.length,
           parentCount: parentSources.length,
@@ -203,16 +228,80 @@ class RagService {
       }
     }
 
+    const retrievalSummary = this._summarizeRetrievalTrace(trace);
+    this._recordTraceStage(tracer, 'total', totalStart, true, {
+      usedRag: true,
+      matchedDocs: parentSources.length,
+      retrievedChunks: topChunks.length,
+    });
+
+    if (onEvent) {
+      onEvent({ type: 'sources', sources: parentSources.length > 0 ? parentSources : topChunks.slice(0, this.rerankTopK).map(c => this._chunkToSource(c)) });
+    }
+
+    return {
+      context: enhancedContext,
+      sources: parentSources,
+      topChunks,
+      retrieval: retrievalSummary,
+      questionType,
+      rewrittenQuery,
+      hasReliableCandidates: true,
+    };
+  }
+
+  /**
+   * 本地混合检索管道 (流式)
+   */
+  /**
+   * 本地混合检索管道 (非流式,兼容 Agent 工具)
+   */
+  async localSearchChat(message, history = [], options = {}) {
+    const tracer = this._createTracer(message, options);
+    const ownsTracer = !options.tracer;
+    const totalStart = Date.now();
+
+    const pipeline = await this._runRAGPipeline(message, history, { ...options, tracer });
+
+    if (!pipeline.hasReliableCandidates) {
+      return ownsTracer ? this._finishTrace(tracer, {
+        reply: pipeline.fallbackReason === 'no_documents' ? null : this._buildNoReliableSourcesReply(),
+        isMock: false,
+        sources: [],
+        context: '',
+        model: 'local-hybrid-search+no-source',
+        questionType: pipeline.questionType,
+        rewrittenQuery: pipeline.rewrittenQuery,
+        retrieval: pipeline.retrieval,
+      }) : null;
+    }
+
+    // retrieveOnly:仅检索不生成(Agent 工具专用)
+    if (options.retrieveOnly) {
+      const result = {
+        reply: '',
+        isMock: false,
+        sources: pipeline.sources,
+        context: pipeline.context,
+        model: 'local-hybrid-search+retrieve-only',
+        questionType: pipeline.questionType,
+        rewrittenQuery: pipeline.rewrittenQuery,
+        retrieval: pipeline.retrieval,
+      };
+      return ownsTracer ? this._finishTrace(tracer, result) : { ...result, traceId: tracer.traceId, trace: tracer.toSummary() };
+    }
+
+    // 生成回答
     let reply = '';
     let aiLatency = 0;
     let processCard = null;
-    if (enhancedContext) {
+    if (pipeline.context) {
       const aiStart = Date.now();
       try {
         const isProcess = this.isProcessQuestion(message);
         const enhancedPrompt = isProcess
-          ? this.buildProcessPrompt(message, enhancedContext)
-          : this.buildParentChildPrompt(message, enhancedContext);
+          ? this.buildProcessPrompt(message, pipeline.context)
+          : this.buildParentChildPrompt(message, pipeline.context);
         const llmResult = await this.aiService.getCompletion(enhancedPrompt, history);
         aiLatency = Date.now() - aiStart;
         this._recordTraceStage(tracer, 'llm', aiStart, true, {
@@ -233,51 +322,47 @@ class RagService {
     }
 
     const totalLatency = Date.now() - totalStart;
-    const retrievalSummary = this._summarizeRetrievalTrace(trace);
     metrics.recordLatency('total', totalLatency);
     metrics.recordRagQuery({
       usedRag: true,
-      usedParentChild: !!enhancedContext,
-      matchedDocs: parentSources.length,
-      retrievedChunks: topChunks.length,
+      usedParentChild: !!pipeline.context,
+      matchedDocs: pipeline.sources.length,
+      retrievedChunks: pipeline.topChunks.length,
     });
 
-    tracer.setRetrieval(retrievalSummary);
+    tracer.setRetrieval(pipeline.retrieval);
     tracer.setOutcome({
       usedRag: true,
-      usedParentChild: !!enhancedContext,
-      matchedDocs: parentSources.length,
-      retrievedChunks: topChunks.length,
-      questionType,
-      rewrittenQuery,
+      usedParentChild: !!pipeline.context,
+      matchedDocs: pipeline.sources.length,
+      retrievedChunks: pipeline.topChunks.length,
+      questionType: pipeline.questionType,
+      rewrittenQuery: pipeline.rewrittenQuery,
     });
     this._recordTraceStage(tracer, 'total', totalStart, true, {
       usedRag: true,
-      matchedDocs: parentSources.length,
-      retrievedChunks: topChunks.length,
+      matchedDocs: pipeline.sources.length,
+      retrievedChunks: pipeline.topChunks.length,
     });
 
     const result = {
       reply,
       isMock: false,
-      sources: parentSources.length > 0
-        ? parentSources
-        : topChunks.slice(0, this.rerankTopK).map(c => this._chunkToSource(c)),
-      context: enhancedContext,
+      sources: pipeline.sources,
+      context: pipeline.context,
       model: 'local-hybrid-search+parent-child',
-      questionType,
-      rewrittenQuery,
-      retrieval: retrievalSummary,
+      questionType: pipeline.questionType,
+      rewrittenQuery: pipeline.rewrittenQuery,
+      retrieval: pipeline.retrieval,
       processCard: processCard || null,
       _metrics: {
         totalLatency,
-        parentChildLatency,
         aiLatency,
-        matchedDocs: parentSources.length,
-        retrievedChunks: topChunks.length,
-        questionType,
-        rewrittenQuery,
-        retrieval: retrievalSummary,
+        matchedDocs: pipeline.sources.length,
+        retrievedChunks: pipeline.topChunks.length,
+        questionType: pipeline.questionType,
+        rewrittenQuery: pipeline.rewrittenQuery,
+        retrieval: pipeline.retrieval,
       },
     };
     return ownsTracer ? this._finishTrace(tracer, result) : { ...result, traceId: tracer.traceId, trace: tracer.toSummary() };
@@ -540,93 +625,10 @@ class RagService {
 
   async selectTopChunks(query, candidates) {
     if (!candidates || candidates.length === 0) return [];
-    // 现在 rerank 在父段落级别做（见 localSearchChat），子句只需返回足够多的候选用作父段落聚合
+    // 现在 rerank 在父段落级别做（见 _runRAGPipeline），子句只需返回足够多的候选用作父段落聚合
     // 取 top 50 子句足够覆盖知识库中所有相关父段落
     const limit = Math.min(candidates.length, 50);
     return candidates.slice(0, limit);
-  }
-
-  /**
-   * 父子段落召回：子级句子负责向量命中，父级段落负责给 LLM 提供上下文
-   *
-   * 架构：
-   *   文档 → 段落（父级）→ 句子（子级，向量化存入 Milvus）
-   *   检索命中句子 → 按 parentIdx 去重 → 取父段落文本作为上下文
-   *
-   * 优先注入命中的父段落；旧索引没有 parentText 时才回退到 chunk/doc 内容。
-   */
-  async assembleParentContext(chunks, overrides = {}) {
-    if (!chunks || chunks.length === 0) {
-      return { sources: [], context: '', parentDocs: [] };
-    }
-
-    // 上下文长度支持请求级覆盖（A/B 评测验证"少而精"）
-    const maxContextLength = overrides.maxContextLength ?? this.maxContextLength;
-
-    // 按 parentIdx（段落索引）分组，多个句子命中同一段落只取一次
-    const paraMap = new Map();
-    for (const chunk of chunks) {
-      const key = chunk.parentId || (chunk.docId + '_para_' + (chunk.parentIdx ?? 0));
-      if (!key) continue;
-      const current = paraMap.get(key) || {
-        bestChunk: chunk,
-        chunks: [],
-        parentText: chunk.parentText || '',
-        docId: chunk.docId,
-        parentIdx: chunk.parentIdx,
-      };
-      current.chunks.push(chunk);
-      if ((chunk.score || 0) > (current.bestChunk.score || 0)) current.bestChunk = chunk;
-      // 优先用最完整的 parentText
-      if ((chunk.parentText || '').length > current.parentText.length) {
-        current.parentText = chunk.parentText;
-      }
-      paraMap.set(key, current);
-    }
-
-    const contextParts = [];
-    const sources = [];
-    const parentDocs = [];
-    let totalLength = 0;
-    let docIndex = 0;
-
-    // 父段归并后 MMR 去重：剔除与已选父段高度相似的冗余段落（保留多样性）
-    const parentMatches = this._mmrDedupe([...paraMap.values()]);
-    const sortedMatches = parentMatches
-      .sort((a, b) => (b.bestChunk.score || 0) - (a.bestChunk.score || 0));
-
-    for (const match of sortedMatches) {
-      const docId = match.docId;
-      if (!docId) continue;
-
-      const doc = await this.documentService.getDocument(docId);
-      if (!doc) continue;
-
-      const paraText = match.parentText || match.bestChunk.text || doc.content || '';
-      if (!paraText) continue;
-      docIndex++;
-
-      const header = `【文档 ${docIndex}】${doc.title}（段落 ${match.parentIdx + 1}）`;
-      const entry = `${header}\n${paraText}`;
-
-      if (totalLength + entry.length > this.maxContextLength) {
-        const remaining = this.maxContextLength - totalLength;
-        if (remaining > 200) {
-          contextParts.push(entry.substring(0, remaining) + '\n...(内容过长已截断)');
-          parentDocs.push(doc);
-          sources.push(this._buildParentSource(doc, match));
-        }
-        break;
-      }
-
-      contextParts.push(entry);
-      totalLength += entry.length;
-      parentDocs.push(doc);
-      sources.push(this._buildParentSource(doc, match));
-    }
-
-    const context = contextParts.join('\n\n' + '='.repeat(40) + '\n\n');
-    return { sources, context, parentDocs };
   }
 
   buildParentChildPrompt(query, context) {
@@ -639,7 +641,7 @@ class RagService {
 2. 优先使用参考资料，不要编造资料中没有的信息；资料不足时明确说明缺什么，并建议用户补充资料或换一种问法。
 3. 回答关键事实时引用文档编号，例如“根据【文档 1】”。
 4. 如果不同文档存在冲突，优先说明冲突点，不要自行合并成确定结论。
-5. 输出用 Markdown 排版：列表用 "-" 或 "1."，重要信息加粗，方便阅读。
+5. 输出用 Markdown 排版：标题（如 "###"）和列表项（"-" 或 "1."）必须各自独占一行、写在行首，标题前后留空行；不要把 "###"、序号或 "-" 直接接在上一句话后面。重要信息加粗，方便阅读。
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 参考资料：
@@ -793,155 +795,123 @@ ${context}
   async *chatStream(message, history = [], options = {}) {
     const tracer = this._createTracer(message, options);
     const totalStart = Date.now();
-    const docsStart = Date.now();
-    const docs = await this.documentService.listDocuments({ category: options.category, limit: 1 });
-    this._recordTraceStage(tracer, 'document_check', docsStart, true, {
-      docCount: docs.documents.length,
-      category: options.category || null,
-    });
 
-    if (docs.documents.length > 0) {
-      try {
-        const { candidates, trace, rewrittenQuery } = await this._dualRetrieve(message, history, { ...options, tracer });
-        const questionType = this.classifyQuestion(message);
-        const retrievalSummary = this._summarizeRetrievalTrace(trace);
-        tracer.setRetrieval(retrievalSummary);
-        yield { type: 'retrieval', retrieval: retrievalSummary, traceId: tracer.traceId, trace: tracer.toSummary(), questionType, rewrittenQuery };
+    // 事件收集器,用于在管道内 yield
+    const events = [];
+    const onEvent = (event) => events.push(event);
 
-        if (!this._hasReliableCandidates(candidates)) {
-          metrics.recordRagQuery({ usedRag: true, usedParentChild: false, matchedDocs: 0, retrievedChunks: 0 });
-          tracer.markFallback('no_reliable_sources');
-          this._recordTraceStage(tracer, 'total', totalStart, true, { usedRag: true, matchedDocs: 0, retrievedChunks: 0 });
-          tracer.finish({ usedRag: true, usedParentChild: false, matchedDocs: 0, retrievedChunks: 0 });
-          yield { type: 'trace', trace: tracer.toSummary() };
-          yield { type: 'content', content: this._buildNoReliableSourcesReply(), done: false };
-          yield { type: 'content', content: '', done: true };
-          return;
-        }
+    const pipeline = await this._runRAGPipeline(message, history, { ...options, tracer, onEvent });
 
-        const childSelectStart = Date.now();
-        const topChunks = await this.selectTopChunks(message, candidates);
-        const childSelectLatency = Date.now() - childSelectStart;
-        metrics.recordLatency('rerank', childSelectLatency);
-        this._recordTraceStage(tracer, 'child_select', childSelectStart, true, {
-          inputCount: candidates.length,
-          outputCount: topChunks.length,
-        });
-
-        let enhancedContext = '';
-        let parentSources = [];
-        if (this.parentChildEnabled) {
-          const pcStart = Date.now();
-          try {
-            const { context, sources } = await this.assembleParentContext(topChunks, this._evalOverrides(options));
-            enhancedContext = context;
-            parentSources = sources;
-            metrics.recordLatency('parentChild', Date.now() - pcStart);
-            this._recordTraceStage(tracer, 'parent_child', pcStart, true, {
-              inputChunks: topChunks.length,
-              parentCount: parentSources.length,
-              contextLength: enhancedContext.length,
-            });
-          } catch (err) {
-            this._recordTraceStage(tracer, 'parent_child', pcStart, false, { inputChunks: topChunks.length }, err);
-            console.warn(`[RAG] 父子召回失败: ${err.message}`);
-          }
-        }
-
+    // 先 yield 管道中收集的事件
+    for (const event of events) {
+      if (event.type === 'retrieval') {
+        yield { type: 'retrieval', ...event, traceId: tracer.traceId, trace: tracer.toSummary() };
+      } else if (event.type === 'no_reliable_sources') {
+        tracer.markFallback('no_reliable_sources');
+        tracer.finish({ usedRag: true, usedParentChild: false, matchedDocs: 0, retrievedChunks: 0 });
+        yield { type: 'trace', trace: tracer.toSummary() };
+        yield { type: 'content', content: event.reply, done: false };
+        yield { type: 'content', content: '', done: true };
+        return;
+      } else if (event.type === 'sources') {
         metrics.recordRagQuery({
           usedRag: true,
-          usedParentChild: !!enhancedContext,
-          matchedDocs: parentSources.length,
-          retrievedChunks: topChunks.length,
+          usedParentChild: !!pipeline.context,
+          matchedDocs: pipeline.sources.length,
+          retrievedChunks: pipeline.topChunks.length,
         });
-
-        if (parentSources.length > 0) {
-          yield { type: 'sources', sources: parentSources };
-        } else if (topChunks.length > 0) {
-          yield { type: 'sources', sources: topChunks.map(chunk => this._chunkToSource(chunk)) };
-        }
-
-        if (enhancedContext) {
-          const aiStart = Date.now();
-          const isProcess = this.isProcessQuestion(message);
-          const enhancedPrompt = isProcess
-            ? this.buildProcessPrompt(message, enhancedContext)
-            : this.buildParentChildPrompt(message, enhancedContext);
-          let outputChars = 0;
-          let fullReply = '';
-          for await (const chunk of this.aiService.getCompletionStream(enhancedPrompt, history)) {
-            if (chunk.done) {
-              metrics.recordLatency('ai', Date.now() - aiStart);
-              this._recordTraceStage(tracer, 'llm', aiStart, true, {
-                model: config.ai.model || 'step-3.7-flash',
-                stream: true,
-                outputChars,
-              });
-              // 流程类问题：解析步骤卡片并下发给前端
-              let processCard = null;
-              if (isProcess) processCard = this.parseProcessCard(fullReply);
-              if (processCard) {
-                yield { type: 'process', processCard };
-              }
-              metrics.recordLatency('total', Date.now() - totalStart);
-              this._recordTraceStage(tracer, 'total', totalStart, true, {
-                usedRag: true,
-                matchedDocs: parentSources.length,
-                retrievedChunks: topChunks.length,
-              });
-              tracer.finish({
-                usedRag: true,
-                usedParentChild: true,
-                matchedDocs: parentSources.length,
-                retrievedChunks: topChunks.length,
-                questionType,
-                rewrittenQuery,
-              });
-              yield { type: 'trace', trace: tracer.toSummary() };
-              yield { type: 'content', content: '', done: true };
-              return;
-            }
-            outputChars += (chunk.content || '').length;
-            fullReply += chunk.content || '';
-            yield { type: 'content', content: chunk.content, done: false };
-          }
-        } else {
-          tracer.markFallback('empty_enhanced_context');
-          this._recordTraceStage(tracer, 'total', totalStart, true, {
-            usedRag: true,
-            matchedDocs: parentSources.length,
-            retrievedChunks: topChunks.length,
-          });
-          tracer.finish({
-            usedRag: true,
-            usedParentChild: false,
-            matchedDocs: parentSources.length,
-            retrievedChunks: topChunks.length,
-            questionType,
-            rewrittenQuery,
-          });
-          yield { type: 'trace', trace: tracer.toSummary() };
-          yield { type: 'content', content: this._buildNoReliableSourcesReply(), done: false };
-          yield { type: 'content', content: '', done: true };
-          return;
-        }
-      } catch (err) {
-        tracer.markFallback('rag_pipeline_error');
-        this._recordTraceStage(tracer, 'rag_pipeline', Date.now(), false, {}, err);
-        console.warn(`[RAG] 流式检索失败，降级: ${err.message}`);
+        yield event;
       }
     }
 
+    // 没有可靠来源或上下文为空,返回兜底回复
+    if (!pipeline.hasReliableCandidates || !pipeline.context) {
+      const fallbackReason = !pipeline.hasReliableCandidates ? 'no_reliable_sources' : 'empty_enhanced_context';
+      tracer?.markFallback(fallbackReason);
+      this._recordTraceStage(tracer, 'total', totalStart, true, {
+        usedRag: true,
+        matchedDocs: pipeline.sources.length,
+        retrievedChunks: pipeline.topChunks.length,
+      });
+      tracer?.finish({
+        usedRag: true,
+        usedParentChild: !!pipeline.context,
+        matchedDocs: pipeline.sources.length,
+        retrievedChunks: pipeline.topChunks.length,
+        questionType: pipeline.questionType,
+        rewrittenQuery: pipeline.rewrittenQuery,
+      });
+      yield { type: 'trace', trace: tracer.toSummary() };
+      yield { type: 'content', content: this._buildNoReliableSourcesReply(), done: false };
+      yield { type: 'content', content: '', done: true };
+      return;
+    }
+
+    // 流式生成
     const aiStart = Date.now();
+    const isProcess = this.isProcessQuestion(message);
+    const enhancedPrompt = isProcess
+      ? this.buildProcessPrompt(message, pipeline.context)
+      : this.buildParentChildPrompt(message, pipeline.context);
     let outputChars = 0;
+    let fullReply = '';
+
     try {
-      for await (const chunk of this.aiService.getCompletionStream(message, history)) {
+      for await (const chunk of this.aiService.getCompletionStream(enhancedPrompt, history, { signal: options.signal })) {
         if (chunk.done) {
           metrics.recordLatency('ai', Date.now() - aiStart);
           this._recordTraceStage(tracer, 'llm', aiStart, true, {
             model: config.ai.model || 'step-3.7-flash',
             stream: true,
             outputChars,
+          });
+
+          // 流程类问题：解析步骤卡片并下发给前端
+          let processCard = null;
+          if (isProcess) processCard = this.parseProcessCard(fullReply);
+          if (processCard) {
+            yield { type: 'process', processCard };
+          }
+
+          metrics.recordLatency('total', Date.now() - totalStart);
+          this._recordTraceStage(tracer, 'total', totalStart, true, {
+            usedRag: true,
+            matchedDocs: pipeline.sources.length,
+            retrievedChunks: pipeline.topChunks.length,
+          });
+          tracer.finish({
+            usedRag: true,
+            usedParentChild: true,
+            matchedDocs: pipeline.sources.length,
+            retrievedChunks: pipeline.topChunks.length,
+            questionType: pipeline.questionType,
+            rewrittenQuery: pipeline.rewrittenQuery,
+          });
+          yield { type: 'trace', trace: tracer.toSummary() };
+          yield { type: 'content', content: '', done: true };
+          return;
+        }
+        outputChars += (chunk.content || '').length;
+        fullReply += chunk.content || '';
+        yield { type: 'content', content: chunk.content, done: false };
+      }
+    } catch (err) {
+      tracer?.markFallback('rag_pipeline_error');
+      this._recordTraceStage(tracer, 'llm', aiStart, false, { model: config.ai.model || 'step-3.7-flash' }, err);
+      console.warn(`[RAG] 流式检索失败，降级: ${err.message}`);
+    }
+
+    // 流式生成失败时降级:纯 LLM 无 RAG 上下文
+    const aiStart2 = Date.now();
+    let fallbackOutputChars = 0;
+    try {
+      for await (const chunk of this.aiService.getCompletionStream(message, history, { signal: options.signal })) {
+        if (chunk.done) {
+          metrics.recordLatency('ai', Date.now() - aiStart2);
+          this._recordTraceStage(tracer, 'llm', aiStart2, true, {
+            model: config.ai.model || 'step-3.7-flash',
+            stream: true,
+            outputChars: fallbackOutputChars,
           });
           metrics.recordLatency('total', Date.now() - totalStart);
           metrics.recordRagQuery({ usedRag: false, usedParentChild: false });
@@ -951,11 +921,11 @@ ${context}
           yield { type: 'content', content: '', done: true };
           return;
         }
-        outputChars += (chunk.content || '').length;
+        fallbackOutputChars += (chunk.content || '').length;
         yield { type: 'content', content: chunk.content, done: false };
       }
     } catch (err) {
-      this._recordTraceStage(tracer, 'llm', aiStart, false, { model: config.ai.model || 'step-3.7-flash', stream: true }, err);
+      this._recordTraceStage(tracer, 'llm', aiStart2, false, { model: config.ai.model || 'step-3.7-flash', stream: true }, err);
       this._recordTraceStage(tracer, 'total', totalStart, false, { usedRag: false }, err);
       tracer.markError(err);
       tracer.finish({ usedRag: false, usedParentChild: false });
