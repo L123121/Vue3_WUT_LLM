@@ -1,7 +1,7 @@
 <script setup>
-import { computed, ref } from 'vue';
+import { ref } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
-import { Star, ChevronDown, ChevronRight, X, MessageSquare, Bot, User } from 'lucide-vue-next';
+import { Star, ChevronDown, ChevronRight, X, Bot, User } from 'lucide-vue-next';
 import { useFavoritesStore } from '../../stores/favorites.store.js';
 import { useChatStore } from '../../stores/chat.store.js';
 
@@ -16,12 +16,11 @@ const toggleExpanded = () => { isExpanded.value = !isExpanded.value; };
 // 收藏条目的预览文本（截断）
 const getPreview = (fav) => {
   const text = fav.text || '';
-  const clean = text.replace(/[#>*`~_\-]/g, ' ').replace(/\s+/g, ' ').trim();
+  const clean = text.replace(/[-#>*`~_]/g, ' ').replace(/\s+/g, ' ').trim();
   return clean.length > 40 ? `${clean.slice(0, 40)}…` : clean;
 };
 
 const roleIcon = (role) => (role === 'user' ? User : Bot);
-const roleLabel = (role) => (role === 'user' ? '用户' : 'AI');
 
 // 点击收藏条目：切换到对应会话并滚动定位到该消息
 const openFavorite = async (fav) => {

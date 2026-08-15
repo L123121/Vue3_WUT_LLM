@@ -3,7 +3,7 @@
 /**
  * Cross-encoder reranker using BGE-reranker-base (INT8, ~278MB)
  *
- * Uses @xenova/transformers local ONNX inference — no API calls.
+ * Uses @huggingface/transformers local ONNX inference — no API calls.
  * Replaces the 2-gram sliding-window keyword rerank with semantic reranking.
  *
  * Model: Xenova/bge-reranker-base (ONNX quantized, int8)
@@ -37,13 +37,13 @@ class RerankerService {
 
   async _doLoad() {
     // 禁止远程加载，仅使用本地缓存（避免 HuggingFace Hub 被墙导致失败）
-    const { env } = require('@xenova/transformers');
+    const { env } = require('@huggingface/transformers');
     env.allowRemoteModels = false;
     env.useFS = true;
     env.useFSCache = true;
     env.localModelPath = MODEL_CACHE_DIR;   // local_files_only 时从该目录找模型
 
-    const { AutoTokenizer, AutoModelForSequenceClassification } = require('@xenova/transformers');
+    const { AutoTokenizer, AutoModelForSequenceClassification } = require('@huggingface/transformers');
 
     console.log('[Reranker] 加载模型中:', MODEL_NAME);
 
@@ -53,7 +53,7 @@ class RerankerService {
     });
 
     const model = await AutoModelForSequenceClassification.from_pretrained(MODEL_NAME, {
-      quantized: true,          // 使用 model_uint8.onnx (~278MB)
+      dtype: 'q8',              // 使用 INT8 ONNX 权重
       cache_dir: MODEL_CACHE_DIR,
       local_files_only: true,
     });

@@ -4,10 +4,10 @@ const quotaService = require("../services/quota.service");
 
 /**
  * 用户级配额中间件
- * 在请求处理前检查配额，超限时返回 429
- * 在请求处理后递增配额（通过 res.on("finish") 确保只对成功请求计数）
+ * 在请求处理前原子预占配额，超限时返回 429。
+ * 对明确失败的非 2xx 响应回滚预占，避免并发请求突破日限额。
  */
-function quotaMiddleware(req, res, next) {
+async function quotaMiddleware(req, res, next) {
   // 管理员账号无配额限制（authMiddleware 已注入 req.role）
   if (req.role === 'admin') {
     return next();
@@ -34,7 +34,8 @@ function quotaMiddleware(req, res, next) {
   if (req.path.startsWith("/assets/")) return next();
   if (req.path.startsWith("/uploads/")) return next();
 
-  quotaService.check(req.userId).then(function(result) {
+  try {
+    const result = await quotaService.reserve(req.userId);
     if (!result.ok) {
       return res.status(429).json({
         success: false,
@@ -43,22 +44,34 @@ function quotaMiddleware(req, res, next) {
       });
     }
 
-    // 请求成功后递增配额（原子检查+递增，并发下不会突破限额）
-    res.on("finish", function() {
-      if (res.statusCode >= 200 && res.statusCode < 300) {
-        try {
-          quotaService.incrementIfAllowed(req.userId);
-        } catch (err) {
-          console.error("[Quota] 递增失败:", err.message);
-        }
-      }
-    });
+    let settled = false;
+    const releaseReservation = () => {
+      quotaService.release(req.userId).catch((err) => {
+        console.error("[Quota] 回滚失败:", err.message);
+      });
+    };
+    const onFinish = () => {
+      if (settled) return;
+      settled = true;
+      res.removeListener("close", onClose);
+      if (res.statusCode >= 200 && res.statusCode < 300) return;
+      releaseReservation();
+    };
+    const onClose = () => {
+      if (settled) return;
+      settled = true;
+      res.removeListener("finish", onFinish);
+      releaseReservation();
+    };
+
+    res.once("finish", onFinish);
+    res.once("close", onClose);
 
     next();
-  }).catch(function(err) {
-    console.error("[Quota] 检查失败:", err.message);
+  } catch (err) {
+    console.error("[Quota] 预占失败:", err.message);
     next(); // 配额系统故障时不阻塞请求
-  });
+  }
 }
 
 module.exports = { quotaMiddleware };

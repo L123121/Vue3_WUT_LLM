@@ -169,7 +169,7 @@ docker compose -p wuli-elf restart backend
 
 ### 更新部署
 
-源码构建模式：
+源码构建模式（仅用于服务器本地构建）：
 
 ```bash
 git pull
@@ -180,8 +180,9 @@ docker image prune -f
 镜像拉取模式：
 
 ```bash
-export BACKEND_IMAGE=your-dockerhub-username/wuli-elf-backend:latest
+export BACKEND_IMAGE=your-dockerhub-username/wuli-elf-backend:<commit-sha>
 docker compose -p wuli-elf pull backend
+docker compose -p wuli-elf up -d qdrant
 docker compose -p wuli-elf up -d --no-deps backend
 docker image prune -f
 ```

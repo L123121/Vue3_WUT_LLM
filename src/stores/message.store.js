@@ -1,5 +1,4 @@
 import { defineStore } from 'pinia';
-import { ref } from 'vue';
 import { useStreaming } from '../composables/useStreaming.js';
 import { useMessageActions } from '../composables/useMessageActions.js';
 

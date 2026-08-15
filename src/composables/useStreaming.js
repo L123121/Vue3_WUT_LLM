@@ -14,9 +14,6 @@ import {
   createWelcomeMessage,
 } from '../utils/chatHelpers.js';
 
-const MAX_RETRIES = 3;
-const INITIAL_RETRY_DELAY = 1000;
-const MAX_RETRY_DELAY = 30000;
 const STREAM_STALL_TIMEOUT = 60000;
 
 /**
@@ -253,7 +250,7 @@ export function useStreaming() {
           // 切换会话自中止检测：用户已切到别的会话时，停止向旧会话写消息并中止请求，
           // 否则 currentStreamingId 仍指向旧会话消息，新会话 UI 状态会错乱
           if (convStore.currentConversationId !== conversationId) {
-            if (import.meta.env.DEV) console.log('[Stream] 检测到会话已切换，中止旧流式');
+            if (import.meta.env.DEV) console.debug('[Stream] 检测到会话已切换，中止旧流式');
             abortCurrentRequest();
             return;
           }
@@ -261,7 +258,7 @@ export function useStreaming() {
           if (!firstChunkReceived) {
             firstChunkReceived = true;
             const firstChunkMs = Math.round(performance.now() - streamStartTime);
-            if (import.meta.env.DEV) console.log(`[TTFT] 首字上屏(RAF前): ${firstChunkMs}ms`);
+            if (import.meta.env.DEV) console.debug(`[TTFT] 首字上屏(RAF前): ${firstChunkMs}ms`);
           }
           pendingContent += content;
           if (!rafId) {
@@ -270,14 +267,14 @@ export function useStreaming() {
               if (!firstFramePainted) {
                 firstFramePainted = true;
                 const firstFrameMs = Math.round(performance.now() - streamStartTime);
-                if (import.meta.env.DEV) console.log(`[TTFT] 首字渲染(DOM写入): ${firstFrameMs}ms`);
+                if (import.meta.env.DEV) console.debug(`[TTFT] 首字渲染(DOM写入): ${firstFrameMs}ms`);
                 try {
                   const key = 'ttft_frame_measurements';
                   const arr = JSON.parse(localStorage.getItem(key) || '[]');
                   arr.push({ ts: Date.now(), firstFrame: firstFrameMs, msg: text.substring(0, 30) });
                   while (arr.length > 100) arr.shift();
                   localStorage.setItem(key, JSON.stringify(arr));
-                } catch (_) {}
+                } catch {}
               }
               updateMessage(convStore, conversationId, aiMsgId, (m) => {
                 const newText = getMessageText(m) + pendingContent;
@@ -345,7 +342,9 @@ export function useStreaming() {
             const userText = trimmedText;
             if (userText) {
               const cleanText = userText
-                .replace(/[【】《》「」『』\[\]""'']/g, '')
+                .replace(/[【】《》「」『』""'']/g, '')
+                .replaceAll('[', '')
+                .replaceAll(']', '')
                 .replace(/[#*_~`\\]/g, '')
                 .trim();
               const greeting = /^(你好|您好|hi|hello|嗨|hey|在吗|在不在|早上好|晚上好|下午好)[!！.。]?$/i;
@@ -367,7 +366,7 @@ export function useStreaming() {
           resolve();
         },
         onError: (error) => {
-          console.log('[Stream] onError callback fired:', error.message);
+          console.debug('[Stream] onError callback fired:', error.message);
           cancelPendingRaf();
 
           // 空内容的 AI 消息标记为错误

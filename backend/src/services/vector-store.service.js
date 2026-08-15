@@ -7,6 +7,28 @@ const { EmbeddingService } = require('./embedding.service');
 
 const DATA_DIR = path.join(__dirname, '../../data');
 const VECTOR_FILE = path.join(DATA_DIR, 'vectors.json');
+const EXIT_REGISTRY_KEY = Symbol.for('wut.vector-store.exit-registry');
+
+function registerExitPersistence(instance) {
+  if (process.env.NODE_ENV === 'test' || process.env.VITEST) return;
+
+  if (!global[EXIT_REGISTRY_KEY]) {
+    const instances = new Set();
+    const saveAll = () => {
+      for (const vectorStore of instances) {
+        if (vectorStore._dirty && vectorStore._docs.length > 0) {
+          try { vectorStore._saveSync(); } catch { /* 退出阶段忽略 */ }
+        }
+      }
+    };
+    process.on('SIGTERM', saveAll);
+    process.on('SIGINT', saveAll);
+    process.on('exit', saveAll);
+    global[EXIT_REGISTRY_KEY] = { instances };
+  }
+
+  global[EXIT_REGISTRY_KEY].instances.add(instance);
+}
 
 /**
  * VectorStoreService — 文件持久化 + 精确相似度检索（单例）
@@ -44,15 +66,8 @@ class VectorStoreService {
     this._embeddingService = new EmbeddingService();
     this._initializing = false;
 
-    // 注册退出兜底保存（容器 stop / kill 时尽量不丢数据）
-    this._exitHandler = () => {
-      if (this._dirty && this._docs.length > 0) {
-        try { this._saveSync(); } catch (_) { /* 退出阶段忽略 */ }
-      }
-    };
-    process.on('SIGTERM', this._exitHandler);
-    process.on('SIGINT', this._exitHandler);
-    process.on('exit', this._exitHandler);
+    // 进程级统一注册退出兜底保存，避免多实例重复添加监听器。
+    registerExitPersistence(this);
 
     this._load();
   }

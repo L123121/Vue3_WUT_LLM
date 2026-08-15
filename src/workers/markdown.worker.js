@@ -5,7 +5,7 @@
  */
 import MarkdownIt from 'markdown-it';
 import hljs from 'highlight.js/lib/core';
-import { ALLOWED_TAGS, ALLOWED_ATTR, completeMarkdown, normalizeBlockSyntax, escapeHtml, createLinkSecurityRule } from '../utils/markdownConfig.js';
+import { completeMarkdown, normalizeBlockSyntax, escapeHtml, createLinkSecurityRule } from '../utils/markdownConfig.js';
 
 // Register common languages in the worker
 import javascript from 'highlight.js/lib/languages/javascript';

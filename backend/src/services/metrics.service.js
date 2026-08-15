@@ -199,10 +199,8 @@ class MetricsService {
   async runRealEvaluation(testCases, ragEnabled = true) {
     const results = [];
     const { RagService } = require('./rag.service');
-    const { DocumentService } = require('./document.service');
 
     const ragService = new RagService();
-    const documentService = new DocumentService();
 
     for (const tc of testCases) {
       const startTime = Date.now();
@@ -351,4 +349,3 @@ const { aiService } = require('./ai.service');
 }
 
 module.exports = { MetricsService, metrics: new MetricsService() };
-

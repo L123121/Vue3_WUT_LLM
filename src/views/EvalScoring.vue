@@ -1,6 +1,6 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue';
-import { Upload, Download, ChevronLeft, ChevronRight, FileJson, BarChart3, Gauge } from 'lucide-vue-next';
+import { ref, onMounted, onUnmounted } from 'vue';
+import { Upload, Download, FileJson, BarChart3, Gauge } from 'lucide-vue-next';
 import { useEvalData } from '../composables/useEvalData.js';
 import { useSystemMetrics } from '../composables/useSystemMetrics.js';
 import SystemMetricsPanel from '../components/eval/SystemMetricsPanel.vue';
@@ -9,7 +9,7 @@ import EvalContentViewer from '../components/eval/EvalContentViewer.vue';
 import MobileMenuButton from '../components/layout/MobileMenuButton.vue';
 
 const {
-  evalData, currentIndex, humanScores, comments, loading,
+  evalData, currentIndex, humanScores, comments,
   currentItem, stats, handleFileUpload, setScore, exportScores,
   prevItem, nextItem,
 } = useEvalData();

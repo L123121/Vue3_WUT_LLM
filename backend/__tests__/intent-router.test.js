@@ -62,6 +62,9 @@ describe('IntentRouter.fastRoute', () => {
     ['多步-综合对比', '综合对比一下两个方案', INTENT_TYPES.COMPLEX_TASK],
     ['多步-规划时间线', '帮我规划考研时间线', INTENT_TYPES.COMPLEX_TASK],
     ['多步-权衡', '帮我权衡一下利弊', INTENT_TYPES.COMPLEX_TASK],
+    ['计算-中文乘法', '帮我算一下 128 乘以 46 等于多少', INTENT_TYPES.CALCULATION_TASK],
+    ['计算-sqrt', 'sqrt(144) 是多少', INTENT_TYPES.CALCULATION_TASK],
+    ['计算-次方', '23 的 3 次方等于多少', INTENT_TYPES.CALCULATION_TASK],
   ];
 
   for (const [desc, input, intent] of agentCases) {
@@ -82,6 +85,7 @@ describe('IntentRouter.fastRoute', () => {
     ['知识问答-算法题', '什么是数据结构'],
     ['校园生活-宿舍', '宿舍几点熄灯'],
     ['考试咨询', '期末考试安排'],
+    ['知识咨询-绩点算法', '绩点怎么算'],
     ['模糊闲聊', '今天天气怎么样'],
     ['复杂-但带闲聊词尾', '你好，请问食堂在哪'],
   ];

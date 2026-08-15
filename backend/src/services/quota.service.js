@@ -50,26 +50,43 @@ class QuotaService {
     return count;
   }
 
+  _usage(count, limit, date) {
+    return {
+      used: count,
+      limit,
+      remaining: limit === Infinity ? Infinity : Math.max(0, limit - count),
+      date,
+      resetAt: date + "T23:59:59+08:00",
+    };
+  }
+
   /**
-   * 原子地检查并递增配额。
-   * 读-改-写全程同步（better-sqlite3 同步 API，单线程内无让出点），
-   * 并发请求不可能同时通过检查 → 不会突破日限额。
-   * @returns {{ok: boolean, usage: object}} ok=false 表示已达上限（本次不计数）
+   * 在请求执行前原子预占一个配额槽位。
+   * SQLite 使用事务，Redis 使用 Lua，避免并发请求同时通过旧计数。
    */
-  incrementIfAllowed(userId) {
+  async reserve(userId) {
     const key = this._key(userId);
     const today = this._today();
     const limit = this._limit(userId);
     if (limit === Infinity) {
-      return { ok: true, usage: { used: 0, limit, remaining: Infinity, date: today, resetAt: today + "T23:59:59+08:00" } };
+      return { ok: true, usage: this._usage(0, limit, today) };
     }
-    const raw = store.hgetallSync(key);
-    const storedDate = raw?.date;
-    const count = storedDate !== today ? 1 : (parseInt(raw?.count, 10) || 0) + 1;
-    store.hsetSync(key, 'date', today);
-    store.hsetSync(key, 'count', count);
-    const usage = { used: count, limit, remaining: Math.max(0, limit - count), date: today, resetAt: today + "T23:59:59+08:00" };
-    return { ok: usage.remaining > 0, usage };
+
+    const result = await store.reserveDailyQuota(key, today, limit);
+    return { ok: result.ok, usage: this._usage(result.count, limit, today) };
+  }
+
+  async release(userId) {
+    const limit = this._limit(userId);
+    const today = this._today();
+    if (limit === Infinity) return this._usage(0, limit, today);
+
+    const count = await store.releaseDailyQuota(this._key(userId), today);
+    return this._usage(count, limit, today);
+  }
+
+  async incrementIfAllowed(userId) {
+    return this.reserve(userId);
   }
 
   async check(userId) {

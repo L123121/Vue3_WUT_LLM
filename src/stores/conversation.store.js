@@ -201,7 +201,7 @@ export const useConversationStore = defineStore('conversation', () => {
     try {
       // 优先从 localStorage 缓存恢复本地会话（含消息）
       const cached = loadCache();
-      if (cached) console.log(`[Cache] 找到缓存: ${cached.conversations?.length || 0} 个会话, currentId=${cached.currentId?.substring(0, 20)}`);
+      if (cached) console.debug(`[Cache] 找到缓存: ${cached.conversations?.length || 0} 个会话, currentId=${cached.currentId?.substring(0, 20)}`);
       else console.warn('[Cache] 缓存为空或版本不匹配');
       let hasLocalConversations = false;
       if (cached?.conversations?.length > 0) {
@@ -403,11 +403,6 @@ export const useConversationStore = defineStore('conversation', () => {
   // 统一消息文本读取（优先 content，降级 text）— 已从 chatHelpers 导入
 
   // ========== 统一 localStorage 持久化 ==========
-
-  const flushSaveCache = () => {
-    flushSave(conversations.value, currentConversationId.value);
-    _triggerBackendSync(); // 同步到后端
-  };
 
   const scheduleSaveCache = (immediate = false) => {
     const conv = currentConversation.value;

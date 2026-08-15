@@ -8,6 +8,18 @@ const { RerankerService } = require('./reranker.service');
 const config = require('../config');
 const { metrics } = require('./metrics.service');
 const { RagTracer } = require('./rag-tracer.service');
+const {
+  QUESTION_TYPE,
+  TYPE_CONFIG,
+  DOC_CATEGORY_KEYWORDS,
+  classifyQuestion,
+  getTypeConfig,
+  inferDocCategory,
+  adaptiveTruncate,
+  charBigrams,
+  jaccardBigrams,
+  mmrDedupe,
+} = require('./rag-ranking.service');
 
 class RagService {
   constructor(aiService = null) {
@@ -587,7 +599,7 @@ class RagService {
 
     return parents;
   }
-  fuseRetrievalResults(vectorResults = [], keywordResults = [], limit = this.searchTopK, query = null) {
+  fuseRetrievalResults(vectorResults = [], keywordResults = [], limit = this.searchTopK, _query = null) {
     // RRF 融合：score = Σ 1/(k + rank)，只看通道内排名，免去跨通道权重校准
     const merged = new Map();
     const addResult = (item, channel, rank) => {
@@ -1059,28 +1071,13 @@ ${context}
   // ──────────────────────────────────────────────
 
   /** 问题类型枚举 */
-  static QuestionType = {
-    AUTHORITATIVE: 'authoritative',  // 教务政策：答错有后果，宁缺毋滥
-    KNOWLEDGE:     'knowledge',      // 课件笔记：答偏了问题不大，宽容
-    FACTUAL:       'factual',        // 具体事实：需要准确数字/名称
-    GENERAL:       'general',        // 默认
-  };
+  static QuestionType = QUESTION_TYPE;
 
   /** 按问题类型的阈值配置 */
-  static TYPE_CONFIG = {
-    authoritative: { minScore: 0.50, rerankTopK: 6, needSource: true,  clamp: [0.35, 0.70] },
-    knowledge:     { minScore: 0.25, rerankTopK: 6, needSource: false, clamp: [0.15, 0.40] },
-    factual:       { minScore: 0.40, rerankTopK: 6, needSource: true,  clamp: [0.25, 0.55] },
-    general:       { minScore: 0.30, rerankTopK: 6, needSource: false, clamp: [0.20, 0.50] },
-  };
+  static TYPE_CONFIG = TYPE_CONFIG;
 
   /** 文档类别关键词表：用于元数据过滤（Multi-faceted Filtering）的 query → category 自动推断 */
-  static DOC_CATEGORY_KEYWORDS = {
-    '学校概况': ['校训', '食堂', '宿舍', '社团', '校区', '图书馆', '报到', '开学', '学费', '奖学金', '校史', '地图', '一卡通', '军训', '转专业', '校车', '体育'],
-    '专业课程': ['离散数学', '软件工程', '课程', '复习', '教材', '知识点', '算法', '数据结构', '组成原理', '计算机网络', '操作系统', '数据库', '编译', '期末', '课件', '作业', '考试'],
-    '面试刷题': ['面试', '刷题', 'CodeTop', '大厂', 'offer', '笔试', '简历', '面经', '算法题', '八股', '手撕'],
-    'AI学习': ['Agent', 'RAG', '大模型', 'LLM', '智能体', '提示词', 'Prompt', '机器学习', '深度学习', 'Embedding', 'Rerank', '向量检索', 'AIGC'],
-  };
+  static DOC_CATEGORY_KEYWORDS = DOC_CATEGORY_KEYWORDS;
 
   /**
    * 根据问题文本分类
@@ -1088,21 +1085,7 @@ ${context}
    * @returns {string} 类型 key
    */
   classifyQuestion(query) {
-    const q = String(query || '');
-
-    // 权威型：教务政策、规则、流程，答错可能误事
-    if (/教务|选课|学分|毕业|学位|补考|重修|转专业|奖学金|处分|成绩|GPA|考试|报名|申请|条件|要求|规定|政策|规则|流程|手续|办法|制度|资格|审核|审批/.test(q))
-      return RagService.QuestionType.AUTHORITATIVE;
-
-    // 事实型：具体数字、名称、位置、时间
-    if (/多少|几个|哪些|何时|哪里|谁|电话|地址|网站|邮箱|号码|比例|率|面积|人数|成立于|建于/.test(q))
-      return RagService.QuestionType.FACTUAL;
-
-    // 知识型：概念解释、知识点问答
-    if (/什么是|解释|说说|区别|差异|不同|特点|特征|定义|概念|原理|方法|算法|为什么|如何|怎样|怎么|举例|说明|描述|理解|介绍|概述|总结|分类|组成|结构|功能|作用|优势|劣势|优缺点|比较|对比/.test(q))
-      return RagService.QuestionType.KNOWLEDGE;
-
-    return RagService.QuestionType.GENERAL;
+    return classifyQuestion(query);
   }
 
   /**
@@ -1111,9 +1094,7 @@ ${context}
    * @returns {{ minScore: number, rerankTopK: number, needSource: boolean, clamp: [number, number] }}
    */
   getTypeConfig(query) {
-    const type = this.classifyQuestion(query);
-    const config = RagService.TYPE_CONFIG[type] || RagService.TYPE_CONFIG.general;
-    return { type, ...config };
+    return getTypeConfig(query);
   }
 
   /**
@@ -1127,25 +1108,7 @@ ${context}
    * @returns {string|null} 推断出的文档类别，低置信返回 null
    */
   _inferDocCategory(query) {
-    if (!this.autoCategoryFilter) return null;
-    const q = String(query || '').trim();
-    if (!q) return null;
-
-    let bestCategory = null;
-    let bestHits = 0;
-    for (const [category, keywords] of Object.entries(RagService.DOC_CATEGORY_KEYWORDS)) {
-      let hits = 0;
-      for (const kw of keywords) {
-        if (q.includes(kw)) hits++;
-      }
-      if (hits > bestHits) {
-        bestHits = hits;
-        bestCategory = category;
-      }
-    }
-
-    // 至少命中 2 个关键词才认为足够置信（避免泛化问题被误过滤）
-    return bestHits >= 2 ? bestCategory : null;
+    return inferDocCategory(query, this.autoCategoryFilter);
   }
 
   // ──────────────────────────────────────────────
@@ -1319,94 +1282,21 @@ ${historyText}
    * @returns {Array} 截断后的候选列表
    */
   _adaptiveTruncate(candidates, maxCount, query, overrides = {}) {
-    if (!candidates || candidates.length === 0) return [];
-    if (candidates.length <= 1) return candidates;
-
-    // 获取类型化阈值配置
-    const typeConfig = query ? this.getTypeConfig(query) : null;
-    const effectiveMaxCount = overrides.rerankTopK ?? (typeConfig ? typeConfig.rerankTopK : maxCount);
-    const baseMinScore = overrides.rerankMinScore ?? (typeConfig ? typeConfig.minScore : 0.30);
-    const clamp = typeConfig ? typeConfig.clamp : [0.20, 0.50];
-    // 断崖阈值可覆盖（默认 0.05）
-    const cliffGap = overrides.rerankDropoff ?? 0.05;
-
-    // 先按 rerank 分数降序排列（理论上已经排好了，但保险一下）
-    const sorted = [...candidates].sort(
-      (a, b) => (b._rerankScore || 0) - (a._rerankScore || 0)
-    );
-
-    let cutoff = sorted.length;
-
-    // 1. 断崖检测：找到第一个分差 > cliffGap 的位置（至少保留 1 个）
-    let cliffCutoff = sorted.length;
-    for (let i = 1; i < sorted.length; i++) {
-      const gap = (sorted[i - 1]._rerankScore || 0) - (sorted[i]._rerankScore || 0);
-      if (gap > cliffGap) {
-        cliffCutoff = i;
-        break;
-      }
-    }
-
-    // 2. 动态低分过滤：根据问题类型调整 minScore
-    //    策略：以 baseMinScore 为基准，结合分数分布做 clamp
-    const topScore = sorted[0]._rerankScore || 0;
-    let dynamicMinScore;
-    if (overrides.rerankMinScore !== undefined) {
-      // 显式覆盖（A/B 评测）：直接使用覆盖值，不做动态调整，保证可复现
-      dynamicMinScore = overrides.rerankMinScore;
-    } else if (topScore > 0.8) {
-      // 如果 top1 分数已经很高（>0.8），说明检索质量好，可以适当放宽阈值
-      dynamicMinScore = Math.max(clamp[0], baseMinScore - 0.05);
-    } else if (topScore < 0.3) {
-      // 如果 top1 分数很低（<0.3），说明检索质量差，收紧阈值避免噪声
-      dynamicMinScore = Math.min(clamp[1], baseMinScore + 0.10);
-    } else {
-      dynamicMinScore = baseMinScore;
-    }
-    // 最终 clamp 到 [clamp[0], clamp[1]]（显式覆盖时不 clamp，保证覆盖值精确生效）
-    if (overrides.rerankMinScore === undefined) {
-      dynamicMinScore = Math.max(clamp[0], Math.min(clamp[1], dynamicMinScore));
-    }
-
-    // 低分过滤优先：严格排除所有低于动态阈值的候选；
-    // 否则按断崖截断（保留分界后的第一个，避免过度截断）
-    const scoreCutoff = sorted.findIndex(c => (c._rerankScore || 0) < dynamicMinScore);
-    if (scoreCutoff >= 0 && scoreCutoff <= cliffCutoff) {
-      cutoff = scoreCutoff;
-    } else {
-      cutoff = cliffCutoff + 1;
-    }
-
-    // 3. 硬上限 effectiveMaxCount（至少保留 1 个）
-    const result = sorted.slice(0, Math.max(1, Math.min(cutoff, effectiveMaxCount)));
-
-    // 4. 如果截断后只剩 1 个，且第 2 个分数够高，放宽到至少 2 个提高多样性
-    if (result.length === 1 && sorted.length >= 2 && (sorted[1]._rerankScore || 0) > dynamicMinScore) {
-      result.push(sorted[1]);
-    }
-
-    return result;
+    return adaptiveTruncate(candidates, maxCount, query, overrides, (value) => this.getTypeConfig(value));
   }
 
   /**
    * 字符 bigram 集合：中文文本相似度的轻量特征（零模型调用）
    */
   _charBigrams(text) {
-    const s = String(text || '').replace(/\s+/g, '');
-    const set = new Set();
-    for (let i = 0; i < s.length - 1; i++) set.add(s.slice(i, i + 2));
-    return set;
+    return charBigrams(text);
   }
 
   /**
    * 字符 bigram Jaccard 相似度（0~1）
    */
   _jaccardBigrams(setA, setB) {
-    if (!setA || !setB || setA.size === 0 || setB.size === 0) return 0;
-    let intersection = 0;
-    for (const gram of setA) if (setB.has(gram)) intersection++;
-    const union = setA.size + setB.size - intersection;
-    return union > 0 ? intersection / union : 0;
+    return jaccardBigrams(setA, setB);
   }
 
   /**
@@ -1424,55 +1314,11 @@ ${historyText}
    * @returns {Array} 去重后的父段候选
    */
   _mmrDedupe(parentCandidates, maxCount = 0) {
-    if (!this.mmrEnabled || !Array.isArray(parentCandidates) || parentCandidates.length <= 1) return parentCandidates || [];
-
-    const limit = Math.min(maxCount > 0 ? maxCount : parentCandidates.length, parentCandidates.length);
-    if (limit <= 1) return parentCandidates.slice(0, 1);
-
-    const textOf = (c) => c.parentText || c.bestChunk?.text || '';
-    const scoreOf = (c) => c._rerankScore ?? c.bestChunk?.score ?? c.score ?? 0;
-
-    const bigramSets = parentCandidates.map(c => this._charBigrams(textOf(c)));
-    const simCache = new Map();
-    const similarity = (i, j) => {
-      const key = i < j ? `${i}:${j}` : `${j}:${i}`;
-      if (!simCache.has(key)) simCache.set(key, this._jaccardBigrams(bigramSets[i], bigramSets[j]));
-      return simCache.get(key);
-    };
-
-    // 按相关性降序
-    const order = parentCandidates
-      .map((_, i) => i)
-      .sort((a, b) => scoreOf(parentCandidates[b]) - scoreOf(parentCandidates[a]));
-
-    const selected = [order[0]];
-    const remaining = order.slice(1);
-
-    while (selected.length < limit && remaining.length > 0) {
-      let bestIdx = -1;
-      let bestVal = -Infinity;
-      for (const i of remaining) {
-        let maxSim = 0;
-        for (const j of selected) {
-          // 相似度剔除仅限同 docId 内父段：跨文档内容高度相似时也保留，
-          // 避免把第二个相关文档整体剔掉（2026-08-09 回归修复，C01-C08 曾漏 doc_9a78）
-          if (parentCandidates[i].docId !== parentCandidates[j].docId) continue;
-          maxSim = Math.max(maxSim, similarity(i, j));
-        }
-        // 与已选父段过于相似 → 冗余，直接剔除
-        if (maxSim >= this.mmrMaxSim) continue;
-        const val = this.mmrLambda * scoreOf(parentCandidates[i]) - (1 - this.mmrLambda) * maxSim;
-        if (val > bestVal) {
-          bestVal = val;
-          bestIdx = i;
-        }
-      }
-      if (bestIdx < 0) break;
-      selected.push(bestIdx);
-      remaining.splice(remaining.indexOf(bestIdx), 1);
-    }
-
-    return selected.map(i => parentCandidates[i]);
+    return mmrDedupe(parentCandidates, maxCount, {
+      enabled: this.mmrEnabled,
+      lambda: this.mmrLambda,
+      maxSimilarity: this.mmrMaxSim,
+    });
   }
 
   _groupChunksByParent(chunks) {

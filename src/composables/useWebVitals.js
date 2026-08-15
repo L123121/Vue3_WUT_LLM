@@ -47,7 +47,7 @@ function reportMetric(metric) {
   // 开发环境输出到控制台
   if (import.meta.env.DEV) {
     const ratingEmoji = { good: '🟢', 'needs-improvement': '🟡', poor: '🔴' };
-    console.log(
+    console.debug(
       `${ratingEmoji[metric.rating] || '⚪'} [Web Vitals] ${metric.name}: ` +
       `${metric.rating === 'good' ? metric.value.toFixed(0) : metric.value.toFixed(2)} ` +
       `(${metric.rating})`
@@ -72,7 +72,7 @@ export function useWebVitals() {
       onTTFB(reportMetric);
 
       if (import.meta.env.DEV) {
-        console.log('📊 [Web Vitals] 采集已启动 (LCP/INP/CLS/FCP/TTFB)');
+        console.debug('📊 [Web Vitals] 采集已启动 (LCP/INP/CLS/FCP/TTFB)');
       }
     } catch (err) {
       if (import.meta.env.DEV) {

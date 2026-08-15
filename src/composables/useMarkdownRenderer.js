@@ -1,4 +1,4 @@
-import { ref, watch, onUnmounted } from 'vue';
+import { ref, onUnmounted } from 'vue';
 import MarkdownIt from 'markdown-it';
 import DOMPurify from 'dompurify';
 import { useCodeHighlighter } from './useCodeHighlighter.js';
@@ -76,27 +76,18 @@ export function useMarkdownRenderer() {
     const saved = JSON.parse(localStorage.getItem(CACHE_STATS_KEY) || '{}');
     cacheHits = saved.hits || 0;
     cacheMisses = saved.misses || 0;
-  } catch (_) { /* localStorage 不可用（隐私模式/SSR）时忽略 */ }
+  } catch { /* localStorage 不可用（隐私模式/SSR）时忽略 */ }
 
   const persistCacheStats = () => {
     try {
       localStorage.setItem(CACHE_STATS_KEY, JSON.stringify({ hits: cacheHits, misses: cacheMisses }));
-    } catch (_) {}
-  };
-
-  const logCacheStats = () => {
-    const total = cacheHits + cacheMisses;
-    if (total === 0) return;
-    const rate = ((cacheHits / total) * 100).toFixed(1);
-    console.log(`[MarkdownCache] 命中率: ${rate}% (hit=${cacheHits}, miss=${cacheMisses})`);
-    persistCacheStats();
+    } catch {}
   };
 
   const recordCacheAccess = (hit) => {
     if (hit) cacheHits += 1;
     else cacheMisses += 1;
-    // 每 50 次渲染输出一次汇总，避免流式刷新期间刷屏
-    if ((cacheHits + cacheMisses) % 50 === 0) logCacheStats();
+    if ((cacheHits + cacheMisses) % 50 === 0) persistCacheStats();
   };
 
   // 主线程渲染

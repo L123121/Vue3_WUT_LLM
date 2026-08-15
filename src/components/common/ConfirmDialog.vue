@@ -1,7 +1,7 @@
 <script setup>
-import { AlertTriangle, X } from 'lucide-vue-next';
+import { AlertTriangle } from 'lucide-vue-next';
 
-const props = defineProps({
+defineProps({
   show: Boolean,
   title: { type: String, default: '确认操作' },
   message: { type: String, default: '确定要执行此操作吗？' },
@@ -10,7 +10,7 @@ const props = defineProps({
   danger: { type: Boolean, default: false }
 });
 
-const emit = defineEmits(['confirm', 'cancel']);
+defineEmits(['confirm', 'cancel']);
 </script>
 
 <template>

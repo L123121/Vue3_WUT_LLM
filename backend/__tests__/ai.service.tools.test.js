@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 
 // 模拟 config（避免读 .env / 构造 AiService 时的真实依赖）
 vi.mock('../src/config', () => ({
@@ -107,5 +107,19 @@ describe('AiService._assembleToolCalls', () => {
     const svc = makeService();
     expect(svc._assembleToolCalls(new Map(), true, false)).toBeNull();
     expect(svc._assembleToolCalls(new Map(), false, true)).toBeNull();
+  });
+});
+
+describe('AiService history compaction', () => {
+  it('长对话压缩时保留 system 记忆消息', async () => {
+    const svc = makeService();
+    svc.judgeService = { summarize: async () => '早期摘要' };
+    const history = [
+      { role: 'system', content: '持久记忆上下文' },
+      ...Array.from({ length: 14 }, (_, index) => ({ role: index % 2 ? 'assistant' : 'user', content: `消息${index}` })),
+    ];
+    const compacted = await svc._compactHistory(history);
+    expect(compacted[0]).toEqual({ role: 'system', content: '持久记忆上下文' });
+    expect(compacted.some(message => message.content.includes('早期摘要'))).toBe(true);
   });
 });

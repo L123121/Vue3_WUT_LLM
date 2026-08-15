@@ -36,7 +36,6 @@ async function request(options, body) {
   const timeout = options.timeout || DEFAULT_TIMEOUT;
   const retries = options.retries ?? DEFAULT_RETRIES;
   const retryOn5xx = options.retryOn5xx !== false;
-  const url = new URL(`${options.protocol || 'https:'}//${options.hostname}${options.path}`);
 
   const reqOptions = {
     ...options,

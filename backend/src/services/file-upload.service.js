@@ -94,7 +94,7 @@ let _imageCounter = 0;
  * @param {string} alt - 图片描述
  * @returns {string} 文件名
  */
-function saveBase64Image(dataUri, alt) {
+function saveBase64Image(dataUri, _alt) {
   _imageCounter++;
   const match = dataUri.match(/^data:image\/(\w+);base64,(.+)$/);
   // 文件名用时间戳+随机后缀保证唯一（全局计数器并发时会冲突）

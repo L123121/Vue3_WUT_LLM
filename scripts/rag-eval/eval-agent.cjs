@@ -6,9 +6,9 @@
  * 两个阶段：
  *   Phase 1（默认，零成本）：fastRoute 路由准确率——不调用 LLM，离线评估
  *     意图路由层对 24 条标注消息的路由正确率（含兜底 rag）。
- *   Phase 2（--with-llm，需 AI_API_KEY）：工具选择正确率 + 决策延迟——
- *     对 expectedTool 非空的样本调用 agentService.decide()（真实 StepFun API），
- *     校验 LLM 是否选中期望工具，并统计决策延迟（与 RAG 首包 ~130ms 口径对比）。
+ *   Phase 2（--with-llm，需 AI_API_KEY）：端到端能力选择正确率 + 决策延迟——
+ *     先执行真实 IntentRouter.route()；rag 路径视为 search_knowledge_base 能力，
+ *     仅 agent 路径继续调用 agentService.decide()，避免绕过生产路由制造虚假正确率。
  *
  * 用法：
  *   node eval-agent.cjs                # 仅 Phase 1（免费）
@@ -84,6 +84,7 @@ async function phase2(dataset) {
   // 延迟加载 AgentService（会初始化 rag.service 等重依赖，仅本阶段需要）
   const { AgentService } = require(path.join(BACKEND_SRC, "services", "agent.service"));
   const agent = new AgentService(null);
+  const router = new IntentRouter(null);
 
   const samples = dataset.filter((d) => d.expectedTool !== undefined);
   let toolCorrect = 0;
@@ -94,25 +95,31 @@ async function phase2(dataset) {
   for (const item of samples) {
     const start = Date.now();
     let decision;
+    let routing;
     try {
-      decision = await agent.decide(item.message, []);
+      routing = await router.route(item.message);
+      if (routing.route === "agent") {
+        decision = await agent.decide(item.message, []);
+      }
     } catch (err) {
-      details.push({ id: item.id, message: item.message, expectedTool: item.expectedTool, actualTool: `ERROR: ${err.message}`, ok: false });
+      details.push({ id: item.id, message: item.message, expectedRoute: item.expectedRoute, actualRoute: routing?.route || null, expectedTool: item.expectedTool, actualTool: `ERROR: ${err.message}`, ok: false });
       continue;
     }
     const latency = Date.now() - start;
     latencies.push(latency);
 
-    const actualTool = decision.toolCalls?.[0]?.function?.name || null;
+    const actualTool = routing.route === "rag"
+      ? "search_knowledge_base"
+      : decision?.toolCalls?.[0]?.function?.name || null;
     // expectedTool 为 null 的样本（rag 兜底闲聊）：不参与正确率，仅记录行为
     if (item.expectedTool === null) {
-      details.push({ id: item.id, message: item.message, expectedTool: null, actualTool, ok: null, latencyMs: latency });
+      details.push({ id: item.id, message: item.message, expectedRoute: item.expectedRoute, actualRoute: routing.route, expectedTool: null, actualTool, ok: null, latencyMs: latency });
       continue;
     }
     toolTotal++;
-    const ok = actualTool === item.expectedTool;
+    const ok = routing.route === item.expectedRoute && actualTool === item.expectedTool;
     if (ok) toolCorrect++;
-    details.push({ id: item.id, message: item.message, expectedTool: item.expectedTool, actualTool, ok, latencyMs: latency });
+    details.push({ id: item.id, message: item.message, expectedRoute: item.expectedRoute, actualRoute: routing.route, expectedTool: item.expectedTool, actualTool, ok, latencyMs: latency });
   }
 
   const acc = toolTotal > 0 ? ((toolCorrect / toolTotal) * 100).toFixed(1) : "N/A";
@@ -128,7 +135,7 @@ async function phase2(dataset) {
   console.log("\n逐样本明细:");
   for (const d of details) {
     const mark = d.ok === null ? "-" : d.ok ? "OK" : "X ";
-    console.log(`  [${mark}] ${d.id} "${d.message}" 期望=${d.expectedTool} 实际=${d.actualTool} ${d.latencyMs ? d.latencyMs + "ms" : ""}`);
+    console.log(`  [${mark}] ${d.id} "${d.message}" 路由=${d.expectedRoute}->${d.actualRoute} 能力=${d.expectedTool}->${d.actualTool} ${d.latencyMs ? d.latencyMs + "ms" : ""}`);
   }
   return { toolTotal, toolCorrect, accuracy: acc, avgLatencyMs: avgLatency, p95LatencyMs: p95, details };
 }

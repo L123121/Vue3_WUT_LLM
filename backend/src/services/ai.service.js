@@ -154,7 +154,8 @@ class AiService {
       if (!content) continue;
       // 至少保留 1 条；之后超总预算则停止（最近的对话优先）
       if (recent.length > 0 && total + content.length > MAX_TOTAL_HISTORY_CHARS) break;
-      recent.unshift({ role: h.role === 'assistant' ? 'assistant' : 'user', content });
+      const role = h.role === 'assistant' ? 'assistant' : h.role === 'system' ? 'system' : 'user';
+      recent.unshift({ role, content });
       total += content.length;
     }
     return [
@@ -175,17 +176,20 @@ class AiService {
     const MAX_HISTORY_MESSAGES = 12;
     if (!Array.isArray(history)) return [];
     if (history.length === 0) return history;
-    if (history.length <= MAX_HISTORY_MESSAGES) return history;
+    const systemMessages = history.filter(message => message?.role === 'system');
+    const conversation = history.filter(message => message?.role !== 'system');
+    if (conversation.length <= MAX_HISTORY_MESSAGES) return [...systemMessages, ...conversation];
 
     // 被裁掉的早期消息（超出窗口的部分）
-    const early = history.slice(0, history.length - MAX_HISTORY_MESSAGES);
-    const recent = history.slice(-MAX_HISTORY_MESSAGES);
+    const early = conversation.slice(0, conversation.length - MAX_HISTORY_MESSAGES);
+    const recent = conversation.slice(-MAX_HISTORY_MESSAGES);
 
     try {
       const summary = await this.judgeService.summarize(early);
       if (summary) {
         console.log(`[AI] 滚动摘要: ${early.length} 条早期消息 → ${summary.length} 字摘要`);
         return [
+          ...systemMessages,
           { role: 'system', content: `（此前对话摘要）${summary}` },
           ...recent,
         ];
@@ -193,7 +197,7 @@ class AiService {
     } catch (err) {
       console.warn(`[AI] 滚动摘要失败，降级为直接截断: ${err.message}`);
     }
-    return recent;
+    return [...systemMessages, ...recent];
   }
 
   // ========== 非流式（经队列） ==========
@@ -450,7 +454,7 @@ class AiService {
             ? (j.delta?.text || '')
             : (j.choices?.[0]?.delta?.content || '');
           if (content) yield { content, done: false };
-        } catch (_) { /* ignore */ }
+        } catch { /* ignore */ }
       }
     }
     yield { content: '', done: true, tool_calls: this._assembleToolCalls(toolCallMap, hasToolCalls, needsTools) };

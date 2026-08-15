@@ -1,6 +1,5 @@
 "use strict";
 
-const { VectorStoreService } = require('./vector-store.service');
 const { EmbeddingService } = require('./embedding.service');
 
 /**

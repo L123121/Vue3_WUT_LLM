@@ -116,9 +116,9 @@ module.exports = {
     // LLM 意图分类兜底（默认关：避免每条消息多一次 LLM 调用拖慢首包延迟；fastRoute 零成本路由常开）
     intentClassifyEnabled: process.env.INTENT_CLASSIFY_ENABLED === 'true',
   },
-  // 轻量 Agent 工具调度（V2.0）：单轮工具调度，默认关（灰度，不影响现有评测基线）
+  // 轻量 Agent 工具调度（V2.0）：默认启用；AGENT_TOOL_ENABLED=false 可一键回退 RAG
   agent: {
-    toolEnabled: process.env.AGENT_TOOL_ENABLED === 'true',
+    toolEnabled: process.env.AGENT_TOOL_ENABLED !== 'false',
     // 工具决策/执行超时（毫秒）
     decideTimeoutMs: parseInt(process.env.AGENT_DECIDE_TIMEOUT_MS, 10) || 15000,
     toolTimeoutMs: parseInt(process.env.AGENT_TOOL_TIMEOUT_MS, 10) || 15000,
@@ -149,7 +149,6 @@ module.exports = {
     };
   })(),
 };
-
 
 
 

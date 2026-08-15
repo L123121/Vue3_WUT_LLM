@@ -271,7 +271,7 @@ const shareConversation = async () => {
     } catch {
       toast.success(`分享链接：${fullUrl}`);
     }
-    console.info('[AIChat] 分享链接已生成:', code);
+    console.debug('[AIChat] 分享链接已生成:', code);
   } catch (error) {
     console.error('[AIChat] 生成分享链接失败:', error);
     toast.error('生成分享链接失败，请稍后重试');

@@ -1,6 +1,6 @@
 # ======================================================================
 # Dockerfile — 武理小精灵 (WUT RAG Copilot)
-# 多阶段构建：前端(Vite) + 后端(Express + PostgreSQL)
+# 多阶段构建：前端(Vite) + 后端(Express + SQLite/Qdrant)
 # ======================================================================
 
 # ---- Stage 1: 构建前端 SPA ----
@@ -33,7 +33,7 @@ WORKDIR /app
 COPY --from=frontend-builder /app/dist ./dist
 
 # ---- 安装后端生产依赖 ----
-# sharp（@xenova/transformers 传递依赖）与 better-sqlite3 的预编译二进制
+# sharp（@huggingface/transformers 传递依赖）与 better-sqlite3 的预编译二进制
 # 默认从 GitHub Releases 下载，服务器网络受限会失败；指向 npmmirror 镜像加速。
 ENV npm_config_sharp_binary_host=https://registry.npmmirror.com/-/binary/sharp
 ENV npm_config_sharp_libvips_binary_host=https://registry.npmmirror.com/-/binary/sharp-libvips
@@ -57,6 +57,6 @@ ENV PORT=3000
 EXPOSE 3000
 
 # 持久化数据目录
-VOLUME ["/app/data", "/app/backend/uploads", "/app/.model-cache"]
+VOLUME ["/app/backend/data", "/app/backend/uploads", "/app/.model-cache"]
 
 CMD ["node", "backend/src/app.js"]

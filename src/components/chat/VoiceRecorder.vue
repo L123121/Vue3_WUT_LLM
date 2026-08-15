@@ -1,12 +1,9 @@
 <script setup>
 import { ref, onMounted, onUnmounted, nextTick } from 'vue';
 import { Mic, MicOff, AlertCircle } from 'lucide-vue-next';
-import { useLanguageStore } from '../../stores/language.store.js';
 
 const emit = defineEmits(['transcript', 'interim', 'error', 'state-change']);
 defineProps({ disabled: Boolean });
-
-const languageStore = useLanguageStore();
 
 // ==================== 状态机 ====================
 // idle: 空闲 | listening: 麦克风激活等待语音 | recognizing: 识别中（有 interim） | error: 出错
@@ -28,19 +25,19 @@ try {
   const saved = JSON.parse(localStorage.getItem(VOICE_STATS_KEY) || '{}');
   voiceStats.success = saved.success || 0;
   voiceStats.fail = saved.fail || 0;
-} catch (_) { /* localStorage 不可用时忽略 */ }
+} catch { /* localStorage 不可用时忽略 */ }
 
 const persistVoiceStats = () => {
   try {
     localStorage.setItem(VOICE_STATS_KEY, JSON.stringify(voiceStats));
-  } catch (_) {}
+  } catch {}
 };
 
 const logVoiceStats = () => {
   const total = voiceStats.success + voiceStats.fail;
   if (total === 0) return;
   const rate = ((voiceStats.success / total) * 100).toFixed(1);
-  console.log(`[VoiceStats] 识别成功率: ${rate}% (success=${voiceStats.success}, fail=${voiceStats.fail})`);
+  console.debug(`[VoiceStats] 识别成功率: ${rate}% (success=${voiceStats.success}, fail=${voiceStats.fail})`);
   persistVoiceStats();
 };
 
@@ -50,7 +47,6 @@ let analyser = null;
 let audioStream = null;
 let rafId = null;
 const canvasRef = ref(null);
-const AUDIO_STATE_KEY = 'wut_voice_audio_enabled';
 
 const getSpeechRecognition = () => {
   if (typeof window === 'undefined') return null;

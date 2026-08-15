@@ -18,7 +18,7 @@ const { parseRedisList } = require('./memory/helpers');
  * 检索策略：embedding 语义相似度 + 关键词匹配，加权排序
  */
 
-const MAX_LONG_TERM_CHARS = 8000;
+const MAX_LONG_TERM_CHARS = 3000;
 
 class MemoryService {
   constructor() {
@@ -185,5 +185,4 @@ class MemoryService {
 }
 
 module.exports = { MemoryService };
-
 

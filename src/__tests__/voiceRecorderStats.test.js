@@ -62,7 +62,7 @@ describe('VoiceRecorder 识别成功率统计', () => {
   });
 
   it('成功会话 +1、no-speech 失败 +1、aborted 不计、空会话不计', () => {
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const consoleSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
     mount(VoiceRecorder);
 
     // 1. 正常转写成功

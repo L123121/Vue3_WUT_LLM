@@ -36,14 +36,14 @@ class EmbeddingService {
 
     this._modelLoading = (async () => {
       try {
-        const { env, pipeline } = require('@xenova/transformers');
+        const { env, pipeline } = require('@huggingface/transformers');
         env.cacheDir = this.cacheDir;
         env.localModelPath = this.cacheDir;   // local_files_only 时从该目录找模型
         env.allowLocalModels = true;
         env.allowRemoteModels = !this.localFilesOnly;
 
         const extractor = await pipeline('feature-extraction', this.model, {
-          quantized: true,
+          dtype: 'q8',
           cache_dir: this.cacheDir,
           local_files_only: this.localFilesOnly,
         });

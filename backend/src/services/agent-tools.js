@@ -39,7 +39,8 @@ const builtinTools = [
       properties: {
         query: {
           type: 'string',
-          description: '检索关键词或问题'
+          description: '检索关键词或问题',
+          maxLength: 500,
         },
         category: {
           type: 'string',
@@ -47,18 +48,29 @@ const builtinTools = [
           description: '知识库分类（可选）'
         }
       },
-      required: ['query']
+      required: ['query'],
+      additionalProperties: false,
     },
-    handler: async (args) => {
+    parallelSafe: true,
+    sideEffect: false,
+    handler: async (args, context = {}) => {
       try {
         // 仅检索不生成（retrieveOnly）：agent 链路只生成一次（收尾统一生成），
         // 避免"决策 + RAG 内部生成 + 收尾"三次 LLM 调用；sources 结构化透传给 agent → 前端引用展示
-        const result = await ragService.localSearchChat(args.query, [], { category: args.category, retrieveOnly: true });
+        const result = await ragService.localSearchChat(args.query, [], {
+          category: args.category,
+          retrieveOnly: true,
+          signal: context.signal,
+          traceId: context.traceId,
+          userId: context.userId,
+          conversationId: context.conversationId,
+        });
         if (!result || !result.context) return '检索结果：知识库中未找到相关信息';
         const sources = Array.isArray(result.sources) ? result.sources : [];
         const titles = sources.map(s => s.title).filter(Boolean).join(', ') || '无';
         return {
           content: `检索结果：\n${result.context}\n来源：${titles}`,
+          uiSummary: `知识库检索完成，命中 ${sources.length} 个来源`,
           data: { sources },
         };
       } catch (err) {
@@ -78,11 +90,15 @@ const builtinTools = [
       properties: {
         expression: {
           type: 'string',
-          description: '数学表达式，如 "2+3*4", "sqrt(16)", "sin(3.14/2)"'
+          description: '数学表达式，如 "2+3*4", "sqrt(16)", "sin(3.14/2)"',
+          maxLength: 200,
         }
       },
-      required: ['expression']
+      required: ['expression'],
+      additionalProperties: false,
     },
+    parallelSafe: true,
+    sideEffect: false,
     handler: async (args) => {
       try {
         const expr = args.expression;

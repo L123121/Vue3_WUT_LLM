@@ -76,7 +76,7 @@ src/
 │   ├── KnowledgeBase.vue   # RAG 知识库管理
 │   ├── EvalScoring.vue     # 人工评测
 │   ├── RagFeedback.vue     # 线上反馈看板（管理员）
-│   └── Settings.vue        # 设置页
+│   └── SharedConversation.vue # 公开只读分享页
 │
 ├── stores/                 # Pinia 状态
 │   ├── auth.store.js       # 登录态、用户信息
@@ -86,10 +86,8 @@ src/
 │   ├── theme.store.js      # 暗色模式
 │   ├── language.store.js   # 中英文文案
 │   ├── toast.store.js      # 全局提示
-│   ├── eval.store.js       # 评测状态
-│   ├── skill.store.js      # Skill 管理
-│   ├── mcp.store.js        # MCP Server 配置
-│   └── prompt.store.js     # 提示词模板
+│   ├── favorites.store.js  # 收藏消息
+│   └── toast.store.js      # 全局提示
 │
 ├── composables/            # 可复用逻辑
 │   ├── useStreaming.js     # SSE 流式管理
@@ -259,8 +257,11 @@ backend/
     │   ├── file-upload.service.js  # 文件解析
     │   ├── auth.service.js     # JWT 认证
     │   ├── school-api.service.js  # 教务 CAS
-    │   ├── chat.service.js     # 聊天逻辑
-    │   ├── memory.service.js   # 记忆系统
+    │   ├── conversation-orchestrator.service.js  # Chat/RAG/Agent 统一编排
+    │   ├── intent-router.service.js  # 能力路由
+    │   ├── agent.service.js    # 有界工具调度
+    │   ├── tool-registry.service.js  # 工具校验/取消/元数据
+    │   ├── memory.service.js   # 持久记忆读写与上下文注入
     │   ├── metrics.service.js  # 指标采集
     │   └── observability.service.js  # 可观测性
     │
@@ -340,6 +341,8 @@ graph LR
 | `reranker.service.js` | BGE-reranker-base cross-encoder | INT8 ONNX，~145ms/15 候选 |
 | `rag.service.js` | 检索管道 | 混合检索→归并→MMR 去重→rerank→截断→排序→组装 |
 | `indexing.service.js` | 文档切片 | 中文章节合并→段落→句子 |
+| `conversation-orchestrator.service.js` | 对话编排 | 路由→记忆注入→Chat/RAG/Agent→降级→记忆保存 |
+| `tool-registry.service.js` | 工具执行 | 参数校验、超时取消、执行上下文与结构化结果 |
 
 ---
 
@@ -376,6 +379,7 @@ graph TB
 | 人工评分 | `EvalScoring.vue` | 1-5 分主观评分 |
 | 线上反馈 | `RagFeedback.vue` | 用户 like/dislike 统计 |
 | 回归评估 | 基线比对 | 指标变化 > 2% 告警 |
+| Agent 能力 | `eval-agent.cjs` | 端到端路由准确率、工具选择正确率、决策延迟 |
 
 ### LLM-as-judge 设计
 

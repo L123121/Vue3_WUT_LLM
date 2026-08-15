@@ -31,7 +31,7 @@ describe('authStore', () => {
       const store = useAuthStore();
       store.login({ name: 'Test', studentId: '123' });
       // Mock fetch for logout call
-      global.fetch = vi.fn(() => Promise.resolve({ ok: true }));
+      globalThis.fetch = vi.fn(() => Promise.resolve({ ok: true }));
       await store.logout();
 
       expect(store.isAuthenticated).toBe(false);

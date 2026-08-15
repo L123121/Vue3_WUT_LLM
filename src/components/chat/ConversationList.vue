@@ -185,9 +185,6 @@ const getPreview = (conv) => {
   }
   return preview;
 };
-
-// 检查会话是否正在编辑
-const isEditing = (convId) => editingId.value === convId;
 </script>
 
 <template>

@@ -3,8 +3,6 @@
 const { v4: uuidv4 } = require('uuid');
 const { TextSplitter } = require('../utils/text-splitter');
 const { redis: store } = require('./memory-store');
-const { IndexingService } = require('./indexing.service');
-const { registerDocumentProvider } = require('./vector-store.service');
 
 const VECTOR_STATUS = Object.freeze({
   LOCAL_ONLY: 'local_only',
@@ -172,7 +170,7 @@ class DocumentService {
     const results = await pipeline.exec();
 
     let documents = results
-      .map(([err, data]) => data)
+      .map(([, data]) => data)
       .filter(d => d && d.id)
       .map(d => this._normalizeDocMeta(d, { includeContent: false }));
 
