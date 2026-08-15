@@ -37,6 +37,36 @@ export const completeMarkdown = (str) => {
 };
 
 /**
+ * 规范化"行内"的 Markdown 块级语法
+ *
+ * 模型偶尔会把标题（###）、有序列表（1.）、无序列表（-）直接接在上一句后面
+ * （没有换行）。markdown-it 只识别行首的块级语法，这些符号就会当普通文字显示。
+ * 此函数在渲染前为其补上换行，保证块级语法正常渲染。
+ * 仅处理代码围栏之外的文本，不改动代码内容。
+ */
+export const normalizeBlockSyntax = (str) => {
+  if (!str) return str;
+
+  const fix = (text) => text
+    // 中文标点紧跟标题（#~######）：转成独立标题，缺空格时补空格
+    .replace(/([。！？；：…])(\s*)(#{1,6})([ \t]?)/g, (m, p1, p2, p3, p4) => `${p1}\n\n${p3}${p4 || ' '}`)
+    // 其余行内位置的二级及以上标题（行内 ## 几乎必然是标题意图）
+    // 前置字符排除字母数字与 #，避免误伤 URL 片段（如 foo##bar 锚点）
+    .replace(/([^A-Za-z0-9_\n#])(#{2,6})([ \t]?)/g, (m, p1, p2, p3) => `${p1}\n\n${p2}${p3 || ' '}`)
+    // 中文标点紧跟有序列表序号（如 "…的项目。2. 快速原型模型"）：补空行（序号非 1 开头时空行才能成列表）
+    .replace(/([。！？；])(\s*)(\d{1,2}\.)([ \t])/g, '$1\n\n$3$4')
+    // 中文标点紧跟无序列表符：补空行
+    .replace(/([。！？；])(-[ \t])/g, '$1\n\n$2');
+
+  // 按 ``` 围栏切分：偶数段是正文（做规范化），奇数段是代码（保持原样）
+  const segments = str.split('```');
+  for (let i = 0; i < segments.length; i += 2) {
+    segments[i] = fix(segments[i]);
+  }
+  return segments.join('```');
+};
+
+/**
  * 链接安全渲染规则（markdown-it renderer rules）
  * 为链接添加 target="_blank" 和 rel="noopener noreferrer"，并阻止危险协议
  */

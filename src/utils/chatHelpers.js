@@ -77,8 +77,9 @@ const loadLocalConversationsCache = () => {
 const saveLocalConversationsCache = (list) => {
   try {
     localStorage.setItem(LOCAL_CONVERSATIONS_KEY, JSON.stringify(list));
-  } catch {
-    // quota exceeded — silently ignore
+  } catch (err) {
+    // quota exceeded — 保留告警便于排查，不打断用户操作
+    console.warn('[ChatHelpers] 本地会话缓存保存失败:', err.message);
   }
 };
 

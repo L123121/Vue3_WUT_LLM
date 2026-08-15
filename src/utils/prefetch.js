@@ -16,7 +16,6 @@ const routeImports = {
   '/chat': () => import('../views/AIChat.vue'),
   '/knowledge': () => import('../views/KnowledgeBase.vue'),
   '/eval': () => import('../views/EvalScoring.vue'),
-  '/settings': () => import('../views/Settings.vue'),
 };
 
 /**

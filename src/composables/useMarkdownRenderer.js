@@ -3,7 +3,7 @@ import MarkdownIt from 'markdown-it';
 import DOMPurify from 'dompurify';
 import { useCodeHighlighter } from './useCodeHighlighter.js';
 import { useMarkdownWorker } from './useMarkdownWorker.js';
-import { ALLOWED_TAGS, ALLOWED_ATTR, completeMarkdown, createLinkSecurityRule } from '../utils/markdownConfig.js';
+import { ALLOWED_TAGS, ALLOWED_ATTR, completeMarkdown, normalizeBlockSyntax, createLinkSecurityRule } from '../utils/markdownConfig.js';
 
 /**
  * Markdown 渲染 composable
@@ -108,7 +108,7 @@ export function useMarkdownRenderer() {
       return renderCache.get(content);
     }
     try {
-      const completed = completeMarkdown(content);
+      const completed = normalizeBlockSyntax(completeMarkdown(content));
       const raw = md.render(completed);
       const html = DOMPurify.sanitize(raw, { ALLOWED_TAGS, ALLOWED_ATTR });
       // 缓存结果，超过上限时淘汰最老的

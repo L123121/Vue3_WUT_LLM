@@ -89,7 +89,16 @@ const getMatchMeta = (conv) => {
   return { matched: false, preview: '' };
 };
 
-const visibleConversations = computed(() => chatStore.sortedConversations.filter((conv) => getMatchMeta(conv).matched));
+// 搜索结果按会话缓存：搜索时每个会话只扫描一遍（模板里多次引用不再重复 toLowerCase）
+const matchCache = computed(() => {
+  const map = new Map();
+  for (const conv of chatStore.sortedConversations) {
+    map.set(conv.id, getMatchMeta(conv));
+  }
+  return map;
+});
+
+const visibleConversations = computed(() => chatStore.sortedConversations.filter((conv) => matchCache.value.get(conv.id)?.matched));
 
 const formatTime = (date) => {
   const current = now.value;
@@ -165,7 +174,7 @@ const toggleExpanded = () => {
 };
 
 const getPreview = (conv) => {
-  const searchPreview = getMatchMeta(conv).preview;
+  const searchPreview = matchCache.value.get(conv.id)?.preview;
   if (normalizedQuery.value && searchPreview) {
     return searchPreview;
   }
@@ -293,7 +302,7 @@ const isEditing = (convId) => editingId.value === convId;
                 {{ conv.title }}
               </span>
 
-              <div class="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+              <div class="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity touch-device:opacity-100">
                 <button
                   @click.stop="startEdit(conv)"
                   class="p-1 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors"

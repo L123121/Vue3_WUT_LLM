@@ -81,6 +81,27 @@ const toolResultText = (name) => {
   const text = String(r.content || '').replace(/\s+/g, ' ').trim();
   return text.length > 120 ? `${text.slice(0, 120)}…` : text;
 };
+
+// Agent L4 trace 元信息：rounds / finishReason / totalMs（随 SSE trace 事件写入 ragTrace）
+const agentTrace = computed(() => {
+  const t = props.message.ragTrace;
+  // agent trace 以 finishReason 字段为标志（RAG trace 无此字段）
+  return t && typeof t.finishReason === 'string' ? t : null;
+});
+const finishReasonLabel = computed(() => {
+  if (!agentTrace.value) return '';
+  const map = {
+    direct_answer: '直接回答',
+    round_limit: '达到轮次上限',
+    no_progress: '无进展强制收尾',
+    error: '出错收尾',
+  };
+  return map[agentTrace.value.finishReason] || agentTrace.value.finishReason;
+});
+const formatAgentTotalMs = (ms) => {
+  const s = Number(ms) / 1000;
+  return s >= 10 ? `${s.toFixed(0)}s` : `${s.toFixed(1)}s`;
+};
 const questionText = computed(() => props.questionMessage?.content ?? props.questionMessage?.text ?? '');
 
 // 行内引用弹窗
@@ -128,7 +149,9 @@ const getCategoryColor = (category) => {
 const formatTime = (timestamp) => languageStore.formatTime(timestamp);
 
 const copyMessage = (text) => {
-  navigator.clipboard.writeText(text).then(() => emit('copy', text));
+  navigator.clipboard.writeText(text)
+    .then(() => emit('copy', text))
+    .catch(() => emit('copy', text)); // 复制失败也通知外层（toast 兜底）
 };
 
 // 收藏/取消收藏消息
@@ -289,6 +312,21 @@ const timeClasses = computed(() => {
             <span class="ml-auto text-indigo-400 dark:text-indigo-500 transition-transform" :class="toolPanelOpen ? 'rotate-180' : ''">▾</span>
           </button>
           <div v-if="toolPanelOpen" class="px-3 pb-3 space-y-2">
+            <!-- Agent L4 trace 元信息：轮次 / 收尾原因 / 总耗时 -->
+            <div v-if="agentTrace" class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-slate-500 dark:text-gray-400">
+              <span class="inline-flex items-center gap-1">
+                <span class="font-medium text-indigo-500 dark:text-indigo-400">轮次</span>
+                <span class="font-mono">{{ agentTrace.rounds ?? 0 }}</span>
+              </span>
+              <span class="inline-flex items-center gap-1">
+                <span class="font-medium text-indigo-500 dark:text-indigo-400">收尾</span>
+                <span>{{ finishReasonLabel }}</span>
+              </span>
+              <span class="inline-flex items-center gap-1">
+                <span class="font-medium text-indigo-500 dark:text-indigo-400">耗时</span>
+                <span class="font-mono">{{ formatAgentTotalMs(agentTrace.totalMs) }}</span>
+              </span>
+            </div>
             <div v-for="(tc, i) in toolCalls" :key="i" class="rounded-lg bg-white/70 dark:bg-gray-900/40 border border-indigo-100/70 dark:border-indigo-900/40 px-2.5 py-2">
               <div class="flex items-center gap-2 text-[11px]">
                 <span class="font-mono font-semibold text-indigo-700 dark:text-indigo-300">{{ tc.name }}</span>

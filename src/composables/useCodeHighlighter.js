@@ -1,5 +1,6 @@
 import { ref } from 'vue';
 import hljs from 'highlight.js/lib/core';
+import { escapeHtml } from '../utils/markdownConfig.js';
 
 /**
  * 代码高亮 composable
@@ -21,9 +22,6 @@ export function useCodeHighlighter() {
     yaml: 'yaml', yml: 'yaml',
     sql: 'sql', plaintext: 'plaintext', text: 'plaintext',
   };
-
-  const escapeHtml = (str) =>
-    str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
   const ensureLanguage = async (lang) => {
     if (loadedLanguages.has(lang) || hljs.getLanguage(lang)) return;
