@@ -116,7 +116,17 @@ const ragChatStream = async (req, res, next) => {
     res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders();
 
-    for await (const chunk of ragService.chatStream(message, history || [], getTraceOptions(req, { category, ...getRerankOverrides(req) }))) {
+    // 客户端断开 → 中止上游 LLM 流（注意监听 res 的 close，req 的 close 读完请求体即触发）
+    const abortController = new AbortController();
+    const onClientClose = () => abortController.abort();
+    res.on('close', onClientClose);
+    const streamOptions = getTraceOptions(req, {
+      category,
+      ...getRerankOverrides(req),
+      signal: abortController.signal,
+    });
+
+    for await (const chunk of ragService.chatStream(message, history || [], streamOptions)) {
       if (chunk.type === 'retrieval') {
         res.write(`data: ${JSON.stringify({ traceId: chunk.traceId || req.traceId, retrieval: chunk.retrieval, trace: chunk.trace })}\n\n`);
       } else if (chunk.type === 'sources') {
@@ -136,9 +146,13 @@ const ragChatStream = async (req, res, next) => {
     }
 
     res.end();
+    res.removeListener('close', onClientClose);
 
     memoryService.saveChatMemory(req.userId, message, _fullReply);
   } catch (error) {
+    res.removeListener('close', onClientClose);
+    // 客户端已断开：不再向其写入错误事件
+    if (abortController.signal.aborted) return;
     console.error('[RAG Stream] 错误:', error);
     res.write(`data: ${JSON.stringify({ traceId: req.traceId, error: error.message })}\n\n`);
     res.end();

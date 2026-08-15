@@ -106,10 +106,10 @@ function applyRoutes(app, chatLimiter) {
     }
   });
 
-  // 上传目录静态资源
+  // 上传目录静态资源（仅登录用户可访问，防止文件 URL 泄露后匿名下载）
   const uploadStaticDir = path.join(__dirname, '../../uploads');
   const inlineImageExtensions = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp']);
-  app.use('/uploads', express.static(uploadStaticDir, {
+  app.use('/uploads', requireAuth, express.static(uploadStaticDir, {
     setHeaders: (res, filePath) => {
       res.setHeader('X-Content-Type-Options', 'nosniff');
       if (!inlineImageExtensions.has(path.extname(filePath).toLowerCase())) {

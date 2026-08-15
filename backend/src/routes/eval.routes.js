@@ -1,5 +1,5 @@
 const { Router } = require('express');
-const { requireAuth } = require('../middleware/auth.middleware');
+const { requireAuth, requireAdmin } = require('../middleware/auth.middleware');
 const { RagService } = require('../services/rag.service');
 const { aiService } = require('../services/ai.service');
 const { JudgeService } = require('../services/judge.service');
@@ -9,6 +9,9 @@ const router = Router();
 
 // 评测接口需要登录（消耗 LLM 配额）
 router.use(requireAuth);
+
+// 自定义用例上限：防止恶意传超大 testCases 烧光配额
+const MAX_EVAL_CASES = 50;
 
 /**
  * GET /api/eval/metrics
@@ -23,7 +26,7 @@ router.get('/metrics', (req, res) => {
  * POST /api/eval/run
  * 真实 RAG 评测 — 调用实际 RAG 管道 + LLM-as-judge（独立 Key，不抢生产配额）
  */
-router.post('/run', async (req, res) => {
+router.post('/run', requireAdmin, async (req, res) => {
   const { datasetSize = 5, enableRag = true } = req.body;
 
   res.setHeader('Content-Type', 'text/event-stream');
@@ -38,7 +41,8 @@ router.post('/run', async (req, res) => {
   sendLog('🎨 [Eval] 初始化评测管道...');
 
   try {
-    const testCases = req.body.testCases || getDefaultTestCases();
+    const rawCases = Array.isArray(req.body.testCases) ? req.body.testCases : getDefaultTestCases();
+    const testCases = rawCases.slice(0, MAX_EVAL_CASES);
     const totalCases = Math.min(datasetSize, testCases.length);
 
     sendLog(`📦 [Eval] 加载评测数据集: ${totalCases} 条 ground-truth pairs`);

@@ -72,7 +72,7 @@ describe('quota.middleware', () => {
 
   it('配额充足时放行，成功响应（2xx）后递增配额', async () => {
     const checkSpy = vi.spyOn(quotaService, 'check').mockResolvedValue({ ok: true, usage: { used: 5, limit: 100 } });
-    const incrementSpy = vi.spyOn(quotaService, 'increment').mockResolvedValue(6);
+    const incrementSpy = vi.spyOn(quotaService, 'incrementIfAllowed').mockReturnValue({ ok: true, usage: { used: 6, limit: 100 } });
     const req = { path: '/api/chat', userId: 'u1' };
     let finishCb;
     const res = {
@@ -93,7 +93,7 @@ describe('quota.middleware', () => {
 
   it('非 2xx 响应不递增配额', async () => {
     vi.spyOn(quotaService, 'check').mockResolvedValue({ ok: true, usage: { used: 5, limit: 100 } });
-    const incrementSpy = vi.spyOn(quotaService, 'increment').mockResolvedValue(6);
+    const incrementSpy = vi.spyOn(quotaService, 'incrementIfAllowed').mockReturnValue({ ok: true, usage: { used: 6, limit: 100 } });
     const req = { path: '/api/chat', userId: 'u1' };
     let finishCb;
     const res = {

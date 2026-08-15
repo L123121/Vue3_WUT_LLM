@@ -82,12 +82,26 @@ const chatHandler = async (req, res, next) => {
       result = await chatReply(message, history || []);
       result.intent = { intent: routing.intent, route: routing.route, confidence: routing.confidence, reason: routing.reason };
     } else if (routing && routing.route === "agent" && agentService.enabled) {
-      // Agent 意图且工具层已启用：单轮工具调度
-      result = await agentService.chat(message, history || [], {
-        userId: req.userId,
-        conversationId: req.body?.conversationId || null,
-      });
-      result.intent = { intent: routing.intent, route: routing.route, confidence: routing.confidence, reason: routing.reason };
+      // Agent 意图且工具层已启用：有界工具调度；决策失败（AgentDecisionError）→ 降级 RAG
+      try {
+        result = await agentService.chat(message, history || [], {
+          userId: req.userId,
+          conversationId: req.body?.conversationId || null,
+        });
+        result.intent = { intent: routing.intent, route: routing.route, confidence: routing.confidence, reason: routing.reason };
+      } catch (err) {
+        if (err && err.agentShouldFallback) {
+          console.warn("[Chat] agent 链路失败，降级 RAG:", err.message);
+          result = await ragService.chat(message, history || [], {
+            traceId: req.traceId,
+            userId: req.userId,
+            conversationId: req.body?.conversationId || null,
+          });
+          result.intent = { intent: routing.intent, route: "rag", confidence: routing.confidence, reason: "agent 链路失败，自动降级知识库检索" };
+        } else {
+          throw err;
+        }
+      }
     } else {
       // rag（及未启用工具层的 agent）→ RAG 检索管道（内部有降级）
       result = await ragService.chat(message, history || [], {
@@ -141,6 +155,18 @@ const streamHandler = async (req, res, next) => {
     res.setHeader("X-Accel-Buffering", "no");
     res.flushHeaders();
 
+    // 客户端断开（刷新/关页）→ 中止上游 LLM 流，停止烧 token、释放队列槽位
+    // 注意：必须监听 res 的 close（req 的 close 在请求体读完即触发，会误杀流）
+    const abortController = new AbortController();
+    const onClientClose = () => abortController.abort();
+    res.on('close', onClientClose);
+    const streamOpts = {
+      traceId: req.traceId,
+      userId: req.userId,
+      conversationId: req.body?.conversationId || null,
+      signal: abortController.signal,
+    };
+
     let fullReply = "";
 
     // 下发意图路由事件（前端展示"自动路由"状态，替代手动 RAG 开关）
@@ -162,7 +188,7 @@ const streamHandler = async (req, res, next) => {
         { role: "system", content: systemPrompt },
         ...(history || []),
       ];
-      const stream = aiService.getCompletionStream(message, chatHistory);
+      const stream = aiService.getCompletionStream(message, chatHistory, { signal: abortController.signal });
       for await (const chunk of stream) {
         if (chunk.done) {
           res.write("data: [DONE]\n\n");
@@ -173,17 +199,22 @@ const streamHandler = async (req, res, next) => {
       }
       res.end();
       memoryService.saveChatMemory(req.userId, message, fullReply);
+      res.removeListener('close', onClientClose);
       return;
     }
 
     // agent 意图且工具层已启用：多轮工具调度（LLM 决策 → 工具执行 → 生成，含 tracer）
+    // 决策失败且未输出内容（error 事件）→ 降级 RAG 检索管道，继续走下方 rag 分支
     if (routing && routing.route === "agent" && agentService.enabled) {
-      for await (const chunk of agentService.chatStream(message, history || [], {
-        traceId: req.traceId,
-        userId: req.userId,
-        conversationId: req.body?.conversationId || null,
-      })) {
-        if (chunk.type === "tool_call") {
+      let agentFailed = false;
+      for await (const chunk of agentService.chatStream(message, history || [], streamOpts)) {
+        if (chunk.type === "error") {
+          agentFailed = true;
+          console.warn("[Chat Stream] agent 链路失败，降级 RAG:", chunk.error?.message);
+          break;
+        } else if (chunk.type === "sources") {
+          res.write(`data: ${JSON.stringify({ sources: chunk.sources })}\n\n`);
+        } else if (chunk.type === "tool_call") {
           res.write(`data: ${JSON.stringify({
             tool_call: { name: chunk.tool_call?.name, arguments: chunk.tool_call?.arguments, reason: chunk.tool_call?.reason },
           })}\n\n`);
@@ -211,17 +242,20 @@ const streamHandler = async (req, res, next) => {
           }
         }
       }
-      res.end();
-      memoryService.saveChatMemory(req.userId, message, fullReply);
-      return;
+      if (!agentFailed) {
+        res.end();
+        memoryService.saveChatMemory(req.userId, message, fullReply);
+        res.removeListener('close', onClientClose);
+        return;
+      }
+      // 降级：通知前端路由变更为 rag（此时尚未输出任何正文内容，可安全切换链路）
+      res.write(`data: ${JSON.stringify({
+        intent: { intent: routing.intent, route: "rag", confidence: routing.confidence, reason: "agent 链路失败，自动降级知识库检索" },
+      })}\n\n`);
     }
 
     // rag（及未启用工具层的 agent）→ RAG 检索管道
-    for await (const chunk of ragService.chatStream(message, history || [], {
-      traceId: req.traceId,
-      userId: req.userId,
-      conversationId: req.body?.conversationId || null,
-    })) {
+    for await (const chunk of ragService.chatStream(message, history || [], streamOpts)) {
       if (chunk.type === "retrieval") {
         continue;
       } else if (chunk.type === "sources") {
@@ -249,9 +283,13 @@ const streamHandler = async (req, res, next) => {
     }
 
     res.end();
+    res.removeListener('close', onClientClose);
 
     memoryService.saveChatMemory(req.userId, message, fullReply);
   } catch (error) {
+    res.removeListener('close', onClientClose);
+    // 客户端已断开：不再向其写入错误事件
+    if (abortController.signal.aborted) return;
     console.error("[Chat Stream] 错误:", error);
     try {
       res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
