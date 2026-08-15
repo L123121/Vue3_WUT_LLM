@@ -35,7 +35,9 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      vue: 'vue/dist/vue.esm-bundler.js',
+      // 生产构建用 runtime-only 版 Vue（SFC 已预编译，不需要运行时编译器，vue-vendor 可瘦身约 100KB+）
+      // 仅 Vitest 需要编译器（单测里用 template 字符串挂载组件）
+      ...(process.env.VITEST ? { vue: 'vue/dist/vue.esm-bundler.js' } : {}),
     },
   },
   build: {

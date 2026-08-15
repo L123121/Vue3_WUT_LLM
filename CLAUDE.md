@@ -19,10 +19,12 @@ graph TB
         Routes[路由]
         Services[15+ 服务]
         Middleware[中间件]
+        Agent[Agent 层<br/>意图路由 + 工具调度]
     end
 
     subgraph 基础设施
         VectorFile[(本地向量文件 data/vectors.json)]
+        Qdrant[(Qdrant 独立服务)]
         SQLite[(SQLite)]
         StepFun[StepFun API]
         JudgeAPI[StepFun 独立 Key]
@@ -30,6 +32,7 @@ graph TB
 
     前端 -->|HTTP / SSE| 后端
     后端 --> VectorFile
+    后端 --> Qdrant
     后端 --> SQLite
     后端 --> StepFun
     后端 -->|评测| JudgeAPI
@@ -78,6 +81,55 @@ chat.store（聚合层）→ 页面统一接口
        └─ useStreaming composable（SSE 解析、RAF 合并、重连、后台 Tab 兜底）
 ```
 
+### Agent 架构（V2.0：意图路由 + 工具调度）
+
+> 2026-07-21 曾移除早期 Agent 系统（存档 `D:\武理小精灵_agent_存档`），V2.0 重新引入并裁剪。
+> 当前灰度状态：**工具调度默认关**（`AGENT_TOOL_ENABLED=true` 才启用），意图路由默认开但 LLM 分类默认关（避免每条消息多一次 LLM 调用拖慢首包延迟）。
+
+```
+用户消息
+  ↓ 意图路由 intent-router.service.js
+  ├─ fastRoute（零成本 ~0ms，不调 LLM）
+  │    问候/感谢/告别 → route: chat（纯 LLM，不触发检索）
+  │    明确多步任务（规划/分析/对比/权衡…）→ route: agent
+  │    其余模糊意图 → null（不硬路由，减少误判面）
+  ├─ classify（LLM 分类兜底，INTENT_CLASSIFY_ENABLED=true 才启用）
+  │    15s 超时 + JSON 解析失败 → 兜底，不阻塞
+  └─ 兜底 _fallbackRoute → route: rag（校园问答主场景，RAG 内部自带降级）
+  ↓
+  route=chat  → ChatService 纯 LLM
+  route=agent → AgentService 工具调度（L2 有界多轮）
+  route=rag   → RagService 检索管道（默认兜底）
+  SSE 事件：intent / tool_call / tool_result / trace（前端展示"自动路由：知识库检索"）
+```
+
+**L2 有界多轮工具调度（agent.service.js，maxToolRounds=2）**
+
+```
+每轮：LLM 决策（OpenAI function calling 格式）
+  ├─ 无工具调用 → 直接回答，收尾
+  └─ 有工具调用 → 下发 tool_call 事件 → runTool 执行（超时闸门）
+                  → tool_result 事件 → 回注 tool 角色消息 → 下一轮
+防失控设计：
+  ├─ 轮次上限 maxToolRounds=2（AGENT_MAX_TOOL_ROUNDS 可调）
+  ├─ 无进展检测：连续 2 轮相同工具+参数签名 → 强制收尾
+  ├─ 收尾生成不带 tools，杜绝继续调工具
+  └─ 每轮决策/执行超时 15s（AGENT_DECIDE_TIMEOUT_MS / AGENT_TOOL_TIMEOUT_MS）
+```
+
+**工具注册表（agent-tools.js + tool-registry.service.js，可扩展）**
+
+| 工具 | 能力 | 超时 |
+|------|------|------|
+| `search_knowledge_base` | 复用 rag.service 全链路检索（支持 category 过滤） | 15s |
+| `calculate` | mathjs 安全求值（模块级 create(all)，防注入） | 3s |
+
+教务系工具（查成绩/课表等）因无教务系统接入未移植。
+
+**L3 会话记忆（buildMemorySummary）**：决策前压缩历史——取最近 6 条，提取「最近提问主题」（60 字）+「上一轮回答结论」（120 字）注入，与历史 `_compactHistory` 配合控制 token。
+
+**L4 agent tracer（可观测性）**：每轮记录 rounds / toolCalls（名称、参数、成败、耗时）/ totalMs / finishReason（direct_answer | round_limit | no_progress | error），结束随 SSE 下发。
+
 ### 评测体系
 
 ```
@@ -115,6 +167,10 @@ chat.store（聚合层）→ 页面统一接口
 - `ai.service.js` — LLM 调用 + 请求队列（LLM_CONCURRENCY=3）
 - `ocr.service.js` — 视觉识别（step-1o-turbo-vision）：图片/扫描件 → Markdown，mupdf 渲染 + 页级并发，支持按页 OCR（opts.pages/returnMap，文本型 PDF 表格页重建用）
 - `judge.service.js` — LLM-as-judge 独立 Key，4 指标合并 1 次请求
+- `intent-router.service.js` — 意图路由（V2.0）：fastRoute 零成本关键词 + LLM 分类兜底（默认关）+ 兜底 rag
+- `agent.service.js` — Agent 工具调度（V2.0）：L2 有界多轮（maxToolRounds=2 + 无进展检测）+ L3 会话记忆摘要 + L4 agent tracer
+- `agent-tools.js` — Agent 工具注册表：search_knowledge_base（复用 RAG）+ calculate（mathjs 安全求值）
+- `tool-registry.service.js` — 工具注册器（TOOL_SOURCES.BUILTIN，可扩展）
 - `config/index.js` — 集中配置
 
 ### 评测
@@ -249,6 +305,28 @@ chat.store（聚合层）→ 页面统一接口
   - 接入：`parsePDF` 第三步——检测命中页 → `ocrPdf(filePath, { pages, returnMap: true })` → 整页替换（视觉模型输出含整页 Markdown）；**失败/关闭回退原文，不阻塞入库**；无分页符（`\f` 缺失）时不做按页 OCR，避免整本误伤
 - 成本：仅命中页 × ~169 token/页（detail=low），复用 `OCR_MAX_PAGES`/`OCR_CONCURRENCY` 闸门；`OCR_TABLE_ENABLED`（默认 true）总开关，false 时退回原行为
 - 测试：`backend/__tests__/table-detect.test.js`（12 用例：三信号检测/纯文本不误报/按页替换/越界忽略/配置开关）；后端全量 **147** 用例通过
+
+**15. Agent V2.0：意图路由 + 工具调度（2026-08-14）**
+- 背景：2026-07-21 曾移除早期 Agent 系统（存档 `D:\武理小精灵_agent_存档`，当时因工具不全/延迟高回归纯 RAG）；V2.0 重新引入并裁剪
+- 意图路由（`intent-router.service.js`）：fastRoute 零成本关键词（问候→chat、多步任务→agent，其余不硬路由防误判）+ LLM 分类兜底（默认关，`INTENT_CLASSIFY_ENABLED`）+ 兜底 rag；`INTENT_ROUTING_ENABLED=false` 退回原链路
+- L2 有界多轮（`agent.service.js`）：maxToolRounds=2（默认）+ 无进展检测（连续 2 轮相同签名强制收尾）+ 收尾生成不带 tools + 决策/执行超时 15s，杜绝无限循环
+- 工具裁剪：只保留 `search_knowledge_base`（复用 RAG 全链路）+ `calculate`（mathjs 安全求值），教务系工具无接入不移植
+- L3 会话记忆（buildMemorySummary）+ L4 agent tracer（轮次/工具/耗时/收尾原因随 SSE 下发）
+- ⚠️ 灰度：`AGENT_TOOL_ENABLED` 默认关（agent 路径引入额外 LLM 轮次，影响首包延迟与评测基线），评估通过后再放开
+
+**16. Agent 链路结构性优化（2026-08-15）**
+- 背景：代码审查发现 agent 链路 12 个可提升点，本次全部修复，核心是消除"双重生成"与补齐灰度所需的观测/评测
+- ① 拆分检索与生成（消除双重生成）：`rag.service.js` `localSearchChat` 新增 `retrieveOnly` 选项——只检索不生成；`search_knowledge_base` 工具改调 retrieveOnly，返回 `{ content, data: { sources } }`。修复前 agent 请求 = 决策 LLM + RAG 内部 LLM + 收尾 LLM 共 3 次调用，修复后 = 决策 + 收尾 2 次，且 sources 不再丢失
+- ② sources 透传：agent 链路新增 `sources` SSE 事件（`mergeSources` 按 docId/title 去重），控制器写入与 RAG 路径相同形状的 `sources` 事件，agent 路径也能展示引用来源；非流式 `chat()` 返回 `sources` + `trace`
+- ③ 单一调度实现：`chat()` 改为 drain `chatStream()` generator，删除第二套循环逻辑（drift 风险）；`decide()` 保留（单轮决策 API，agent 评测脚本复用）
+- ④ trace 正确性：`toolCalls[].durationMs` 改单工具独立计时（修复前是累计值）；多工具调用 `Promise.all` 并行（延迟从求和降为取最大值）
+- ⑤ 成败结构化：`tool-registry.service.js` 新增 `executeToolDetailed` 返回 `{ ok, content, data }`，替代 `/^(工具.*失败|工具.*超时|未知工具)/` 中文正则猜成败；`executeTool` 保留字符串契约作兼容包装
+- ⑥ 无进展签名规范化：新增 `stableStringify`（key 递归排序），签名不再受 JSON key 顺序/空白差异影响
+- ⑦ system prompt 瘦身：移除 `{tool_schemas}` JSON 注入（schema 已由 API tools 参数携带），只保留工具名+简述，每次决策省几百 token
+- ⑧ 失败降级 RAG：决策/流式失败且未输出内容时 yield `error` 事件（`AgentDecisionError`，`agentShouldFallback=true`），控制器捕获后降级 RAG 管道（流式：通知前端 route 变更后继续走 rag 分支；非流式：catch 后调 ragService.chat），替代原来的"抱歉，我没有理解您的问题"误导文案；已有内容流出时保持原收尾行为
+- ⑨ trace 持久化：`data/agent-traces.jsonl`（fire-and-forget，测试环境跳过），灰度期可离线分析 finishReason 分布/工具失败率
+- ⑩ agent 评测体系：`scripts/rag-eval/eval-agent.js` + `dataset/agent-routing-qa.json`（24 条标注）——Phase 1 fastRoute 路由准确率（零成本离线）+ Phase 2 `--with-llm` 工具选择正确率/决策延迟（avg/p95），结果落盘 `results/agent-eval-*.json`，作为 `AGENT_TOOL_ENABLED` 灰度放开的量化依据
+- 测试：`agent-tools.test.js` 新增 7 用例（executeToolDetailed 契约/retrieveOnly/stableStringify/chat drain/error 降级/sources 透传/prompt 不含 schema）
 
 ### ❌ 尝试但退回
 

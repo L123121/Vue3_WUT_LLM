@@ -33,11 +33,16 @@ WORKDIR /app
 COPY --from=frontend-builder /app/dist ./dist
 
 # ---- 安装后端生产依赖 ----
+# sharp（@xenova/transformers 传递依赖）与 better-sqlite3 的预编译二进制
+# 默认从 GitHub Releases 下载，服务器网络受限会失败；指向 npmmirror 镜像加速。
+ENV npm_config_sharp_binary_host=https://registry.npmmirror.com/-/binary/sharp
+ENV npm_config_sharp_libvips_binary_host=https://registry.npmmirror.com/-/binary/sharp-libvips
+ENV npm_config_better_sqlite3_binary_host=https://registry.npmmirror.com/-/binary/better-sqlite3
 COPY backend/package.json backend/package-lock.json* ./backend/
 RUN cd backend && npm ci --omit=dev
-# better-sqlite3 是可选依赖（本地开发用），PG 模式下不需要。
-# 编译失败时忽略，不影响生产部署。
-RUN cd backend && npm rebuild better-sqlite3 --omit=dev 2>/dev/null || echo "[Docker] better-sqlite3 编译跳过（PG 模式无需）"
+# better-sqlite3 是运行期硬依赖（auth.service / memory-store 直接 require），
+# 编译或下载失败必须报错中止，不能静默跳过，否则容器启动即崩。
+RUN cd backend && npm rebuild better-sqlite3 --omit=dev || (echo "[Docker] better-sqlite3 编译失败，构建中止" >&2 && exit 1)
 
 # ---- 拷贝后端源码 ----
 COPY backend/ ./backend/

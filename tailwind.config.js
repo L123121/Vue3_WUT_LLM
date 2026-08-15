@@ -12,5 +12,10 @@ export default {
       }
     },
   },
-  plugins: [],
+  plugins: [
+    // 触屏设备（无 hover）专用变体：touch-device:opacity-100 等
+    function ({ addVariant }) {
+      addVariant('touch-device', '@media (hover: none) and (pointer: coarse)');
+    },
+  ],
 }
