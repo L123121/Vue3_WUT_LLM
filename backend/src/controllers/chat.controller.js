@@ -1,27 +1,6 @@
 "use strict";
 
-const { ConversationOrchestrator } = require("../services/conversation-orchestrator.service");
-
-const conversationOrchestrator = new ConversationOrchestrator();
-
-const chatHandler = async (req, res, next) => {
-  try {
-    const { message, history } = req.body;
-    if (!message) {
-      return res.status(400).json({ success: false, error: "消息内容不能为空" });
-    }
-
-    const result = await conversationOrchestrator.chat(message, history || [], {
-      traceId: req.traceId,
-      userId: req.userId,
-      conversationId: req.body?.conversationId || null,
-    });
-    res.json({ success: true, data: result });
-  } catch (error) {
-    console.error("[Chat] 非流式错误:", error);
-    next(error);
-  }
-};
+const { applicationContainer } = require("../bootstrap/container");
 
 function writeSse(res, payload) {
   res.write(`data: ${JSON.stringify(payload)}\n\n`);
@@ -74,51 +53,76 @@ function writeStreamEvent(res, event, fallbackTraceId) {
   }
 }
 
-const streamHandler = async (req, res, next) => {
-  let abortController = null;
-  let onClientClose = null;
-  const cleanupClientClose = () => {
-    if (onClientClose) res.removeListener("close", onClientClose);
+function createChatHandlers(conversationOrchestrator) {
+  const chatHandler = async (req, res, next) => {
+    try {
+      const { message, history } = req.body;
+      if (!message) {
+        return res.status(400).json({ success: false, error: "消息内容不能为空" });
+      }
+
+      const result = await conversationOrchestrator.chat(message, history || [], {
+        traceId: req.traceId,
+        userId: req.userId,
+        conversationId: req.body?.conversationId || null,
+      });
+      res.json({ success: true, data: result });
+    } catch (error) {
+      console.error("[Chat] 非流式错误:", error);
+      next(error);
+    }
   };
 
-  try {
-    const { message, history } = req.body;
-    if (!message) return res.status(400).json({ error: "消息内容不能为空" });
-
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
-    res.setHeader("X-Accel-Buffering", "no");
-    res.flushHeaders();
-
-    abortController = new AbortController();
-    onClientClose = () => abortController.abort();
-    res.on("close", onClientClose);
-
-    const context = {
-      traceId: req.traceId,
-      userId: req.userId,
-      conversationId: req.body?.conversationId || null,
-      signal: abortController.signal,
+  const streamHandler = async (req, res, next) => {
+    let abortController = null;
+    let onClientClose = null;
+    const cleanupClientClose = () => {
+      if (onClientClose) res.removeListener("close", onClientClose);
     };
-    for await (const event of conversationOrchestrator.chatStream(message, history || [], context)) {
-      writeStreamEvent(res, event, req.traceId);
-    }
 
-    cleanupClientClose();
-    res.end();
-  } catch (error) {
-    cleanupClientClose();
-    if (abortController?.signal.aborted) return;
-    console.error("[Chat Stream] 错误:", error);
-    if (!res.headersSent) return next(error);
     try {
-      writeSse(res, { error: error.message });
-      res.end();
-    } catch {
-      // 连接已关闭，忽略
-    }
-  }
-};
+      const { message, history } = req.body;
+      if (!message) return res.status(400).json({ error: "消息内容不能为空" });
 
-module.exports = { chatHandler, streamHandler, writeStreamEvent };
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+      res.setHeader("X-Accel-Buffering", "no");
+      res.flushHeaders();
+
+      abortController = new AbortController();
+      onClientClose = () => abortController.abort();
+      res.on("close", onClientClose);
+
+      const context = {
+        traceId: req.traceId,
+        userId: req.userId,
+        conversationId: req.body?.conversationId || null,
+        signal: abortController.signal,
+      };
+      for await (const event of conversationOrchestrator.chatStream(message, history || [], context)) {
+        writeStreamEvent(res, event, req.traceId);
+      }
+
+      cleanupClientClose();
+      res.end();
+    } catch (error) {
+      cleanupClientClose();
+      if (abortController?.signal.aborted) return;
+      console.error("[Chat Stream] 错误:", error);
+      if (!res.headersSent) return next(error);
+      try {
+        writeSse(res, { error: error.message });
+        res.end();
+      } catch {
+        // 连接已关闭，忽略
+      }
+    }
+  };
+
+  return { chatHandler, streamHandler };
+}
+
+const { chatHandler, streamHandler } = createChatHandlers(applicationContainer.conversationOrchestrator);
+
+module.exports = { createChatHandlers, chatHandler, streamHandler, writeStreamEvent };

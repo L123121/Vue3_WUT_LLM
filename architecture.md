@@ -5,7 +5,7 @@ tags: [architecture, overview]
 
 # 武理小精灵 整体架构
 
-> 版本：v0.1 | 最后更新：2026-07-24
+> 版本：v0.2 | 最后更新：2026-08-18
 
 ## 项目定位
 
@@ -23,12 +23,15 @@ graph TB
         Composables[逻辑层]
         Components[组件层]
         API[API 层]
+        AuthBoundary[main.js 注入的鉴权回调]
+        Router[Vue Router]
         Workers[Worker 层]
     end
 
     subgraph 后端 [Express - backend/src/]
         Routes[路由层]
         Controllers[控制器]
+        Container[bootstrap/container.js\n应用组合根]
         Services[服务层]
         Middleware[中间件]
     end
@@ -40,6 +43,11 @@ graph TB
     end
 
     前端 -->|HTTP / SSE| 后端
+    API -->|401| AuthBoundary
+    AuthBoundary --> Router
+    Routes --> Controllers
+    Controllers --> Container
+    Container --> Services
     后端 --> Qdrant
     后端 --> SQLite
     后端 --> StepFun
@@ -66,7 +74,7 @@ graph TB
 
 ```text
 src/
-├── main.js                 # 入口：注册 Pinia/Router/错误处理
+├── main.js                 # 入口：注册 Pinia/Router/错误处理与鉴权回调
 ├── App.vue                 # 根布局：侧边栏 + 响应式 + 错误边界
 ├── router/index.js         # 路由表 + 登录守卫
 │
@@ -126,7 +134,7 @@ src/
 │       └── EvalContentViewer.vue
 │
 ├── api/                    # API 封装
-│   ├── client.js           # 基础 fetch 封装
+│   ├── client.js           # 基础 fetch 封装（不直接依赖 Router）
 │   ├── chat.js             # SSE 流式 + 连接管理
 │   ├── conversations.js    # 会话 CRUD
 │   ├── rag.js              # 文档 CRUD + 反馈
@@ -143,7 +151,14 @@ src/
     └── errorHandler.js     # 错误处理
 ```
 
-### 2.3 状态管理架构
+### 2.3 依赖边界
+
+- `api/client.js` 只负责请求、响应错误解析和本地鉴权状态清理，不直接导入 `router`。
+- `main.js` 在应用启动时通过 `configureAuthErrorHandler()` 注入导航行为，统一处理 `401` 后的登录跳转和 `redirect` 参数。
+- 依赖方向保持为“页面/Store → Composable/API → 基础设施”，API 层不反向依赖页面、Store 或 Router。
+- `src/__tests__/apiClient.test.js` 固化 `401` 清理和导航注入行为，防止循环依赖回归。
+
+### 2.4 状态管理架构
 
 ```mermaid
 graph TB
@@ -176,7 +191,7 @@ graph TB
     useEvalData --> EvalStore
 ```
 
-### 2.4 流式聊天链路
+### 2.5 流式聊天链路
 
 ```mermaid
 sequenceDiagram
@@ -228,6 +243,8 @@ backend/
 └── src/
     ├── app.js              # 服务入口
     ├── config/index.js     # 集中配置
+    ├── bootstrap/
+    │   └── container.js    # 应用组合根：统一创建并装配核心服务
     │
     ├── routes/             # 路由
     │   ├── register.js     # 路由注册 + 静态文件
@@ -240,7 +257,7 @@ backend/
     │   ├── eval.routes.js  # 评测
     │   └── metrics.routes.js  # 指标
     │
-    ├── controllers/        # 控制器
+    ├── controllers/        # 控制器（通过工厂接收服务依赖）
     │   ├── chat.controller.js
     │   └── rag.controller.js
     │
@@ -275,7 +292,29 @@ backend/
         └── response.js       # 统一响应格式
 ```
 
-### 3.3 配置体系
+### 3.3 应用组合根与依赖注入
+
+`bootstrap/container.js` 是后端的应用组合根，负责创建核心服务并组装
+`ConversationOrchestrator`。当前统一装配的依赖包括：
+
+```text
+AiService
+├── RagService
+├── IntentRouter
+└── AgentService
+
+MemoryService
+ConversationOrchestrator
+└── AiService + RagService + MemoryService + IntentRouter + AgentService
+```
+
+- `chat.controller.js` 通过 `createChatHandlers(orchestrator)` 接收对话编排器，非流式和 SSE 流式请求共享同一装配实例。
+- `audio.controller.js` 通过 `createSpeechHandler(service, metrics)` 接收语音服务和指标依赖。
+- 默认路由导出保持不变，因此现有 `routes/register.js` 不需要知道服务创建细节。
+- `createApplicationContainer(overrides)` 为测试、替换实现和后续按环境装配保留边界；`backend/__tests__/application-container.test.js` 覆盖完整依赖替换。
+- 当前 RAG 和评测控制器仍存在局部直接实例化，后续可在不扩大本批改动范围的前提下继续迁移到组合根。
+
+### 3.4 配置体系
 
 ```env
 # AI 生产模型
@@ -447,10 +486,12 @@ graph TB
 | 混合检索 | 默认稠密×0.6 + 稀疏×0.4（`RAG_FUSION=weighted`） | 兼顾语义相似度和关键词精确匹配；RRF 备选（`RAG_FUSION=rrf` + `RAG_RRF_K=10`）实测与加权打平 |
 | 认证 | httpOnly cookie | 不暴露 JWT 给前端 JS |
 | 存储 | 无 Redis 降级 MemoryStore | 降低部署依赖 |
+| 组合根 | `bootstrap/container.js` 统一装配核心服务 | 控制依赖方向，便于测试替换和后续模块化 |
+| 鉴权错误处理 | API client 注入回调，入口层负责导航 | 避免 API 层与 Router 循环依赖 |
 
 ---
 
-## 九、调优记录（2026-08-09）
+## 九、调优记录（截至 2026-08-18）
 
 ### 9.1 前端：收藏标题实时同步
 
@@ -472,3 +513,10 @@ graph TB
 - 修复：`_mmrDedupe` 相似度剔除仅限**同 docId 内**父段，跨文档高度相似不再剔除
 - 效果：官方 Recall 80.7% → **97.4%**，学校概况类 48.5% → 97.0%，C01-C08 全部 100% 命中
 - 测试：`rag.mmr-category.test.js` 新增「跨文档高度相似不剔除」用例，后端全量 131 用例通过
+
+### 9.4 依赖边界与应用组合根（2026-08-18）
+
+- 前端：移除 `api/client.js → router` 的直接依赖，改为由 `main.js` 注入 `401` 导航回调，保留登录后 `redirect`。
+- 后端：新增 `bootstrap/container.js`，统一装配聊天链路和语音链路的核心依赖，控制器改为依赖注入工厂。
+- 回归：新增 API client 鉴权行为测试和应用容器替换测试。
+- 范围：本批只迁移聊天、语音两个高频入口；RAG 控制器和评测路由的直接实例化作为下一阶段候选。
