@@ -22,7 +22,7 @@ defineEmits(['refresh']);
           响应延迟 (ms)
         </h2>
         <button @click="$emit('refresh')" :disabled="metricsLoading"
-          class="flex items-center gap-1 px-3 py-1 text-xs text-slate-500 hover:text-blue-600 disabled:opacity-40 transition">
+          class="flex items-center gap-1 px-3 py-1 text-xs text-slate-500 hover:text-wut-600 disabled:opacity-40 transition">
           <RefreshCw :size="12" :class="{'animate-spin': metricsLoading}" />
           刷新
         </button>
@@ -51,7 +51,7 @@ defineEmits(['refresh']);
       <!-- RAG 指标 -->
       <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-slate-100 dark:border-gray-700 p-5">
         <h2 class="text-base font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
-          <span class="w-2 h-2 rounded-full bg-indigo-500"></span>
+          <span class="w-2 h-2 rounded-full bg-wut-500"></span>
           RAG 检索指标
         </h2>
         <div v-if="systemMetrics?.rag" class="space-y-2.5">
@@ -61,7 +61,7 @@ defineEmits(['refresh']);
           </div>
           <div class="flex justify-between items-center">
             <span class="text-xs text-slate-500">RAG 查询数</span>
-            <span class="text-sm font-bold text-indigo-600">{{ systemMetrics.rag.ragQueries }}</span>
+            <span class="text-sm font-bold text-wut-600">{{ systemMetrics.rag.ragQueries }}</span>
           </div>
           <div class="flex justify-between items-center">
             <span class="text-xs text-slate-500">父子召回使用次数</span>
@@ -108,7 +108,7 @@ defineEmits(['refresh']);
           </div>
           <div class="flex justify-between items-center">
             <span class="text-xs text-slate-500">空白规范化</span>
-            <span class="text-sm font-bold text-blue-500">{{ systemMetrics.cleaning.whitespaceFix }} 次</span>
+            <span class="text-sm font-bold text-wut-500">{{ systemMetrics.cleaning.whitespaceFix }} 次</span>
           </div>
           <div class="flex justify-between items-center">
             <span class="text-xs text-slate-500">空值拦截</span>

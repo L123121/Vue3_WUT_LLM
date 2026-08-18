@@ -144,6 +144,16 @@ describe('createLocalConversation', () => {
     const conv = createLocalConversation(null, 5);
     expect(conv.title).toBe('新会话 6');
   });
+
+  it('generates unique ids within the same millisecond', () => {
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(123456789);
+
+    const first = createLocalConversation('First');
+    const second = createLocalConversation('Second');
+
+    expect(first.id).not.toBe(second.id);
+    nowSpy.mockRestore();
+  });
 });
 
 describe('createMessageId', () => {

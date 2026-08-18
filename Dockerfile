@@ -8,9 +8,9 @@ FROM node:20-slim AS frontend-builder
 
 WORKDIR /app
 
-# 安装前端依赖（--ignore-scripts 避免触发 postinstall 安装后端）
+# 安装前端依赖（显式包含 devDependencies，Vite 构建依赖不能被生产环境配置省略）
 COPY package.json package-lock.json ./
-RUN npm ci --ignore-scripts
+RUN npm ci --ignore-scripts --include=dev
 
 # 拷贝前端源码
 COPY vite.config.js vite-plugin-perf.js index.html ./

@@ -229,7 +229,7 @@ defineExpose({
       </button>
     </div>
 
-    <div class="relative flex items-center gap-1.5 bg-slate-100 dark:bg-gray-800 rounded-xl p-1.5 border border-transparent focus-within:border-blue-300 dark:focus-within:border-blue-700 focus-within:bg-white dark:focus-within:bg-gray-800 focus-within:ring-2 focus-within:ring-blue-100 dark:focus-within:ring-blue-900/20 transition-all duration-300">
+    <div class="relative flex items-center gap-1.5 bg-slate-100 dark:bg-gray-800 rounded-xl p-1.5 border border-transparent focus-within:border-wut-300 dark:focus-within:border-wut-700 focus-within:bg-white dark:focus-within:bg-gray-800 focus-within:ring-2 focus-within:ring-blue-100 dark:focus-within:ring-blue-900/20 transition-all duration-300">
       <!-- 快捷命令菜单 -->
       <Transition name="command-menu">
         <div v-if="showCommands" class="absolute bottom-full left-0 mb-2 w-64 max-w-[calc(100vw-2rem)] bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-slate-200 dark:border-gray-700 overflow-hidden z-20">
@@ -247,7 +247,7 @@ defineExpose({
               :class="[
                 'w-full px-3 py-2 flex items-center gap-3 text-left transition-colors',
                 index === selectedCommandIndex
-                  ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400'
+                  ? 'bg-wut-50 dark:bg-wut-900/30 text-wut-600 dark:text-wut-400'
                   : 'hover:bg-slate-50 dark:hover:bg-gray-700 text-slate-700 dark:text-gray-200'
               ]"
             >
@@ -269,9 +269,9 @@ defineExpose({
       <!-- 语音识别 interim 预览 + 错误提示 -->
       <Transition name="slide-down">
         <div v-if="voiceInterim || voiceError" class="mb-1 px-2 py-1 rounded-lg text-xs flex items-center gap-2"
-          :class="voiceError ? 'bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400' : 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-300'">
+          :class="voiceError ? 'bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400' : 'bg-wut-50 dark:bg-wut-900/20 text-wut-600 dark:text-wut-300'">
           <span v-if="voiceError" class="font-medium">⚠</span>
-          <span v-else class="inline-block h-1.5 w-1.5 rounded-full bg-blue-500 animate-pulse"></span>
+          <span v-else class="inline-block h-1.5 w-1.5 rounded-full bg-wut-500 animate-pulse"></span>
           <span class="truncate">{{ voiceError || voiceInterim }}</span>
           <span v-if="!voiceError" class="text-slate-400 dark:text-slate-500 ml-auto shrink-0">识别中…</span>
         </div>
@@ -294,7 +294,7 @@ defineExpose({
       <button
         @click="fileInputRef?.click()"
         :disabled="isLoading"
-        class="shrink-0 h-8 w-8 rounded-lg inline-flex items-center justify-center text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 disabled:opacity-50 transition-colors"
+        class="shrink-0 h-8 w-8 rounded-lg inline-flex items-center justify-center text-slate-400 hover:text-wut-600 hover:bg-wut-50 dark:hover:bg-wut-900/20 disabled:opacity-50 transition-colors"
         title="上传文件"
       >
         <Paperclip :size="16" />
@@ -322,7 +322,7 @@ defineExpose({
         :disabled="(!input.trim() && !selectedFile) || !isConnected"
         :class="[
           'p-2 rounded-lg transition-all duration-300 shrink-0',
-          !input.trim() || !isConnected ? 'bg-slate-200 text-slate-400 dark:bg-gray-700 dark:text-gray-500 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-md shadow-blue-500/20 active:scale-95'
+          !input.trim() || !isConnected ? 'bg-slate-200 text-slate-400 dark:bg-gray-700 dark:text-gray-500 cursor-not-allowed' : 'bg-wut-600 text-white hover:bg-wut-700 shadow-md shadow-wut-500/20 active:scale-95'
         ]"
       >
         <Send :size="16" />

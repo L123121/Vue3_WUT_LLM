@@ -10,7 +10,7 @@ export const fetchConversations = async () => {
     return data.data || [];
   } catch (error) {
     console.warn('获取会话列表失败，使用本地存储:', error.message);
-    return [];
+    return null;
   }
 };
 

@@ -208,7 +208,7 @@ const getPreview = (conv) => {
       </div>
       <button
         @click.stop="handleCreate"
-        class="p-1.5 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-all duration-200"
+        class="p-1.5 text-slate-400 hover:text-wut-600 dark:hover:text-wut-400 hover:bg-wut-50 dark:hover:bg-wut-900/20 rounded-lg transition-all duration-200"
         :title="labels.create"
       >
         <Plus :size="14" />
@@ -251,7 +251,7 @@ const getPreview = (conv) => {
           :class="[
             'group relative flex flex-col px-3.5 py-3 rounded-xl cursor-pointer transition-all duration-200',
             chatStore.currentConversationId === conv.id
-              ? 'bg-blue-50 dark:bg-blue-900/20'
+              ? 'bg-wut-50 dark:bg-wut-900/20'
               : 'hover:bg-slate-50 dark:hover:bg-gray-800'
           ]"
         >
@@ -284,7 +284,7 @@ const getPreview = (conv) => {
                 :size="14"
                 :class="[
                   chatStore.currentConversationId === conv.id
-                    ? 'text-blue-600 dark:text-blue-400'
+                    ? 'text-wut-600 dark:text-wut-400'
                     : 'text-slate-400 dark:text-slate-500'
                 ]"
               />
@@ -292,7 +292,7 @@ const getPreview = (conv) => {
                 :class="[
                   'flex-1 text-sm font-medium truncate',
                   chatStore.currentConversationId === conv.id
-                    ? 'text-blue-700 dark:text-blue-300'
+                    ? 'text-wut-700 dark:text-wut-300'
                     : 'text-slate-700 dark:text-slate-300'
                 ]"
               >
@@ -302,7 +302,7 @@ const getPreview = (conv) => {
               <div class="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity touch-device:opacity-100">
                 <button
                   @click.stop="startEdit(conv)"
-                  class="p-1 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors"
+                  class="p-1 text-slate-400 hover:text-wut-600 dark:hover:text-wut-400 hover:bg-wut-50 dark:hover:bg-wut-900/20 rounded transition-colors"
                   :title="labels.edit"
                 >
                   <Edit3 :size="12" />

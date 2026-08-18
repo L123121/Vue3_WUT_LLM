@@ -210,19 +210,19 @@ const handleClick = (event) => {
     <!-- Stale: show last rendered + pulsing cursor -->
     <div v-if="isContentStale() && renderedContent" class="prose prose-sm dark:prose-invert max-w-none break-words leading-relaxed">
       <div v-html="renderedContent" @click="handleClick"></div>
-      <span class="inline-block w-0.5 h-4 bg-blue-500 animate-pulse ml-0.5 align-middle"></span>
+      <span class="inline-block w-0.5 h-4 bg-wut-500 animate-pulse ml-0.5 align-middle"></span>
     </div>
     <!-- Worker loading indicator for large content -->
     <div v-else-if="isLoadingWorker" class="prose prose-sm dark:prose-invert max-w-none break-words leading-relaxed">
       <div class="flex items-center gap-2 text-slate-400 dark:text-gray-500 text-sm py-2">
-        <span class="w-1.5 h-1.5 rounded-full bg-blue-500 animate-bounce"></span>
-        <span class="w-1.5 h-1.5 rounded-full bg-blue-500 animate-bounce" style="animation-delay:0.15s"></span>
-        <span class="w-1.5 h-1.5 rounded-full bg-blue-500 animate-bounce" style="animation-delay:0.3s"></span>
+        <span class="w-1.5 h-1.5 rounded-full bg-wut-500 animate-bounce"></span>
+        <span class="w-1.5 h-1.5 rounded-full bg-wut-500 animate-bounce" style="animation-delay:0.15s"></span>
+        <span class="w-1.5 h-1.5 rounded-full bg-wut-500 animate-bounce" style="animation-delay:0.3s"></span>
         <span class="ml-1">渲染中...</span>
       </div>
     </div>
     <!-- Normal rendered content -->
-    <div v-else class="prose prose-sm dark:prose-invert max-w-none break-words leading-relaxed prose-p:my-1.5 prose-p:leading-relaxed prose-headings:font-bold prose-headings:my-2 prose-h1:text-lg prose-h2:text-base prose-h3:text-sm prose-ul:my-1 prose-ul:list-disc prose-ul:pl-4 prose-ol:my-1 prose-ol:list-decimal prose-ol:pl-4 prose-li:my-0.5 prose-pre:my-2 prose-pre:p-0 prose-pre:bg-transparent prose-pre:rounded-lg prose-code:px-1 prose-code:py-0.5 prose-code:bg-slate-100 dark:prose-code:bg-gray-700 prose-code:rounded prose-code:text-pink-500 dark:prose-code:text-pink-400 prose-code:font-mono prose-code:text-xs prose-code:before:content-[''] prose-code:after:content-[''] prose-strong:font-bold prose-strong:text-slate-900 dark:prose-strong:text-white prose-a:text-blue-600 dark:prose-a:text-blue-400 prose-a:no-underline hover:prose-a:underline prose-table:my-2 prose-table:w-full prose-table:text-left prose-table:border-collapse prose-th:p-2 prose-th:border prose-th:border-slate-200 dark:prose-th:border-gray-700 prose-th:bg-slate-50 dark:prose-th:bg-gray-800 prose-td:p-2 prose-td:border prose-td:border-slate-200 dark:prose-td:border-gray-700" v-html="renderedContent" @click="handleClick"></div>
+    <div v-else class="prose prose-sm dark:prose-invert max-w-none break-words leading-relaxed prose-p:my-1.5 prose-p:leading-relaxed prose-headings:font-bold prose-headings:my-2 prose-h1:text-lg prose-h2:text-base prose-h3:text-sm prose-ul:my-1 prose-ul:list-disc prose-ul:pl-4 prose-ol:my-1 prose-ol:list-decimal prose-ol:pl-4 prose-li:my-0.5 prose-pre:my-2 prose-pre:p-0 prose-pre:bg-transparent prose-pre:rounded-lg prose-code:px-1 prose-code:py-0.5 prose-code:bg-slate-100 dark:prose-code:bg-gray-700 prose-code:rounded prose-code:text-pink-500 dark:prose-code:text-pink-400 prose-code:font-mono prose-code:text-xs prose-code:before:content-[''] prose-code:after:content-[''] prose-strong:font-bold prose-strong:text-slate-900 dark:prose-strong:text-white prose-a:text-wut-600 dark:prose-a:text-wut-400 prose-a:no-underline hover:prose-a:underline prose-table:my-2 prose-table:w-full prose-table:text-left prose-table:border-collapse prose-th:p-2 prose-th:border prose-th:border-slate-200 dark:prose-th:border-gray-700 prose-th:bg-slate-50 dark:prose-th:bg-gray-800 prose-td:p-2 prose-td:border prose-td:border-slate-200 dark:prose-td:border-gray-700" v-html="renderedContent" @click="handleClick"></div>
     <CodeRunner v-if="showRunner" :code="runnerCode" :language="runnerLanguage" @close="showRunner = false" />
   </div>
 </template>

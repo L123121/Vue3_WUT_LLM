@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { setActivePinia, createPinia } from 'pinia';
 import { useChatStore } from '../stores/chat.store.js';
+import { useAuthStore } from '../stores/auth.store.js';
+import * as conversationsApi from '../api/conversations.js';
 
 // Mock the API modules
 vi.mock('../api/chat.js', () => ({
@@ -18,6 +20,7 @@ vi.mock('../api/conversations.js', () => ({
   fetchConversation: vi.fn(),
   renameConversation: vi.fn(),
   deleteConversation: vi.fn(),
+  saveConversationMessages: vi.fn(),
   clearConversationMessages: vi.fn(),
 }));
 
@@ -25,6 +28,10 @@ describe('chatStore', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     localStorage.clear();
+    vi.clearAllMocks();
+    vi.mocked(conversationsApi.fetchConversations).mockResolvedValue([]);
+    vi.mocked(conversationsApi.fetchConversation).mockResolvedValue(null);
+    vi.mocked(conversationsApi.deleteConversation).mockResolvedValue(true);
   });
 
   it('initializes with empty state', () => {
@@ -70,6 +77,81 @@ describe('chatStore', () => {
 
     expect(store.conversations).toHaveLength(1);
     expect(store.conversations[0].title).toBe('默认会话');
+  });
+
+  it('restores cached conversations when backend is unavailable', async () => {
+    localStorage.setItem('chat_cache', JSON.stringify({
+      version: 1,
+      currentId: 'local_cached',
+      conversations: [{
+        id: 'local_cached',
+        title: 'Cached Chat',
+        messages: [{ id: 'cached-message', role: 'user', content: 'hello' }],
+        createdAt: '2026-08-17T00:00:00.000Z',
+        updatedAt: '2026-08-17T00:00:00.000Z',
+      }],
+    }));
+
+    const store = useChatStore();
+    await store.loadConversations();
+
+    expect(store.currentConversationId).toBe('local_cached');
+    expect(store.conversations[0].title).toBe('Cached Chat');
+    expect(store.conversations[0].messages[0].id).toBe('cached-message');
+  });
+
+  it('removes stale server conversations while preserving local-only conversations', async () => {
+    localStorage.setItem('chat_cache', JSON.stringify({
+      version: 1,
+      currentId: 'conv_stale',
+      conversations: [
+        { id: 'conv_stale', title: 'Stale', messages: [], updatedAt: '2026-08-17T00:00:00.000Z' },
+        { id: 'local_keep', title: 'Local', messages: [], updatedAt: '2026-08-17T00:00:00.000Z' },
+      ],
+    }));
+    useAuthStore().setUser({ id: 'user-1', name: 'User' });
+    vi.mocked(conversationsApi.fetchConversations).mockResolvedValue([
+      { id: 'conv_server', title: 'Server', messages: [], updatedAt: '2026-08-17T01:00:00.000Z' },
+    ]);
+
+    const store = useChatStore();
+    await store.loadConversations();
+
+    expect(store.conversations.map((conv) => conv.id)).toEqual(['conv_server', 'local_keep']);
+    expect(store.currentConversationId).toBe('conv_server');
+  });
+
+  it('keeps cached server conversations when the list request fails', async () => {
+    localStorage.setItem('chat_cache', JSON.stringify({
+      version: 1,
+      currentId: 'conv_cached',
+      conversations: [
+        { id: 'conv_cached', title: 'Offline Cache', messages: [], updatedAt: '2026-08-17T00:00:00.000Z' },
+      ],
+    }));
+    useAuthStore().setUser({ id: 'user-1', name: 'User' });
+    vi.mocked(conversationsApi.fetchConversations).mockResolvedValue(null);
+
+    const store = useChatStore();
+    await store.loadConversations();
+
+    expect(store.conversations).toHaveLength(1);
+    expect(store.currentConversationId).toBe('conv_cached');
+  });
+
+  it('clears in-memory and cached conversations on account reset', async () => {
+    const store = useChatStore();
+    await store.loadConversations();
+    await store.createConversation('Private Chat');
+    expect(store.isLoaded).toBe(true);
+
+    store.resetConversationState();
+
+    expect(store.conversations).toEqual([]);
+    expect(store.currentConversationId).toBe('');
+    expect(store.isLoaded).toBe(false);
+    expect(localStorage.getItem('chat_cache')).toBeNull();
+    expect(localStorage.getItem('chat_current_conversation_id')).toBeNull();
   });
 
   it('renames conversation', async () => {

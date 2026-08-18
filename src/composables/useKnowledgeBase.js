@@ -238,6 +238,18 @@ export function useKnowledgeBase() {
     }
   };
 
+  const notifyIndexResult = (data = {}, successMessage) => {
+    if (data.vectorStatus === 'failed') {
+      toastStore.warning(`文档已保存，但向量索引失败：${data.vectorMessage || '请稍后重试或重建索引'}`);
+      return;
+    }
+    if (data.vectorStatus === 'indexing') {
+      toastStore.warning(data.vectorMessage || '文档已保存，向量索引仍在处理中');
+      return;
+    }
+    toastStore.success(successMessage);
+  };
+
   // 提交新文档
   const submitDocument = async () => {
     if (!newDoc.value.title.trim()) {
@@ -259,7 +271,7 @@ export function useKnowledgeBase() {
     try {
       const result = await addDocument(newDoc.value);
       if (result.success) {
-        toastStore.success('文档添加成功');
+        notifyIndexResult(result.data, '文档添加成功');
         showAddModal.value = false;
         await refresh();
       } else {
@@ -298,7 +310,7 @@ export function useKnowledgeBase() {
     try {
       const result = await uploadFile(selectedFile.value, fileSubCategory.value, fileTitle.value);
       if (result.success) {
-        toastStore.success(`文件上传成功，已生成 ${result.data.chunkCount} 个片段`);
+        notifyIndexResult(result.data, `文件上传成功，已生成 ${result.data.chunkCount} 个片段`);
         showAddModal.value = false;
         selectedFile.value = null;
         fileTitle.value = '';
@@ -374,6 +386,7 @@ export function useKnowledgeBase() {
 
   const vectorStatusLabels = {
     ready: '可检索',
+    indexing: '索引中',
     vectoring: '向量化中',
     timeout: '待确认',
     failed: '向量失败',
@@ -382,6 +395,7 @@ export function useKnowledgeBase() {
 
   const vectorStatusClassMap = {
     ready: 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300',
+    indexing: 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300',
     vectoring: 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300',
     timeout: 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300',
     failed: 'bg-rose-100 dark:bg-rose-900/30 text-rose-700 dark:text-rose-300',

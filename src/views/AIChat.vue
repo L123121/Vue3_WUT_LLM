@@ -4,7 +4,7 @@ import { useChatStore } from '../stores/chat.store.js';
 import { useToastStore } from '../stores/toast.store.js';
 import { useLanguageStore } from '../stores/language.store.js';
 import { useFavoritesStore } from '../stores/favorites.store.js';
-import { Bot, Eraser, Download, ClipboardCopy, FileText, FileCode2, Share2 } from 'lucide-vue-next';
+import { Bot, Eraser, Download, ClipboardCopy, FileText, FileCode2, Share2, BookOpen, GraduationCap, Landmark, Library } from 'lucide-vue-next';
 import MessageList from '../components/chat/MessageList.vue';
 import ChatBox from '../components/chat/ChatBox.vue';
 import ConfirmDialog from '../components/common/ConfirmDialog.vue';
@@ -23,6 +23,14 @@ const chatBoxRef = ref(null);
 const focusChatInput = () => {
   chatBoxRef.value?.focus();
 };
+
+// 空状态示例问题（武理校园场景，点击直接提问）
+const exampleQuestions = [
+  { icon: Landmark, text: '校园卡丢了怎么补办？' },
+  { icon: Library, text: '图书馆期末周几点闭馆？' },
+  { icon: GraduationCap, text: '推免保研需要准备哪些材料？' },
+  { icon: BookOpen, text: '大二专业课复习怎么规划？' },
+];
 
 // 收藏夹点击后滚动定位到指定消息
 const scrollToFavoritedMessage = async (messageId) => {
@@ -281,8 +289,7 @@ const shareConversation = async () => {
 };
 
 const initializeChat = async () => {
-  // forceRefresh=true：切换页面回来时从 localStorage 重新加载（本地模式）
-  await chatStore.loadConversations(true);
+  await chatStore.loadConversations();
 
   // 没有消息备份，走正常加载流程
   if (chatStore.currentConversationId) {
@@ -316,13 +323,13 @@ onMounted(() => {
     <div class="bg-white/90 dark:bg-gray-900/90 backdrop-blur-sm p-4 border-b border-slate-200 dark:border-gray-700 flex items-center justify-between z-10 gap-3 shrink-0">
       <div class="flex items-center min-w-0">
         <MobileMenuButton />
-        <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-blue-500 to-indigo-400 flex items-center justify-center mr-3 shadow-lg shadow-blue-500/20 text-white">
+        <div class="w-9 h-9 rounded-xl bg-wut-600 flex items-center justify-center mr-3 shadow-lg shadow-wut-500/20 text-white">
           <Bot :size="20" />
         </div>
         <div class="min-w-0">
           <h3 class="font-bold text-slate-800 dark:text-white text-sm truncate">{{ currentTitle }}</h3>
           <div class="flex items-center mt-0.5">
-            <span class="w-1.5 h-1.5 rounded-full bg-blue-500 mr-1.5 animate-pulse"></span>
+            <span class="w-1.5 h-1.5 rounded-full bg-wut-500 mr-1.5 animate-pulse"></span>
             <span class="text-[10px] font-medium text-slate-500 dark:text-gray-400 uppercase tracking-wide">{{ text.model }}</span>
             <span class="mx-1 text-slate-300 dark:text-gray-600">·</span>
             <span class="text-[10px] text-slate-500 dark:text-gray-400">{{ effectiveMessageCount }} 条消息</span>
@@ -369,7 +376,7 @@ onMounted(() => {
               <div class="my-1 border-t border-slate-100 dark:border-gray-700"></div>
               <button
                 @click="shareConversation"
-                class="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-sm text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
+                class="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-sm text-wut-600 dark:text-wut-400 hover:bg-wut-50 dark:hover:bg-wut-900/20 transition-colors"
               >
                 <Share2 :size="14" class="shrink-0" />
                 <span>生成分享链接</span>
@@ -393,8 +400,52 @@ onMounted(() => {
       </div>
     </div>
 
+    <!-- 空状态：仅欢迎消息时展示吉祥物 + 示例问题 -->
+    <div
+      v-if="effectiveMessageCount === 0 && !chatStore.isLoading"
+      class="flex-1 min-h-0 overflow-y-auto flex items-center justify-center p-6"
+    >
+      <div class="w-full max-w-2xl flex flex-col items-center text-center">
+        <!-- 吉祥物徽章：武理蓝 + 金色印章 -->
+        <div class="relative mb-6">
+          <div class="w-20 h-20 rounded-full bg-wut-700 flex items-center justify-center shadow-lg shadow-wut-700/30">
+            <Bot :size="36" class="text-white" />
+          </div>
+          <div class="absolute -bottom-1 -right-1 w-8 h-8 rounded-full bg-wut-gold flex items-center justify-center text-wut-900 text-xs font-black shadow">武</div>
+        </div>
+        <p class="text-[11px] font-bold tracking-[0.3em] text-wut-600 dark:text-wut-400 uppercase mb-2">WUT CAMPUS AI</p>
+        <h2 class="text-2xl font-black text-slate-800 dark:text-white mb-3">你好，我是武理小精灵</h2>
+        <p class="text-sm text-slate-500 dark:text-gray-400 max-w-md leading-relaxed mb-8">
+          基于武汉理工大学校园知识库的 AI 助手，覆盖选课、考试、图书馆、保研就业等校园指南，随时为你解答。
+        </p>
+        <!-- 示例问题卡：点击直接提问 -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-xl">
+          <button
+            v-for="q in exampleQuestions"
+            :key="q.text"
+            type="button"
+            @click="handleSend(q.text)"
+            class="group flex items-center gap-3 text-left p-4 rounded-2xl border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-800 hover:border-wut-300 dark:hover:border-wut-600 hover:shadow-md transition-all duration-200"
+          >
+            <span class="w-9 h-9 rounded-xl bg-wut-50 dark:bg-wut-900/30 text-wut-600 dark:text-wut-400 flex items-center justify-center shrink-0 group-hover:bg-wut-100 dark:group-hover:bg-wut-900/50 transition-colors">
+              <component :is="q.icon" :size="18" />
+            </span>
+            <span class="text-sm font-medium text-slate-700 dark:text-gray-300 group-hover:text-wut-700 dark:group-hover:text-wut-300 transition-colors">{{ q.text }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- 消息列表 -->
-    <MessageList ref="messageListRef" :messages="chatStore.messages" :is-loading="chatStore.isLoading" :current-streaming-id="chatStore.currentStreamingId" @copy="handleCopy" @focus-input="focusChatInput" />
+    <MessageList
+      v-else
+      ref="messageListRef"
+      :messages="chatStore.messages"
+      :is-loading="chatStore.isLoading"
+      :current-streaming-id="chatStore.currentStreamingId"
+      @copy="handleCopy"
+      @focus-input="focusChatInput"
+    />
 
     <!-- 输入框 -->
     <ChatBox

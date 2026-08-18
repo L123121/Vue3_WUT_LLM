@@ -22,7 +22,7 @@ defineEmits(['setScore', 'prev', 'next', 'updateComment']);
     <div class="mb-4 flex items-center gap-4">
       <span class="text-sm text-gray-500">{{ currentIndex + 1 }} / {{ totalItems }}</span>
       <div class="flex-1 h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-        <div class="h-full bg-blue-500 transition-all" :style="{ width: ((currentIndex + 1) / totalItems * 100) + '%' }"></div>
+        <div class="h-full bg-wut-500 transition-all" :style="{ width: ((currentIndex + 1) / totalItems * 100) + '%' }"></div>
       </div>
       <span class="text-sm text-gray-500">已打分: {{ Object.keys(humanScores).length }}</span>
     </div>
@@ -39,7 +39,7 @@ defineEmits(['setScore', 'prev', 'next', 'updateComment']);
           'bg-yellow-100 text-yellow-700': currentItem.difficulty === 'medium',
           'bg-red-100 text-red-700': currentItem.difficulty === 'hard'
         }">{{ currentItem.difficulty }}</span>
-        <span class="px-2 py-0.5 rounded text-xs bg-blue-100 text-blue-700">{{ currentItem.category }}</span>
+        <span class="px-2 py-0.5 rounded text-xs bg-wut-100 text-wut-700">{{ currentItem.category }}</span>
         <span class="text-xs text-gray-400">{{ currentItem.id }}</span>
       </div>
       <button @click="$emit('next')" :disabled="currentIndex >= totalItems - 1"
@@ -152,7 +152,7 @@ defineEmits(['setScore', 'prev', 'next', 'updateComment']);
       </button>
       <div class="flex gap-2">
         <button v-if="humanScores[currentItem.id]" @click="$emit('next')"
-          class="flex items-center gap-1 px-6 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition">
+          class="flex items-center gap-1 px-6 py-2 rounded-lg bg-wut-600 text-white hover:bg-wut-700 transition">
           打分并下一条 <ChevronRight :size="16" />
         </button>
       </div>

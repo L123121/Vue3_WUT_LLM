@@ -10,7 +10,7 @@ defineProps({
   danger: { type: Boolean, default: false }
 });
 
-defineEmits(['confirm', 'cancel']);
+const emit = defineEmits(['confirm', 'cancel']);
 </script>
 
 <template>
@@ -28,12 +28,12 @@ defineEmits(['confirm', 'cancel']);
                 'w-10 h-10 rounded-full flex items-center justify-center shrink-0',
                 danger
                   ? 'bg-red-100 dark:bg-red-900/30'
-                  : 'bg-blue-100 dark:bg-blue-900/30'
+                  : 'bg-wut-100 dark:bg-wut-900/30'
               ]"
             >
               <AlertTriangle
                 :size="20"
-                :class="danger ? 'text-red-600 dark:text-red-400' : 'text-blue-600 dark:text-blue-400'"
+                :class="danger ? 'text-red-600 dark:text-red-400' : 'text-wut-600 dark:text-wut-400'"
               />
             </div>
             <div class="min-w-0">
@@ -55,7 +55,7 @@ defineEmits(['confirm', 'cancel']);
                 'px-3 py-1.5 rounded-lg text-xs text-white transition-colors',
                 danger
                   ? 'bg-red-500 hover:bg-red-600'
-                  : 'bg-blue-500 hover:bg-blue-600'
+                  : 'bg-wut-500 hover:bg-wut-600'
               ]"
             >
               {{ confirmText }}

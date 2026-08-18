@@ -6,18 +6,20 @@ const { redis: store } = require('./memory-store');
 
 const VECTOR_STATUS = Object.freeze({
   LOCAL_ONLY: 'local_only',
+  INDEXING: 'indexing',
   READY: 'ready',
   FAILED: 'failed',
 });
 
 class DocumentService {
-  constructor() {
+  constructor(options = {}) {
     this.splitter = new TextSplitter({
       chunkSize: 500,
       chunkOverlap: 50,
     });
+    this.store = options.store || store;
     // 延迟初始化：避免模块加载时的循环依赖
-    this._indexing = null;
+    this._indexing = options.indexingService || null;
     this._providerRegistered = false;
   }
 
@@ -41,8 +43,8 @@ class DocumentService {
    * 返回所有文档的索引信息（供向量库重建用）
    */
   async _allDocs() {
-    const docIds = await store.smembers('documents:all');
-    const pipeline = store.pipeline();
+    const docIds = await this.store.smembers('documents:all');
+    const pipeline = this.store.pipeline();
     docIds.forEach(id => pipeline.hgetall(`document:${id}`));
     const results = await pipeline.exec();
     return results
@@ -68,15 +70,6 @@ class DocumentService {
     const chunks = this.splitter.splitByParagraph(content);
     console.log(`[Document] 文档切片完成: ${chunks.length} 段`);
 
-    // 异步索引到向量库（不阻塞响应）
-    const indexPromise = this.indexingService.indexDocument(docId, title, content, category)
-      .then(chunkCount => {
-        console.log(`[Document] 向量索引完成: ${docId}, ${chunkCount} 切片`);
-      })
-      .catch(err => {
-        console.error(`[Document] 向量索引失败: ${docId}`, err.message);
-      });
-
     const docMetadata = {
       id: docId,
       title,
@@ -85,36 +78,74 @@ class DocumentService {
       contentLength: content.length,
       chunkCount: chunks.length,
       createdAt: now,
-      vectorStatus: VECTOR_STATUS.READY,
-      vectorMessage: '',
+      vectorStatus: VECTOR_STATUS.INDEXING,
+      vectorMessage: '正在建立向量索引',
       vectorUpdatedAt: now,
       metadata: JSON.stringify(metadata),
     };
 
-    await store.hset(`document:${docId}`, docMetadata);
-    await store.sadd('documents:all', docId);
+    await this.store.hset(`document:${docId}`, docMetadata);
+    await this.store.sadd('documents:all', docId);
 
-    // 等待索引完成（最多等 30s）
-    try {
-      await Promise.race([
-        indexPromise,
-        new Promise((_, reject) => setTimeout(() => reject(new Error('索引超时')), 30000)),
-      ]);
-    } catch (err) {
-      // 索引超时或失败不阻塞返回，但记录状态
-      await store.hset(`document:${docId}`, {
-        vectorStatus: VECTOR_STATUS.FAILED,
-        vectorMessage: err.message,
+    const indexPromise = this.indexingService.indexDocument(docId, title, content, category)
+      .then(async indexedChunkCount => {
+        if (!Number.isFinite(indexedChunkCount) || indexedChunkCount <= 0) {
+          throw new Error('未生成可用向量');
+        }
+
+        const vectorMessage = `已生成 ${indexedChunkCount} 个向量`;
+        await this.store.hset(`document:${docId}`, {
+          vectorStatus: VECTOR_STATUS.READY,
+          vectorMessage,
+          vectorUpdatedAt: Date.now(),
+          indexedChunkCount,
+        });
+        console.log(`[Document] 向量索引完成: ${docId}, ${indexedChunkCount} 切片`);
+        return {
+          vectorStatus: VECTOR_STATUS.READY,
+          vectorMessage,
+          indexedChunkCount,
+        };
+      })
+      .catch(async err => {
+        const vectorMessage = err.message || '向量索引失败';
+        await this.store.hset(`document:${docId}`, {
+          vectorStatus: VECTOR_STATUS.FAILED,
+          vectorMessage,
+          vectorUpdatedAt: Date.now(),
+        });
+        console.error(`[Document] 向量索引失败: ${docId}`, vectorMessage);
+        return {
+          vectorStatus: VECTOR_STATUS.FAILED,
+          vectorMessage,
+          indexedChunkCount: 0,
+        };
       });
-    }
+
+    // 最多等待 30 秒；超时后索引仍在后台继续，并会最终更新文档状态
+    let timeoutId;
+    const outcome = await Promise.race([
+      indexPromise,
+      new Promise(resolve => {
+        timeoutId = setTimeout(() => resolve({
+          vectorStatus: VECTOR_STATUS.INDEXING,
+          vectorMessage: '索引仍在后台处理中，请稍后刷新确认',
+          indexedChunkCount: 0,
+        }), 30000);
+      }),
+    ]);
+    if (timeoutId) clearTimeout(timeoutId);
 
     return {
       id: docId,
       title,
       chunkCount: chunks.length,
-      vectorStatus: VECTOR_STATUS.READY,
-      vectorMessage: '本地向量索引完成',
-      message: '文档添加成功（已索引到本地向量库）',
+      indexedChunkCount: outcome.indexedChunkCount,
+      vectorStatus: outcome.vectorStatus,
+      vectorMessage: outcome.vectorMessage,
+      message: outcome.vectorStatus === VECTOR_STATUS.READY
+        ? '文档添加成功，向量索引已完成'
+        : '文档已保存，但向量索引尚未完成',
     };
   }
 
@@ -133,7 +164,7 @@ class DocumentService {
   }
 
   async deleteDocument(docId) {
-    const docMeta = await store.hgetall(`document:${docId}`);
+    const docMeta = await this.store.hgetall(`document:${docId}`);
     if (!docMeta || !docMeta.id) {
       throw new Error('文档不存在');
     }
@@ -143,8 +174,8 @@ class DocumentService {
       console.warn(`[Document] 向量索引删除失败: ${docId}`, err.message);
     });
 
-    await store.del(`document:${docId}`);
-    await store.srem('documents:all', docId);
+    await this.store.del(`document:${docId}`);
+    await this.store.srem('documents:all', docId);
 
     return { message: '文档删除成功', docId };
   }
@@ -154,7 +185,7 @@ class DocumentService {
    */
   async hasDocuments(category) {
     if (!category) {
-      return (await store.scard('documents:all')) > 0;
+      return (await this.store.scard('documents:all')) > 0;
     }
     const docs = await this.listDocuments({ category, limit: 1 });
     return docs.documents.length > 0;
@@ -163,9 +194,9 @@ class DocumentService {
   async listDocuments(options = {}) {
     const { category, page = 1, limit = 20 } = options;
 
-    const docIds = await store.smembers('documents:all');
+    const docIds = await this.store.smembers('documents:all');
 
-    const pipeline = store.pipeline();
+    const pipeline = this.store.pipeline();
     docIds.forEach(id => pipeline.hgetall(`document:${id}`));
     const results = await pipeline.exec();
 
@@ -192,7 +223,7 @@ class DocumentService {
   }
 
   async getDocument(docId) {
-    const docMeta = await store.hgetall(`document:${docId}`);
+    const docMeta = await this.store.hgetall(`document:${docId}`);
     if (!docMeta || !docMeta.id) return null;
 
     return this._normalizeDocMeta(docMeta, { includeContent: true });

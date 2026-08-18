@@ -121,11 +121,11 @@ defineExpose({ scrollToBottom, shouldAutoScroll });
       </div>
       <!-- User message skeleton (right aligned) -->
       <div class="flex items-start gap-2 justify-end">
-        <div class="space-y-2.5 bg-blue-100 dark:bg-blue-900/20 rounded-2xl rounded-tr-sm p-4 w-1/3">
-          <div class="h-3 skeleton-shimmer bg-blue-200 dark:bg-blue-800/40 rounded w-full"></div>
-          <div class="h-3 skeleton-shimmer bg-blue-200 dark:bg-blue-800/40 rounded w-2/3" style="animation-delay: 0.15s"></div>
+        <div class="space-y-2.5 bg-wut-100 dark:bg-wut-900/20 rounded-2xl rounded-tr-sm p-4 w-1/3">
+          <div class="h-3 skeleton-shimmer bg-wut-200 dark:bg-wut-800/40 rounded w-full"></div>
+          <div class="h-3 skeleton-shimmer bg-wut-200 dark:bg-wut-800/40 rounded w-2/3" style="animation-delay: 0.15s"></div>
         </div>
-        <div class="w-8 h-8 rounded-full skeleton-shimmer bg-blue-100 dark:bg-blue-900/30 shrink-0"></div>
+        <div class="w-8 h-8 rounded-full skeleton-shimmer bg-wut-100 dark:bg-wut-900/30 shrink-0"></div>
       </div>
       <!-- Another AI skeleton -->
       <div class="flex items-start gap-2">
@@ -141,9 +141,9 @@ defineExpose({ scrollToBottom, shouldAutoScroll });
     <div v-if="showTypingIndicator" class="flex justify-start px-4 pb-4">
       <div class="flex items-center ml-10 bg-white dark:bg-gray-800 px-4 py-3 rounded-2xl rounded-tl-none border border-slate-100 dark:border-gray-700 shadow-sm">
         <div class="flex items-center gap-1 mr-2">
-          <span class="w-1.5 h-1.5 rounded-full bg-blue-500 animate-bounce" style="animation-delay: 0s"></span>
-          <span class="w-1.5 h-1.5 rounded-full bg-blue-500 animate-bounce" style="animation-delay: 0.15s"></span>
-          <span class="w-1.5 h-1.5 rounded-full bg-blue-500 animate-bounce" style="animation-delay: 0.3s"></span>
+          <span class="w-1.5 h-1.5 rounded-full bg-wut-500 animate-bounce" style="animation-delay: 0s"></span>
+          <span class="w-1.5 h-1.5 rounded-full bg-wut-500 animate-bounce" style="animation-delay: 0.15s"></span>
+          <span class="w-1.5 h-1.5 rounded-full bg-wut-500 animate-bounce" style="animation-delay: 0.3s"></span>
         </div>
         <span class="text-xs text-slate-500 dark:text-gray-400">思考中...</span>
       </div>

@@ -52,7 +52,7 @@ onMounted(async () => {
     <header class="sticky top-0 z-10 bg-white/90 dark:bg-gray-900/90 backdrop-blur-sm border-b border-slate-200 dark:border-gray-800">
       <div class="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between">
         <div class="flex items-center gap-2 min-w-0">
-          <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-blue-500 to-indigo-400 flex items-center justify-center text-white shrink-0">
+          <div class="w-8 h-8 rounded-lg bg-wut-600 flex items-center justify-center text-white shrink-0">
             <Bot :size="16" />
           </div>
           <div class="min-w-0">
@@ -83,7 +83,7 @@ onMounted(async () => {
         <p class="text-sm font-medium">{{ error }}</p>
         <button
           @click="goHome"
-          class="mt-4 px-4 py-2 rounded-lg text-xs font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+          class="mt-4 px-4 py-2 rounded-lg text-xs font-medium bg-wut-600 text-white hover:bg-wut-700 transition-colors"
         >
           返回提问
         </button>
@@ -103,7 +103,7 @@ onMounted(async () => {
             <div class="flex items-start gap-2 max-w-[85%]" :class="msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'">
               <div
                 class="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 shadow-sm"
-                :class="msg.role === 'user' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'bg-gradient-to-tr from-blue-500 to-indigo-400 text-white'"
+                :class="msg.role === 'user' ? 'bg-wut-100 dark:bg-wut-900/30 text-wut-600 dark:text-wut-400' : 'bg-wut-600 text-white'"
               >
                 <User v-if="msg.role === 'user'" :size="14" />
                 <Bot v-else :size="15" />
@@ -111,7 +111,7 @@ onMounted(async () => {
               <div
                 class="px-4 py-3 shadow-sm text-sm leading-relaxed rounded-2xl"
                 :class="msg.role === 'user'
-                  ? 'bg-blue-600 text-white rounded-tr-sm'
+                  ? 'bg-wut-600 text-white rounded-tr-sm'
                   : 'bg-white dark:bg-gray-800 text-slate-700 dark:text-gray-200 border border-slate-100 dark:border-gray-700 rounded-tl-sm'"
               >
                 <MarkdownRenderer v-if="msg.role !== 'user'" :content="msg.text" :sources="[]" />

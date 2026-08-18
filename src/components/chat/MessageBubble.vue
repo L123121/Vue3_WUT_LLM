@@ -205,7 +205,7 @@ const onAvatarError = (e) => {
 
 const bubbleClasses = computed(() => {
   if (isUser.value) {
-    return 'bg-blue-600 text-white rounded-2xl rounded-tr-sm';
+    return 'bg-wut-600 text-white rounded-2xl rounded-tr-sm';
   }
   if (isError.value) {
     return 'bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 border border-red-100 dark:border-red-800/50 rounded-2xl rounded-tl-sm';
@@ -215,13 +215,13 @@ const bubbleClasses = computed(() => {
 
 const avatarClasses = computed(() => {
   if (isUser.value) {
-    return 'bg-blue-100 dark:bg-blue-900/30';
+    return 'bg-wut-100 dark:bg-wut-900/30';
   }
-  return 'bg-gradient-to-tr from-blue-500 to-indigo-400 shadow-blue-500/30';
+  return 'bg-wut-600 shadow-wut-500/30';
 });
 
 const timeClasses = computed(() => {
-  return isUser.value ? 'text-blue-100' : 'text-slate-400 dark:text-gray-500';
+  return isUser.value ? 'text-wut-100' : 'text-slate-400 dark:text-gray-500';
 });
 </script>
 
@@ -231,7 +231,7 @@ const timeClasses = computed(() => {
       <!-- Avatar -->
       <div :class="['w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 shadow-sm overflow-hidden', avatarClasses]">
         <img v-if="isUser && userAvatar" :src="userAvatar" alt="用户头像" class="w-full h-full object-cover bg-white" @error="onAvatarError" />
-        <User v-if="isUser && !userAvatar" :size="14" class="text-blue-600 dark:text-blue-400" />
+        <User v-if="isUser && !userAvatar" :size="14" class="text-wut-600 dark:text-wut-400" />
         <Bot v-else :size="15" class="text-white" />
       </div>
 
@@ -253,7 +253,7 @@ const timeClasses = computed(() => {
           <div
             v-for="file in message.files" :key="file.url"
             class="flex items-center gap-2 p-2 rounded-lg"
-            :class="isUser ? 'bg-blue-500/20' : 'bg-slate-100 dark:bg-gray-700/50'"
+            :class="isUser ? 'bg-wut-500/20' : 'bg-slate-100 dark:bg-gray-700/50'"
           >
             <img
               v-if="file.isImage" :src="file.url"
@@ -264,7 +264,7 @@ const timeClasses = computed(() => {
             <a
               v-else :href="file.url" target="_blank"
               class="flex items-center gap-2 text-xs hover:underline"
-              :class="isUser ? 'text-white/80 hover:text-white' : 'text-blue-600 dark:text-blue-400'"
+              :class="isUser ? 'text-white/80 hover:text-white' : 'text-wut-600 dark:text-wut-400'"
             >
               <span class="text-slate-400 shrink-0"><FileText :size="14" /></span>
               <span class="truncate max-w-[150px]">{{ file.name }}</span>
@@ -280,41 +280,41 @@ const timeClasses = computed(() => {
         <ProcessCard v-if="isModel && !isError && message.processCard" :card="message.processCard" />
 
         <!-- V2.0 自动路由徽标：后端意图识别结果（替代原手动 RAG 开关） -->
-        <div v-if="showIntentBadge" class="mt-2 inline-flex items-center gap-1 rounded-full bg-blue-50/80 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800/40 px-2 py-0.5">
-          <span class="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
-          <span class="text-[10px] font-medium text-blue-600 dark:text-blue-300">{{ intentLabel }}</span>
+        <div v-if="showIntentBadge" class="mt-2 inline-flex items-center gap-1 rounded-full bg-wut-50/80 dark:bg-wut-900/20 border border-wut-100 dark:border-wut-800/40 px-2 py-0.5">
+          <span class="w-1.5 h-1.5 rounded-full bg-wut-500"></span>
+          <span class="text-[10px] font-medium text-wut-600 dark:text-wut-300">{{ intentLabel }}</span>
         </div>
 
         <!-- L2 工具调度卡片：展示 tool_call / tool_result（Agent 路径透明化） -->
-        <div v-if="isModel && !isError && showToolPanel" class="mt-2 rounded-xl border border-indigo-100 dark:border-indigo-900/50 bg-indigo-50/50 dark:bg-indigo-950/20 overflow-hidden">
+        <div v-if="isModel && !isError && showToolPanel" class="mt-2 rounded-xl border border-wut-100 dark:border-wut-900/50 bg-wut-50/50 dark:bg-wut-950/20 overflow-hidden">
           <button
             type="button"
-            class="w-full flex items-center gap-2 px-3 py-2 text-left text-xs font-medium text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100/50 dark:hover:bg-indigo-900/20 transition-colors"
+            class="w-full flex items-center gap-2 px-3 py-2 text-left text-xs font-medium text-wut-700 dark:text-wut-300 hover:bg-wut-100/50 dark:hover:bg-wut-900/20 transition-colors"
             @click="toolPanelOpen = !toolPanelOpen"
           >
-            <span class="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse"></span>
+            <span class="w-1.5 h-1.5 rounded-full bg-wut-500 animate-pulse"></span>
             <span>工具调用 {{ toolCalls.length }} 次</span>
-            <span class="ml-auto text-indigo-400 dark:text-indigo-500 transition-transform" :class="toolPanelOpen ? 'rotate-180' : ''">▾</span>
+            <span class="ml-auto text-wut-400 dark:text-wut-500 transition-transform" :class="toolPanelOpen ? 'rotate-180' : ''">▾</span>
           </button>
           <div v-if="toolPanelOpen" class="px-3 pb-3 space-y-2">
             <!-- Agent L4 trace 元信息：轮次 / 收尾原因 / 总耗时 -->
             <div v-if="agentTrace" class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-slate-500 dark:text-gray-400">
               <span class="inline-flex items-center gap-1">
-                <span class="font-medium text-indigo-500 dark:text-indigo-400">轮次</span>
+                <span class="font-medium text-wut-500 dark:text-wut-400">轮次</span>
                 <span class="font-mono">{{ agentTrace.rounds ?? 0 }}</span>
               </span>
               <span class="inline-flex items-center gap-1">
-                <span class="font-medium text-indigo-500 dark:text-indigo-400">收尾</span>
+                <span class="font-medium text-wut-500 dark:text-wut-400">收尾</span>
                 <span>{{ finishReasonLabel }}</span>
               </span>
               <span class="inline-flex items-center gap-1">
-                <span class="font-medium text-indigo-500 dark:text-indigo-400">耗时</span>
+                <span class="font-medium text-wut-500 dark:text-wut-400">耗时</span>
                 <span class="font-mono">{{ formatAgentTotalMs(agentTrace.totalMs) }}</span>
               </span>
             </div>
-            <div v-for="(tc, i) in toolCalls" :key="i" class="rounded-lg bg-white/70 dark:bg-gray-900/40 border border-indigo-100/70 dark:border-indigo-900/40 px-2.5 py-2">
+            <div v-for="(tc, i) in toolCalls" :key="i" class="rounded-lg bg-white/70 dark:bg-gray-900/40 border border-wut-100/70 dark:border-wut-900/40 px-2.5 py-2">
               <div class="flex items-center gap-2 text-[11px]">
-                <span class="font-mono font-semibold text-indigo-700 dark:text-indigo-300">{{ tc.name }}</span>
+                <span class="font-mono font-semibold text-wut-700 dark:text-wut-300">{{ tc.name }}</span>
                 <span class="ml-auto text-slate-400 dark:text-gray-500">
                   {{ tc.arguments && Object.keys(tc.arguments).length ? JSON.stringify(tc.arguments).slice(0, 60) : '无参数' }}
                 </span>
@@ -360,7 +360,7 @@ const timeClasses = computed(() => {
                 <!-- Header -->
                 <div class="flex items-center justify-between px-5 py-3 border-b border-slate-100 dark:border-gray-800 shrink-0">
                   <div class="flex items-center gap-2 min-w-0">
-                    <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 text-xs font-bold shrink-0">{{ citationPopup.index }}</span>
+                    <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-wut-100 dark:bg-wut-900/40 text-wut-700 dark:text-wut-300 text-xs font-bold shrink-0">{{ citationPopup.index }}</span>
                     <div class="min-w-0">
                       <span class="text-sm font-semibold text-slate-800 dark:text-white truncate block">{{ citationPopup.source.title }}</span>
                       <span v-if="citationPopup.source.category" class="text-[10px] text-slate-500 dark:text-gray-400">{{ citationPopup.source.category }}</span>
@@ -378,7 +378,7 @@ const timeClasses = computed(() => {
                 <div class="px-5 py-3 border-t border-slate-100 dark:border-gray-800 shrink-0">
                   <button
                     @click="openSourceInKnowledgeBase"
-                    class="w-full h-9 rounded-lg text-xs font-medium inline-flex items-center justify-center gap-1.5 bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+                    class="w-full h-9 rounded-lg text-xs font-medium inline-flex items-center justify-center gap-1.5 bg-wut-600 text-white hover:bg-wut-700 transition-colors"
                   >
                     <BookOpen :size="13" />
                     在知识库查看原文
@@ -391,9 +391,9 @@ const timeClasses = computed(() => {
 
         <!-- 流式状态指示器 -->
         <div v-if="isStreaming && isModel && !messageText" class="flex items-center gap-1.5 mt-1">
-          <span class="w-1.5 h-1.5 rounded-full bg-blue-500 animate-bounce" style="animation-delay: 0s"></span>
-          <span class="w-1.5 h-1.5 rounded-full bg-blue-500 animate-bounce" style="animation-delay: 0.15s"></span>
-          <span class="w-1.5 h-1.5 rounded-full bg-blue-500 animate-bounce" style="animation-delay: 0.3s"></span>
+          <span class="w-1.5 h-1.5 rounded-full bg-wut-500 animate-bounce" style="animation-delay: 0s"></span>
+          <span class="w-1.5 h-1.5 rounded-full bg-wut-500 animate-bounce" style="animation-delay: 0.15s"></span>
+          <span class="w-1.5 h-1.5 rounded-full bg-wut-500 animate-bounce" style="animation-delay: 0.3s"></span>
           <span class="text-xs text-slate-500 dark:text-gray-400 ml-0.5">思考中...</span>
         </div>
 
@@ -426,7 +426,7 @@ const timeClasses = computed(() => {
           <span v-else-if="isRagAnswer && feedbackState === 'error'" class="text-xs text-red-400 dark:text-red-300">提交失败</span>
           <button
             v-if="isModel && !isError && messageText"
-            class="flex items-center gap-1 hover:text-blue-500 transition-all duration-200 cursor-pointer px-1.5 py-0.5 rounded hover:bg-blue-50 dark:hover:bg-gray-700 text-sm opacity-60 hover:opacity-100"
+            class="flex items-center gap-1 hover:text-wut-500 transition-all duration-200 cursor-pointer px-1.5 py-0.5 rounded hover:bg-wut-50 dark:hover:bg-gray-700 text-sm opacity-60 hover:opacity-100"
             @click="copyMessage(messageText)"
             :title="languageStore.t('chat.copyReply')"
           >

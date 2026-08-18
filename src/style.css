@@ -6,6 +6,22 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* 武理校色设计令牌：校徽深蓝 + 金色点缀（替换 Tailwind 默认蓝） */
+@theme {
+  --color-wut-50: #eef4fb;
+  --color-wut-100: #d8e6f5;
+  --color-wut-200: #b3cdea;
+  --color-wut-300: #86aedb;
+  --color-wut-400: #4d8ac7;
+  --color-wut-500: #1f6ab0;
+  --color-wut-600: #0b5498;
+  --color-wut-700: #004098;
+  --color-wut-800: #003478;
+  --color-wut-900: #00285c;
+  --color-wut-950: #001a3d;
+  --color-wut-gold: #c9a063;
+}
+
 @layer base {
   body {
     font-family: theme('fontFamily.sans');

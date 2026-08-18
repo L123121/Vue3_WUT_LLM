@@ -75,7 +75,7 @@ const handleChangePassword = async () => {
           <img :src="draftAvatar" alt="头像" class="w-full h-full object-cover bg-white" @error="draftAvatar = ''" />
         </template>
         <template v-else>
-          <div class="w-full h-full bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center">
+          <div class="w-full h-full bg-wut-600 flex items-center justify-center">
             {{ authStore.user?.name?.charAt(0)?.toUpperCase() || 'U' }}
           </div>
         </template>
@@ -110,11 +110,11 @@ const handleChangePassword = async () => {
       </button>
 
       <div v-else class="space-y-2 p-3 rounded-lg bg-slate-50 dark:bg-gray-800/60 border border-slate-200 dark:border-gray-700">
-        <input v-model="currentPassword" type="password" class="block w-full h-8 rounded-md border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2.5 text-xs text-slate-900 dark:text-gray-100 placeholder-slate-400 outline-none focus:border-blue-500" placeholder="当前密码" />
-        <input v-model="newPassword" type="password" class="block w-full h-8 rounded-md border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2.5 text-xs text-slate-900 dark:text-gray-100 placeholder-slate-400 outline-none focus:border-blue-500" placeholder="新密码（至少 6 位）" />
-        <input v-model="confirmPassword" type="password" class="block w-full h-8 rounded-md border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2.5 text-xs text-slate-900 dark:text-gray-100 placeholder-slate-400 outline-none focus:border-blue-500" placeholder="确认新密码" />
+        <input v-model="currentPassword" type="password" class="block w-full h-8 rounded-md border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2.5 text-xs text-slate-900 dark:text-gray-100 placeholder-slate-400 outline-none focus:border-wut-500" placeholder="当前密码" />
+        <input v-model="newPassword" type="password" class="block w-full h-8 rounded-md border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2.5 text-xs text-slate-900 dark:text-gray-100 placeholder-slate-400 outline-none focus:border-wut-500" placeholder="新密码（至少 6 位）" />
+        <input v-model="confirmPassword" type="password" class="block w-full h-8 rounded-md border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2.5 text-xs text-slate-900 dark:text-gray-100 placeholder-slate-400 outline-none focus:border-wut-500" placeholder="确认新密码" />
         <div class="flex gap-2">
-          <button @click="handleChangePassword" :disabled="changePasswordLoading" class="flex-1 h-7 rounded-md text-xs font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50 inline-flex items-center justify-center gap-1">
+          <button @click="handleChangePassword" :disabled="changePasswordLoading" class="flex-1 h-7 rounded-md text-xs font-medium bg-wut-600 text-white hover:bg-wut-700 transition-colors disabled:opacity-50 inline-flex items-center justify-center gap-1">
             <Loader2 v-if="changePasswordLoading" class="h-3 w-3 animate-spin" />
             <span>{{ changePasswordLoading ? '修改中...' : '确认' }}</span>
           </button>

@@ -29,7 +29,9 @@ const handleResponse = async (response) => {
       handleAuthError();
     }
 
-    throw new Error(errorMessage);
+    const error = new Error(errorMessage);
+    error.status = response.status;
+    throw error;
   }
   return response;
 };
@@ -45,6 +47,9 @@ export const handleAuthError = async () => {
     // 登出请求失败不影响本地清理
   }
   localStorage.removeItem('user');
+  localStorage.removeItem('chat_cache');
+  localStorage.removeItem('chat_current_conversation_id');
+  localStorage.removeItem('chat_cleared_conversations');
   if (router.currentRoute.value.path !== '/login') {
     router.push({ path: '/login', query: { redirect: router.currentRoute.value.fullPath } });
   }

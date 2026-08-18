@@ -8,7 +8,7 @@ const getStyles = (type) => ({
   success: 'bg-white dark:bg-gray-800 border-green-500 text-green-600 dark:text-green-400',
   error: 'bg-white dark:bg-gray-800 border-red-500 text-red-600 dark:text-red-400',
   warning: 'bg-white dark:bg-gray-800 border-yellow-500 text-yellow-600 dark:text-yellow-400',
-  info: 'bg-white dark:bg-gray-800 border-blue-500 text-blue-600 dark:text-blue-400',
+  info: 'bg-white dark:bg-gray-800 border-wut-500 text-wut-600 dark:text-wut-400',
 }[type]);
 </script>
 

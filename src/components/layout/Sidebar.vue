@@ -5,6 +5,7 @@ import wutLogoImg from '../../assets/wuhan-university-logo.png';
 import ConversationList from '../chat/ConversationList.vue';
 import { Database, MessageSquare, BarChart3, LogOut, MessagesSquare, ChevronUp } from 'lucide-vue-next';
 import { useAuthStore } from '../../stores/auth.store.js';
+import { useChatStore } from '../../stores/chat.store.js';
 import { prefetchRoute } from '../../utils/prefetch.js';
 import ProfilePanel from '../common/ProfilePanel.vue';
 import FavoritesPanel from './FavoritesPanel.vue';
@@ -13,6 +14,7 @@ const wutLogo = wutLogoImg;
 const router = useRouter();
 const route = useRoute();
 const authStore = useAuthStore();
+const chatStore = useChatStore();
 const currentPath = computed(() => route.path);
 
 const showDevEval = import.meta.env.VITE_SHOW_DEV_EVAL === 'true';
@@ -24,9 +26,10 @@ watch(() => authStore.user?.avatar, () => { avatarFailed.value = false; });
 const showProfilePanel = ref(false);
 const showAvatarPicker = ref(false);
 
-const handleLogout = () => {
-  authStore.logout();
-  router.push('/login');
+const handleLogout = async () => {
+  chatStore.resetConversationState();
+  await authStore.logout();
+  await router.replace('/login');
 };
 
 const handleClickOutside = (event) => {
@@ -53,7 +56,7 @@ watch(showProfilePanel, (val) => {
         </div>
         <div>
           <h1 class="text-xl font-extrabold tracking-tight text-slate-800 dark:text-white leading-tight">武理小精灵</h1>
-          <p class="text-[10px] font-bold text-blue-800 dark:text-blue-400 tracking-widest uppercase mt-0.5 opacity-90">WUT Assistant</p>
+          <p class="text-[10px] font-bold text-wut-800 dark:text-wut-400 tracking-widest uppercase mt-0.5 opacity-90">WUT Assistant</p>
         </div>
       </div>
     </div>
@@ -110,15 +113,15 @@ watch(showProfilePanel, (val) => {
         :class="[
           'w-full h-10 rounded-xl inline-flex items-center justify-between px-3 text-xs font-bold transition-all border',
           currentPath === '/feedback'
-            ? 'bg-blue-600 text-white border-blue-500 shadow-lg shadow-blue-500/20'
-            : 'bg-white/70 dark:bg-gray-800/60 text-slate-600 dark:text-gray-300 border-slate-200 dark:border-gray-700 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 dark:hover:bg-blue-900/20'
+            ? 'bg-wut-600 text-white border-wut-500 shadow-lg shadow-wut-500/20'
+            : 'bg-white/70 dark:bg-gray-800/60 text-slate-600 dark:text-gray-300 border-slate-200 dark:border-gray-700 hover:border-wut-200 hover:bg-wut-50 hover:text-wut-700 dark:hover:bg-wut-900/20'
         ]"
       >
         <span class="inline-flex items-center gap-2">
           <MessagesSquare :size="15" />
           反馈收集
         </span>
-        <span class="rounded-full bg-white/20 px-2 py-0.5 text-[10px] uppercase tracking-wide" :class="currentPath === '/feedback' ? 'text-white' : 'text-blue-500 dark:text-blue-300'">RAG</span>
+        <span class="rounded-full bg-white/20 px-2 py-0.5 text-[10px] uppercase tracking-wide" :class="currentPath === '/feedback' ? 'text-white' : 'text-wut-500 dark:text-wut-300'">RAG</span>
       </button>
     </div>
 
@@ -131,14 +134,14 @@ watch(showProfilePanel, (val) => {
     <div class="shrink-0 px-3 py-3 border-t border-slate-200 dark:border-gray-800 relative">
       <div class="flex items-center gap-3">
         <button data-profile-trigger @click="showProfilePanel = !showProfilePanel" class="flex items-center gap-3 flex-1 min-w-0 text-left">
-          <div class="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-500 to-indigo-400 flex items-center justify-center text-white text-xs font-bold shrink-0 overflow-hidden">
+          <div class="w-8 h-8 rounded-full bg-wut-600 flex items-center justify-center text-white text-xs font-bold shrink-0 overflow-hidden">
             <img v-if="authStore.user?.avatar && !avatarFailed" :src="authStore.user.avatar" alt="头像" class="w-full h-full object-cover" @error="avatarFailed = true" />
             <span v-else>{{ (authStore.user?.name || '?')[0] }}</span>
           </div>
           <div class="flex-1 min-w-0">
             <div class="flex items-center gap-1.5">
               <span class="text-sm font-medium text-slate-700 dark:text-gray-200 truncate">{{ authStore.user?.name || '用户' }}</span>
-              <span v-if="authStore.isAdmin" class="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800/50">Admin</span>
+              <span v-if="authStore.isAdmin" class="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-wut-100 dark:bg-wut-900/40 text-wut-600 dark:text-wut-400 border border-wut-200 dark:border-wut-800/50">Admin</span>
             </div>
           </div>
           <ChevronUp :size="14" class="text-slate-400 dark:text-gray-500 shrink-0 transition-transform" :class="showProfilePanel ? 'rotate-0' : 'rotate-180'" />

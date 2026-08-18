@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import { useAuthStore } from '../stores/auth.store.js';
+import { clearChunkRecoveryMarker, recoverFromChunkLoadError } from '../utils/chunkRecovery.js';
 
 const routes = [
   {
@@ -56,7 +57,9 @@ const router = createRouter({
 router.beforeEach(async (to, from, next) => {
   const authStore = useAuthStore();
 
-  if ((to.meta.requiresAuth || to.path === '/login') && !authStore.isAuthenticated && !authStore.hasCheckedSession) {
+  if ((to.meta.requiresAuth || to.path === '/login') && !authStore.hasCheckedSession) {
+    await authStore.fetchCurrentUser();
+  } else if (to.path === '/login' && authStore.isAuthenticated) {
     await authStore.fetchCurrentUser();
   }
 
@@ -69,6 +72,14 @@ router.beforeEach(async (to, from, next) => {
   } else {
     next();
   }
+});
+
+router.onError((error, to) => {
+  recoverFromChunkLoadError(error, to);
+});
+
+router.afterEach((_, __, failure) => {
+  if (!failure) clearChunkRecoveryMarker();
 });
 
 export default router;

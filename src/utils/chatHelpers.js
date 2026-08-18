@@ -47,7 +47,7 @@ const normalizeConversation = (conv = {}, index = 0) => ({
 });
 
 const createLocalConversation = (title, messageCount = 0) => ({
-  id: `local_${Date.now()}`,
+  id: `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
   title: title || `新会话 ${messageCount + 1}`,
   messages: [createWelcomeMessage()],
   createdAt: new Date(),
