@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const config = require('./config');
+const { operationalMetrics } = require('./services/operational-metrics.service');
 // 环境变量校验已在 config/index.js 中统一处理，此处不再重复
 
 const app = express();
@@ -25,7 +26,6 @@ app.use((req, res) => {
 
 // 错误处理
 app.use((err, req, res, _next) => {
-  const { operationalMetrics } = require('./services/operational-metrics.service');
   operationalMetrics.recordError(err, { traceId: req.traceId, method: req.method, path: req.path, userId: req.userId || null });
   console.error('[Server] Unhandled error:', err);
   const statusCode = err.statusCode || err.status || 500;
@@ -89,7 +89,9 @@ async function shutdown(signal, exitCode = 0) {
   } catch (error) {
     console.warn('[Server] 向量数据落盘失败:', error.message);
   }
+  operationalMetrics.flush();
   server.close(() => {
+    operationalMetrics.close();
     console.log('[Server] HTTP server 已关闭');
     process.exit(exitCode);
   });

@@ -1,6 +1,20 @@
 'use strict';
 
+const { createDefaultOperationalMetricsPersistence } = require('./operational-metrics-persistence.service');
+
 const MAX_SAMPLES = 2000;
+const DEFAULT_TIME_ZONE = 'Asia/Shanghai';
+const TOTAL_DEFAULTS = {
+  requests: 0,
+  requestErrors: 0,
+  llmCalls: 0,
+  promptTokens: 0,
+  completionTokens: 0,
+  llmCostCny: 0,
+  ttsCalls: 0,
+  ttsCharacters: 0,
+  ttsCostCny: 0,
+};
 
 const numberEnv = (name, fallback) => {
   const value = Number.parseFloat(process.env[name]);
@@ -18,11 +32,26 @@ const percentile = (values, ratio) => {
   return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * ratio) - 1)];
 };
 
-const localDayKey = (timestamp) => {
-  const date = new Date(timestamp);
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${date.getFullYear()}-${month}-${day}`;
+const normalizeTimeZone = (value) => {
+  const timeZone = String(value || DEFAULT_TIME_ZONE).trim() || DEFAULT_TIME_ZONE;
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone }).format(0);
+    return timeZone;
+  } catch (error) {
+    console.warn(`[OpsMetrics] 无效时区 ${timeZone}，回退到 ${DEFAULT_TIME_ZONE}:`, error.message);
+    return DEFAULT_TIME_ZONE;
+  }
+};
+
+const localDayKey = (timestamp, timeZone) => {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date(timestamp));
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
 };
 
 const estimateLlmCost = (promptTokens, completionTokens) => (
@@ -32,26 +61,73 @@ const estimateLlmCost = (promptTokens, completionTokens) => (
 
 const createOperationalMetrics = (options = {}) => {
   const now = options.now || Date.now;
+  const timeZone = normalizeTimeZone(options.timeZone || process.env.OPS_TIMEZONE);
+  const persistence = options.persistence || null;
+  const configuredPersistDelay = options.persistDelayMs ?? numberEnv('OPS_METRICS_PERSIST_INTERVAL_MS', 5000);
+  const persistDelayMs = Number.isFinite(configuredPersistDelay) ? Math.max(0, configuredPersistDelay) : 5000;
   const requests = [];
   const llmUsage = [];
   const ttsUsage = [];
   const alertState = new Map();
-  const totals = {
-    requests: 0,
-    requestErrors: 0,
-    llmCalls: 0,
-    promptTokens: 0,
-    completionTokens: 0,
-    llmCostCny: 0,
-    ttsCalls: 0,
-    ttsCharacters: 0,
-    ttsCostCny: 0,
+  let restoredState = null;
+  if (persistence) {
+    try {
+      restoredState = persistence.load();
+    } catch (error) {
+      console.warn('[OpsMetrics] 持久化状态读取失败，将从零开始:', error.message);
+    }
+  }
+  const totals = Object.fromEntries(Object.entries(TOTAL_DEFAULTS).map(([key, fallback]) => {
+    const value = Number(restoredState?.totals?.[key]);
+    return [key, Number.isFinite(value) ? value : fallback];
+  }));
+  const currentDate = localDayKey(now(), timeZone);
+  let daily = restoredState?.daily?.date === currentDate
+    ? { date: currentDate, estimatedCostCny: Number(restoredState.daily.estimatedCostCny) || 0 }
+    : { date: currentDate, estimatedCostCny: 0 };
+  let persistTimer = null;
+  let persistDirty = false;
+  let closed = false;
+
+  const persistedSnapshot = () => ({ totals: { ...totals }, daily: { ...daily } });
+
+  const flush = () => {
+    if (persistTimer) {
+      clearTimeout(persistTimer);
+      persistTimer = null;
+    }
+    if (!persistence || !persistDirty || closed) return;
+    try {
+      persistence.save(persistedSnapshot());
+      persistDirty = false;
+    } catch (error) {
+      console.warn('[OpsMetrics] 持久化写入失败，将保留内存统计:', error.message);
+    }
   };
-  let daily = { date: localDayKey(now()), estimatedCostCny: 0 };
+
+  const schedulePersist = () => {
+    if (!persistence || closed) return;
+    persistDirty = true;
+    if (persistDelayMs === 0) {
+      flush();
+      return;
+    }
+    if (persistTimer) return;
+    persistTimer = setTimeout(flush, persistDelayMs);
+    persistTimer.unref?.();
+  };
 
   const ensureDaily = (timestamp = now()) => {
-    const date = localDayKey(timestamp);
-    if (daily.date !== date) daily = { date, estimatedCostCny: 0 };
+    const date = localDayKey(timestamp, timeZone);
+    if (daily.date !== date) {
+      daily = { date, estimatedCostCny: 0 };
+      return true;
+    }
+    return false;
+  };
+
+  const currentDaily = (timestamp = now()) => {
+    ensureDaily(timestamp);
     return daily;
   };
 
@@ -71,9 +147,9 @@ const createOperationalMetrics = (options = {}) => {
       const p95 = percentile(recent.map((item) => item.durationMs), 0.95);
       if (p95 >= numberEnv('OPS_ALERT_P95_MS', 3000)) emitAlert('latency', 'HTTP P95 延迟超过阈值', { p95, total: recent.length });
     }
-    const currentDaily = ensureDaily(timestamp);
-    if (currentDaily.estimatedCostCny >= numberEnv('OPS_ALERT_DAILY_COST_CNY', Number.POSITIVE_INFINITY)) {
-      emitAlert('daily-cost', '当日模型成本超过阈值', { dailyCost: currentDaily.estimatedCostCny });
+    const dailyState = currentDaily(timestamp);
+    if (dailyState.estimatedCostCny >= numberEnv('OPS_ALERT_DAILY_COST_CNY', Number.POSITIVE_INFINITY)) {
+      emitAlert('daily-cost', '当日模型成本超过阈值', { dailyCost: dailyState.estimatedCostCny });
     }
   };
 
@@ -84,6 +160,7 @@ const createOperationalMetrics = (options = {}) => {
       if (statusCode >= 500) totals.requestErrors += 1;
       pushBounded(requests, { timestamp, method, path, statusCode, durationMs, traceId: traceId || null });
       checkAlerts();
+      schedulePersist();
     },
     recordError(error, context = {}) {
       console.error('[OpsError]', { message: error?.message, stack: error?.stack, ...context });
@@ -99,9 +176,10 @@ const createOperationalMetrics = (options = {}) => {
       totals.promptTokens += promptTokens;
       totals.completionTokens += completionTokens;
       totals.llmCostCny += estimatedCostCny;
-      ensureDaily(timestamp).estimatedCostCny += estimatedCostCny;
+      currentDaily(timestamp).estimatedCostCny += estimatedCostCny;
       pushBounded(llmUsage, { timestamp, model: model || 'unknown', promptTokens, completionTokens, totalTokens, estimatedCostCny, latencyMs, traceId: traceId || null });
       checkAlerts();
+      schedulePersist();
     },
     recordTtsUsage({ model, characters, traceId, latencyMs = 0 }) {
       const timestamp = now();
@@ -110,24 +188,34 @@ const createOperationalMetrics = (options = {}) => {
       totals.ttsCalls += 1;
       totals.ttsCharacters += count;
       totals.ttsCostCny += estimatedCostCny;
-      ensureDaily(timestamp).estimatedCostCny += estimatedCostCny;
+      currentDaily(timestamp).estimatedCostCny += estimatedCostCny;
       pushBounded(ttsUsage, { timestamp, model: model || 'unknown', characters: count, estimatedCostCny, latencyMs, traceId: traceId || null });
       checkAlerts();
+      schedulePersist();
     },
     snapshot() {
       const durations = requests.map((item) => item.durationMs);
-      const currentDaily = ensureDaily(now());
+      if (ensureDaily(now())) schedulePersist();
       return {
         requests: { total: totals.requests, errors: totals.requestErrors, p50Ms: percentile(durations, 0.5), p95Ms: percentile(durations, 0.95) },
         llm: { total: totals.llmCalls, promptTokens: totals.promptTokens, completionTokens: totals.completionTokens, estimatedCostCny: totals.llmCostCny, recent: llmUsage.slice(-100) },
         tts: { total: totals.ttsCalls, characters: totals.ttsCharacters, estimatedCostCny: totals.ttsCostCny, recent: ttsUsage.slice(-100) },
-        daily: { ...currentDaily },
+        daily: { ...daily },
         estimatedCostCny: totals.llmCostCny + totals.ttsCostCny,
       };
+    },
+    flush,
+    close() {
+      if (closed) return;
+      flush();
+      closed = true;
+      persistence?.close?.();
     },
   };
 };
 
-const operationalMetrics = createOperationalMetrics();
+const operationalMetrics = createOperationalMetrics({
+  persistence: createDefaultOperationalMetricsPersistence(),
+});
 
 module.exports = { createOperationalMetrics, operationalMetrics };

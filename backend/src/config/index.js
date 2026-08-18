@@ -44,6 +44,7 @@ module.exports = {
     instruction: process.env.STEPFUN_TTS_INSTRUCTION || '自然、亲切、清晰，像校园里的学长学姐耐心回答问题',
     timeout: parseInt(process.env.STEPFUN_TTS_TIMEOUT, 10) || 60000,
     maxInputLength: 1000,
+    maxAudioBytes: parseInt(process.env.STEPFUN_TTS_MAX_AUDIO_BYTES, 10) || 16 * 1024 * 1024,
     cacheEnabled: process.env.STEPFUN_TTS_CACHE_ENABLED !== 'false',
     cacheTtlMs: parseInt(process.env.STEPFUN_TTS_CACHE_TTL_MS, 10) || 30 * 60 * 1000,
     cacheMaxEntries: parseInt(process.env.STEPFUN_TTS_CACHE_MAX_ENTRIES, 10) || 100,
