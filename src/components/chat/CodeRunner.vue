@@ -199,7 +199,7 @@ const getOutputClass = (type) => {
     log: 'text-gray-200',
     error: 'text-red-400',
     warn: 'text-yellow-400',
-    info: 'text-blue-400'
+    info: 'text-wut-400'
   };
   return classes[type] || 'text-gray-200';
 };

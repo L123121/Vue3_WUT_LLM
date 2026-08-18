@@ -25,12 +25,12 @@ const materials = props.card?.materials || [];
 </script>
 
 <template>
-  <div class="my-3 rounded-2xl border border-blue-100 dark:border-blue-900/40 bg-gradient-to-br from-blue-50/80 to-white dark:from-blue-950/30 dark:to-gray-900 shadow-sm overflow-hidden">
+  <div class="my-3 rounded-2xl border border-wut-100 dark:border-wut-900/40 bg-wut-50/80 dark:bg-wut-900/30 shadow-sm overflow-hidden">
     <!-- Header -->
-    <div class="flex items-center gap-2 px-4 py-2.5 bg-blue-600/90 dark:bg-blue-800/80 text-white">
+    <div class="flex items-center gap-2 px-4 py-2.5 bg-wut-600/90 dark:bg-wut-800/80 text-white">
       <ClipboardList :size="15" class="shrink-0" />
       <span class="text-xs font-bold tracking-wide">办理流程</span>
-      <span v-if="card.summary" class="flex-1 min-w-0 text-[11px] text-blue-100 truncate" :title="card.summary">
+      <span v-if="card.summary" class="flex-1 min-w-0 text-[11px] text-wut-100 truncate" :title="card.summary">
         {{ card.summary }}
       </span>
     </div>
@@ -55,11 +55,11 @@ const materials = props.card?.materials || [];
               :size="18"
               class="text-emerald-500 dark:text-emerald-400"
             />
-            <Circle v-else :size="18" class="text-blue-400 dark:text-blue-500/70 group-hover:text-blue-600 dark:group-hover:text-blue-400" />
+            <Circle v-else :size="18" class="text-wut-400 dark:text-wut-500/70 group-hover:text-wut-600 dark:group-hover:text-wut-400" />
           </button>
           <div class="min-w-0 flex-1">
             <div class="flex items-center gap-1.5">
-              <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 text-[10px] font-bold shrink-0">
+              <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-wut-100 dark:bg-wut-900/50 text-wut-700 dark:text-wut-300 text-[10px] font-bold shrink-0">
                 {{ index + 1 }}
               </span>
               <span class="text-sm font-semibold text-slate-800 dark:text-gray-100">{{ step.title }}</span>
@@ -72,12 +72,12 @@ const materials = props.card?.materials || [];
       <!-- Materials -->
       <div v-if="materials.length > 0" class="rounded-xl bg-white dark:bg-gray-800/80 border border-slate-100 dark:border-gray-700 p-3">
         <div class="flex items-center gap-1.5 mb-1.5">
-          <FileText :size="13" class="text-blue-500 dark:text-blue-400 shrink-0" />
+          <FileText :size="13" class="text-wut-500 dark:text-wut-400 shrink-0" />
           <span class="text-xs font-bold text-slate-600 dark:text-gray-300">所需材料</span>
         </div>
         <ul class="space-y-1">
           <li v-for="(m, i) in materials" :key="i" class="flex items-start gap-1.5 text-xs text-slate-500 dark:text-gray-400">
-            <span class="text-blue-400 shrink-0">·</span>
+            <span class="text-wut-400 shrink-0">·</span>
             <span>{{ m }}</span>
           </li>
         </ul>
@@ -86,11 +86,11 @@ const materials = props.card?.materials || [];
       <!-- Meta info -->
       <div class="flex flex-wrap gap-x-4 gap-y-1.5">
         <span v-if="card.location" class="inline-flex items-center gap-1 text-[11px] text-slate-500 dark:text-gray-400">
-          <MapPin :size="12" class="text-blue-500 dark:text-blue-400 shrink-0" />
+          <MapPin :size="12" class="text-wut-500 dark:text-wut-400 shrink-0" />
           <span class="font-medium">办理地点：</span>{{ card.location }}
         </span>
         <span v-if="card.duration" class="inline-flex items-center gap-1 text-[11px] text-slate-500 dark:text-gray-400">
-          <Clock :size="12" class="text-blue-500 dark:text-blue-400 shrink-0" />
+          <Clock :size="12" class="text-wut-500 dark:text-wut-400 shrink-0" />
           <span class="font-medium">办理时长：</span>{{ card.duration }}
         </span>
       </div>

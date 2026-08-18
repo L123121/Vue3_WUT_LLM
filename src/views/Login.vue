@@ -1,7 +1,7 @@
 <template>
   <div class="login-shell relative min-h-screen overflow-hidden bg-slate-950 text-slate-900 dark:text-white">
     <div class="campus-grid absolute inset-0 opacity-70"></div>
-    <div class="absolute -left-24 top-10 h-80 w-80 rounded-full bg-blue-500/30 blur-3xl"></div>
+    <div class="absolute -left-24 top-10 h-80 w-80 rounded-full bg-wut-500/30 blur-3xl"></div>
     <div class="absolute bottom-0 right-0 h-[30rem] w-[30rem] rounded-full bg-cyan-300/20 blur-3xl"></div>
     <div class="absolute left-1/2 top-1/2 h-96 w-96 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/10"></div>
 
@@ -17,7 +17,7 @@
 
     <main class="relative z-10 mx-auto grid min-h-screen w-full max-w-6xl items-center gap-8 px-4 py-10 lg:grid-cols-[1.05fr_0.95fr] lg:px-8">
       <section class="brand-card hidden lg:block">
-        <div class="relative overflow-hidden rounded-[2rem] border border-white/15 bg-white/[0.08] p-8 text-white shadow-2xl shadow-blue-950/30 backdrop-blur-2xl">
+        <div class="relative overflow-hidden rounded-[2rem] border border-white/15 bg-white/[0.08] p-8 text-white shadow-2xl shadow-wut-950/30 backdrop-blur-2xl">
           <div class="absolute -right-16 -top-16 h-44 w-44 rounded-full bg-cyan-300/20 blur-2xl"></div>
           <div class="absolute bottom-10 right-10 h-24 w-24 rounded-full border border-white/15"></div>
 
@@ -31,7 +31,7 @@
             <h1 class="text-6xl font-black leading-[0.96] tracking-tight">
               登录后，让校园信息主动找到你。
             </h1>
-            <p class="mt-6 max-w-lg text-base leading-8 text-blue-50/80">
+            <p class="mt-6 max-w-lg text-base leading-8 text-wut-50/80">
               注册账号即可使用 AI 助手、知识库和校园信息查询服务。
             </p>
           </div>
@@ -40,18 +40,18 @@
             <div v-for="item in featureCards" :key="item.title" class="rounded-3xl border border-white/10 bg-white/10 p-4 backdrop-blur">
               <component :is="item.icon" class="mb-4 h-5 w-5 text-cyan-200" />
               <p class="text-sm font-bold">{{ item.title }}</p>
-              <p class="mt-1 text-xs leading-5 text-blue-50/65">{{ item.desc }}</p>
+              <p class="mt-1 text-xs leading-5 text-wut-50/65">{{ item.desc }}</p>
             </div>
           </div>
         </div>
       </section>
 
       <section class="login-card mx-auto w-full max-w-md">
-        <div class="rounded-[2rem] border border-white/60 bg-white/88 shadow-2xl shadow-blue-950/25 backdrop-blur-2xl dark:border-white/10 dark:bg-slate-900/82">
+        <div class="rounded-[2rem] border border-white/60 bg-white/88 shadow-2xl shadow-wut-950/25 backdrop-blur-2xl dark:border-white/10 dark:bg-slate-900/82">
           <div class="px-6 pt-7 sm:px-8">
             <div class="flex items-start justify-between gap-4">
               <div>
-                <div class="inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700 dark:bg-blue-500/10 dark:text-blue-200">
+                <div class="inline-flex items-center gap-2 rounded-full bg-wut-50 px-3 py-1 text-xs font-bold text-wut-700 dark:bg-wut-500/10 dark:text-wut-200">
                   <ShieldCheck :size="14" />
                   安全登录
                 </div>
@@ -60,7 +60,7 @@
               </div>
 
               <div class="relative h-20 w-20 shrink-0">
-                <div class="absolute inset-0 rounded-3xl bg-gradient-to-br from-blue-500 to-cyan-300 opacity-25 blur-xl"></div>
+                <div class="absolute inset-0 rounded-3xl bg-wut-600/25 blur-xl"></div>
                 <div class="relative flex h-20 w-20 items-center justify-center overflow-hidden rounded-3xl border border-white/80 bg-white shadow-lg dark:border-white/10 dark:bg-slate-800">
                   <img :src="logoUrl" alt="武汉理工大学标识" class="h-full w-full object-cover scale-125" />
                 </div>
@@ -74,7 +74,7 @@
               <label class="block">
                 <span class="mb-2 ml-1 block text-xs font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">用户名</span>
                 <span class="relative block">
-                  <User class="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400 transition group-focus-within:text-blue-700" />
+                  <User class="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400 transition group-focus-within:text-wut-700" />
                   <input
                     id="account-username"
                     v-model.trim="accountUsername"
@@ -82,7 +82,7 @@
                     autocomplete="username"
                     :disabled="loading"
                     :aria-invalid="Boolean(accountUsernameError)"
-                    class="peer block w-full rounded-2xl border bg-white/80 py-4 pl-12 pr-4 text-slate-950 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-600 focus:bg-white focus:ring-4 focus:ring-blue-600/10 disabled:cursor-not-allowed disabled:opacity-70 dark:bg-slate-800/70 dark:text-white dark:focus:bg-slate-800"
+                    class="peer block w-full rounded-2xl border bg-white/80 py-4 pl-12 pr-4 text-slate-950 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-wut-600 focus:bg-white focus:ring-4 focus:ring-blue-600/10 disabled:cursor-not-allowed disabled:opacity-70 dark:bg-slate-800/70 dark:text-white dark:focus:bg-slate-800"
                     :class="accountUsernameError ? 'border-red-300 dark:border-red-500/70' : 'border-slate-200 dark:border-slate-700'"
                     placeholder="3-32 位字母、数字或下划线"
                     @input="clearError"
@@ -94,7 +94,7 @@
               <label class="block">
                 <span class="mb-2 ml-1 block text-xs font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">{{ accountMode === 'register' ? '设置密码' : '密码' }}</span>
                 <span class="relative block">
-                  <Lock class="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400 transition group-focus-within:text-blue-700" />
+                  <Lock class="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400 transition group-focus-within:text-wut-700" />
                   <input
                     id="account-password"
                     v-model="accountPassword"
@@ -102,7 +102,7 @@
                     autocomplete="current-password"
                     :disabled="loading"
                     :aria-invalid="Boolean(accountPasswordError)"
-                    class="block w-full rounded-2xl border bg-white/80 py-4 pl-12 pr-12 text-slate-950 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-600 focus:bg-white focus:ring-4 focus:ring-blue-600/10 disabled:cursor-not-allowed disabled:opacity-70 dark:bg-slate-800/70 dark:text-white dark:focus:bg-slate-800"
+                    class="block w-full rounded-2xl border bg-white/80 py-4 pl-12 pr-12 text-slate-950 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-wut-600 focus:bg-white focus:ring-4 focus:ring-blue-600/10 disabled:cursor-not-allowed disabled:opacity-70 dark:bg-slate-800/70 dark:text-white dark:focus:bg-slate-800"
                     :class="accountPasswordError ? 'border-red-300 dark:border-red-500/70' : 'border-slate-200 dark:border-slate-700'"
                     placeholder="至少 6 位密码"
                     @input="clearError"
@@ -110,7 +110,7 @@
                   <button
                     type="button"
                     :disabled="loading"
-                    class="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 transition hover:text-blue-700 disabled:cursor-not-allowed dark:hover:text-blue-300"
+                    class="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 transition hover:text-wut-700 disabled:cursor-not-allowed dark:hover:text-wut-300"
                     :aria-label="showPassword ? '隐藏密码' : '显示密码'"
                     @click="showPassword = !showPassword"
                   >
@@ -124,7 +124,7 @@
               <label :class="['block', accountMode !== 'register' ? 'invisible pointer-events-none' : '']">
                 <span class="mb-2 ml-1 block text-xs font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">确认密码</span>
                 <span class="relative block">
-                  <Lock class="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400 transition group-focus-within:text-blue-700" />
+                  <Lock class="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400 transition group-focus-within:text-wut-700" />
                   <input
                     id="account-confirm-password"
                     v-model="accountConfirmPassword"
@@ -133,7 +133,7 @@
                     :disabled="loading"
                     :tabindex="accountMode !== 'register' ? -1 : 0"
                     :aria-invalid="Boolean(accountConfirmPasswordError)"
-                    class="block w-full rounded-2xl border bg-white/80 py-4 pl-12 pr-12 text-slate-950 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-600 focus:bg-white focus:ring-4 focus:ring-blue-600/10 disabled:cursor-not-allowed disabled:opacity-70 dark:bg-slate-800/70 dark:text-white dark:focus:bg-slate-800"
+                    class="block w-full rounded-2xl border bg-white/80 py-4 pl-12 pr-12 text-slate-950 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-wut-600 focus:bg-white focus:ring-4 focus:ring-blue-600/10 disabled:cursor-not-allowed disabled:opacity-70 dark:bg-slate-800/70 dark:text-white dark:focus:bg-slate-800"
                     :class="accountConfirmPasswordError ? 'border-red-300 dark:border-red-500/70' : 'border-slate-200 dark:border-slate-700'"
                     placeholder="再次输入密码"
                     @input="clearError"
@@ -146,7 +146,7 @@
                 <button
                   type="button"
                   :disabled="loading"
-                  class="text-sm text-blue-600 transition hover:text-blue-800 disabled:opacity-50 dark:text-blue-400 dark:hover:text-blue-300"
+                  class="text-sm text-wut-600 transition hover:text-wut-800 disabled:opacity-50 dark:text-wut-400 dark:hover:text-wut-300"
                   @click="toggleAccountMode"
                 >
                   {{ accountMode === 'register' ? '已有账号？立即登录' : '没有账号？立即注册' }}
@@ -154,7 +154,7 @@
               </div>
             </div>
 
-            <div v-if="loading" class="flex items-start gap-3 rounded-2xl border border-blue-100 bg-blue-50/80 p-4 text-sm text-blue-800 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-100">
+            <div v-if="loading" class="flex items-start gap-3 rounded-2xl border border-wut-100 bg-wut-50/80 p-4 text-sm text-wut-800 dark:border-wut-500/20 dark:bg-wut-500/10 dark:text-wut-100">
               <Clock3 class="mt-0.5 h-4 w-4 shrink-0" />
               <p>{{ loadingHint }}</p>
             </div>
@@ -168,7 +168,7 @@
               id="login-submit-btn"
               type="submit"
               :disabled="loading"
-              class="group inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-blue-800 via-blue-700 to-cyan-600 px-5 py-4 text-sm font-black text-white shadow-xl shadow-blue-900/25 transition hover:-translate-y-0.5 hover:shadow-2xl hover:shadow-blue-900/30 focus:outline-none focus:ring-4 focus:ring-blue-600/20 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-70"
+              class="group inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-wut-700 hover:bg-wut-800 px-5 py-4 text-sm font-black text-white shadow-xl shadow-wut-900/25 transition hover:-translate-y-0.5 hover:shadow-2xl hover:shadow-wut-900/30 focus:outline-none focus:ring-4 focus:ring-wut-600/20 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-70"
             >
               <Loader2 v-if="loading" class="h-4 w-4 animate-spin" />
               <span>{{ loading ? modeConfig.loadingText : modeConfig.buttonText }}</span>
@@ -207,6 +207,7 @@ import {
 } from 'lucide-vue-next';
 import logoUrl from '../assets/wuhan-university-logo.png';
 import { useAuthStore } from '../stores/auth.store.js';
+import { useChatStore } from '../stores/chat.store.js';
 import { useThemeStore } from '../stores/theme.store.js';
 import { prefetchRoute, prefetchAll } from '../utils/prefetch.js';
 
@@ -227,6 +228,7 @@ const MODE_CONFIG = {
 const router = useRouter();
 const route = useRoute();
 const authStore = useAuthStore();
+const chatStore = useChatStore();
 const themeStore = useThemeStore();
 
 const accountMode = ref('login'); // 'login' | 'register'
@@ -323,6 +325,7 @@ async function handleSubmit() {
       await authStore.login(accountUsername.value, accountPassword.value);
     }
 
+    chatStore.resetConversationState();
     prefetchRoute(redirectTarget.value);
     prefetchAll();
     await router.replace(redirectTarget.value);

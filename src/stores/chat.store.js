@@ -24,7 +24,8 @@ export const useChatStore = defineStore('chat', () => {
   watch(
     () => conversationStore.currentConversationId,
     (value) => {
-      localStorage.setItem('chat_current_conversation_id', value);
+      if (value) localStorage.setItem('chat_current_conversation_id', value);
+      else localStorage.removeItem('chat_current_conversation_id');
       conversationStore.scheduleSaveCache();
     }
   );
@@ -61,6 +62,10 @@ export const useChatStore = defineStore('chat', () => {
     return conversationStore.switchConversation(id);
   };
   const renameConversation = (id, title) => conversationStore.renameConversation(id, title);
+  const resetConversationState = () => {
+    if (messageStore.isLoading) messageStore.abortCurrentRequest();
+    conversationStore.resetConversationState();
+  };
   const deleteConversation = (id) => {
     // 如果正在删除的会话有流式传输，先中止
     if (messageStore.isLoading && conversationStore.currentConversationId === id) {
@@ -101,6 +106,7 @@ export const useChatStore = defineStore('chat', () => {
     createConversation,
     switchConversation,
     renameConversation,
+    resetConversationState,
     deleteConversation,
     getLastMessagePreview,
 

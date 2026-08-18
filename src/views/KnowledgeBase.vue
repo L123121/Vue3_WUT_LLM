@@ -73,7 +73,7 @@ const {
     <div class="flex items-center justify-between mb-5">
       <div class="flex items-center gap-3">
         <MobileMenuButton />
-        <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center text-white shadow-lg shadow-violet-500/20">
+        <div class="w-10 h-10 rounded-xl bg-wut-600 flex items-center justify-center text-white shadow-lg shadow-wut-500/20">
           <Database :size="20" />
         </div>
         <div>
@@ -134,9 +134,9 @@ const {
 
     <!-- 统计卡片 -->
     <div v-if="stats" class="grid grid-cols-2 gap-3 mb-5">
-      <div class="rounded-xl border border-slate-200 dark:border-gray-700 bg-gradient-to-br from-blue-50 to-white dark:from-blue-900/20 dark:to-gray-800 p-3">
+      <div class="rounded-xl border border-slate-200 dark:border-gray-700 bg-wut-50/60 dark:bg-wut-900/20 p-3">
         <div class="flex items-center gap-2">
-          <div class="w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-900/40 flex items-center justify-center text-blue-600 dark:text-blue-400">
+          <div class="w-8 h-8 rounded-lg bg-wut-100 dark:bg-wut-900/40 flex items-center justify-center text-wut-600 dark:text-wut-400">
             <FileText :size="16" />
           </div>
           <div>
@@ -145,7 +145,7 @@ const {
           </div>
         </div>
       </div>
-      <div class="rounded-xl border border-slate-200 dark:border-gray-700 bg-gradient-to-br from-emerald-50 to-white dark:from-emerald-900/20 dark:to-gray-800 p-3">
+      <div class="rounded-xl border border-slate-200 dark:border-gray-700 bg-wut-50/60 dark:bg-wut-900/20 p-3">
         <div class="flex items-center gap-2">
           <div class="w-8 h-8 rounded-lg bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center text-emerald-600 dark:text-emerald-400">
             <Database :size="16" />
@@ -224,7 +224,7 @@ const {
                   <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 dark:bg-gray-700 text-slate-600 dark:text-gray-300">
                     <span v-html="highlightText(getGroupLabel(doc.category))"></span>
                   </span>
-                  <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300">
+                  <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-wut-100 dark:bg-wut-900/30 text-wut-700 dark:text-wut-300">
                     <span v-html="highlightText(getCategoryLabel(doc.category))"></span>
                   </span>
                   <span

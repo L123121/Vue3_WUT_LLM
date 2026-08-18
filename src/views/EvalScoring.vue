@@ -83,7 +83,7 @@ onUnmounted(() => {
         </div>
         <div class="flex flex-wrap gap-1.5">
           <label
-            class="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg cursor-pointer hover:bg-blue-700 transition">
+            class="flex items-center gap-2 px-4 py-2 bg-wut-600 text-white rounded-lg cursor-pointer hover:bg-wut-700 transition">
             <Upload :size="16" />
             加载评测结果
             <input type="file" accept=".json" @change="handleFileUpload" class="hidden" />
@@ -106,7 +106,7 @@ onUnmounted(() => {
     <div class="max-w-5xl mx-auto mb-4">
       <div class="flex items-center gap-1 bg-white dark:bg-gray-800 p-1 rounded-lg border border-slate-200 dark:border-gray-700 w-fit">
         <button @click="switchTab(false)"
-          :class="['px-4 py-1.5 rounded-md text-sm font-medium transition-all', !metricsTab ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300']">
+          :class="['px-4 py-1.5 rounded-md text-sm font-medium transition-all', !metricsTab ? 'bg-wut-600 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300']">
           评测内容
         </button>
         <button @click="switchTab(true)"
@@ -138,7 +138,7 @@ onUnmounted(() => {
     <div v-if="showStats && stats" class="max-w-5xl mx-auto mb-6 p-4 bg-white dark:bg-gray-800 rounded-xl shadow">
       <div class="grid grid-cols-2 sm:grid-cols-5 gap-2 sm:gap-4 text-center">
         <div>
-          <div class="text-2xl font-bold text-blue-600">{{ stats.total }}</div>
+          <div class="text-2xl font-bold text-wut-600">{{ stats.total }}</div>
           <div class="text-sm text-gray-500">总样本</div>
         </div>
         <div>

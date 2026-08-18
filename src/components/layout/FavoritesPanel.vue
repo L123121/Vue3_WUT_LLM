@@ -69,7 +69,7 @@ const removeFavorite = (fav, event) => {
           :is="roleIcon(fav.role)"
           :size="13"
           class="mt-0.5 shrink-0"
-          :class="fav.role === 'user' ? 'text-blue-500 dark:text-blue-400' : 'text-indigo-500 dark:text-indigo-400'"
+          :class="fav.role === 'user' ? 'text-wut-500 dark:text-wut-400' : 'text-wut-500 dark:text-wut-400'"
         />
         <div class="min-w-0 flex-1">
           <div class="flex items-center justify-between gap-2">

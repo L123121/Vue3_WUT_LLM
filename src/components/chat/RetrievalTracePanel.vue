@@ -78,7 +78,7 @@ const queryRewrite = computed(() => {
 <template>
   <div v-if="trace" class="mt-2 border-t border-slate-100 dark:border-gray-700 pt-2">
     <button
-      class="flex items-center gap-1.5 text-[11px] text-slate-400 dark:text-gray-500 hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer"
+      class="flex items-center gap-1.5 text-[11px] text-slate-400 dark:text-gray-500 hover:text-wut-600 dark:hover:text-wut-400 transition-colors cursor-pointer"
       @click="expanded = !expanded"
     >
       <component :is="expanded ? ChevronDown : ChevronRight" :size="12" />
@@ -94,7 +94,7 @@ const queryRewrite = computed(() => {
     <div v-if="expanded" class="mt-2 space-y-2 text-[11px] text-slate-500 dark:text-gray-400">
       <!-- 检索模式 -->
       <div class="flex items-center gap-1.5">
-        <GitBranch :size="11" class="text-blue-500 dark:text-blue-400 shrink-0" />
+        <GitBranch :size="11" class="text-wut-500 dark:text-wut-400 shrink-0" />
         <span class="font-medium">{{ modeLabel }}</span>
         <span v-if="retrieval?.topK" class="text-slate-400 dark:text-gray-500">topK={{ retrieval.topK }}</span>
       </div>
@@ -123,9 +123,9 @@ const queryRewrite = computed(() => {
             {{ stage.durationMs }}ms
           </span>
         </div>
-        <div v-if="totalMs" class="flex items-center justify-between px-2 py-1 rounded bg-blue-50 dark:bg-blue-900/20">
-          <span class="text-blue-600 dark:text-blue-300">总耗时</span>
-          <span class="font-mono font-medium text-blue-600 dark:text-blue-300">{{ totalMs }}ms</span>
+        <div v-if="totalMs" class="flex items-center justify-between px-2 py-1 rounded bg-wut-50 dark:bg-wut-900/20">
+          <span class="text-wut-600 dark:text-wut-300">总耗时</span>
+          <span class="font-mono font-medium text-wut-600 dark:text-wut-300">{{ totalMs }}ms</span>
         </div>
       </div>
 

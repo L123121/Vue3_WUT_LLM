@@ -64,6 +64,7 @@ function _rebuildMessagesMap(conversations) {
 let saveTimer = null;
 let backendSyncTimer = null;
 let loadingPromise = null; // loadConversations 并发保护：缓存 in-flight promise
+let loadGeneration = 0; // 账号切换时使旧的异步加载结果失效
 
 // ==================== 后端消息同步 ====================
 // 在每次 localStorage 保存时，连带将消息推送到后端 API，
@@ -183,79 +184,98 @@ export const useConversationStore = defineStore('conversation', () => {
     return auth.isAuthenticated;
   };
 
+  const restoreCachedState = (cached) => {
+    const cachedConversations = Array.isArray(cached?.conversations) ? cached.conversations : [];
+    if (cachedConversations.length === 0) return false;
+
+    conversations.value = cachedConversations;
+    const preferredId = cached.currentId || currentConversationId.value;
+    currentConversationId.value = cachedConversations.some((conv) => conv.id === preferredId)
+      ? preferredId
+      : cachedConversations[0].id;
+    localStorage.setItem(CURRENT_CONVERSATION_KEY, currentConversationId.value);
+    return true;
+  };
+
   const loadConversations = async () => {
     // 并发保护：如果已有正在加载的请求，复用同一个 promise
     if (loadingPromise) return loadingPromise;
 
-    loadingPromise = (async () => {
-    if (!isBackendAvailable()) {
-      if (conversations.value.length === 0) {
-        ensureLocalFallback(conversations, currentConversationId);
-      }
-      isLoaded.value = true;
-      // 本地会话也需要建立消息索引
-      _rebuildMessagesMap(conversations.value);
-      return;
-    }
-
-    try {
-      // 优先从 localStorage 缓存恢复本地会话（含消息）
+    const generation = loadGeneration;
+    const request = (async () => {
       const cached = loadCache();
+      const hasCachedConversations = restoreCachedState(cached);
+
+      if (!isBackendAvailable()) {
+        if (!hasCachedConversations && conversations.value.length === 0) {
+          ensureLocalFallback(conversations, currentConversationId);
+        }
+        isLoaded.value = true;
+        _rebuildMessagesMap(conversations.value);
+        return;
+      }
+
       if (cached) console.debug(`[Cache] 找到缓存: ${cached.conversations?.length || 0} 个会话, currentId=${cached.currentId?.substring(0, 20)}`);
       else console.warn('[Cache] 缓存为空或版本不匹配');
-      let hasLocalConversations = false;
-      if (cached?.conversations?.length > 0) {
-        conversations.value = cached.conversations;
-        currentConversationId.value = cached.currentId || cached.conversations[0].id;
-        hasLocalConversations = true;
-      }
 
-      // 尝试从后端加载服务端会话（补充合并）
-      const data = await fetchConversations();
-      if (data.length > 0) {
-        // 后端有数据：合并到当前会话列表（去重，本地会话优先保留消息）
+      try {
+        const data = await fetchConversations();
+        if (generation !== loadGeneration) return;
+
+        // null 表示请求失败：保留缓存；空数组表示服务端确实没有会话。
+        if (data === null) {
+          if (conversations.value.length === 0) {
+            ensureLocalFallback(conversations, currentConversationId);
+          }
+          isLoaded.value = true;
+          _rebuildMessagesMap(conversations.value);
+          return;
+        }
+
+        const cachedConversations = Array.isArray(cached?.conversations) ? cached.conversations : [];
+        const cachedById = new Map(cachedConversations.map((conv) => [conv.id, conv]));
         const serverIds = new Set(data.map(c => c.id));
-        const serverConvs = data.map(conv => ({ ...conv, messages: [] }));
-        // 保留本地有但后端没有的会话（本地创建的会话）
-        const localOnly = hasLocalConversations
-          ? conversations.value.filter(c => !serverIds.has(c.id))
-          : [];
+        const serverConvs = data.map((conv) => ({
+          ...conv,
+          messages: cachedById.get(conv.id)?.messages || [],
+        }));
+        // 只保留真正的 local_ 会话；失效的 conv_ 说明服务端已删除，不能重新合并回来。
+        const localOnly = cachedConversations.filter((conv) =>
+          isLocalSession(conv.id) && !serverIds.has(conv.id)
+        );
         conversations.value = [...serverConvs, ...localOnly];
-        if (!currentConversationId.value && conversations.value.length > 0) {
+
+        if (conversations.value.length === 0) {
+          const localConv = createLocalConversation('新会话');
+          conversations.value = [localConv];
+        }
+
+        if (!conversations.value.some((conv) => conv.id === currentConversationId.value)) {
           currentConversationId.value = conversations.value[0].id;
         }
-      } else if (!hasLocalConversations) {
-        // 后端和缓存都空 → 创建默认会话
-        const localConv = createLocalConversation('新会话');
-        conversations.value = [localConv];
-        currentConversationId.value = localConv.id;
-      }
-      isLoaded.value = true;
-      // 首次加载成功后清理旧版备份
-      cleanupLegacyKeys();
 
-      // 重建消息索引，加速后续按 ID 查找
-      _rebuildMessagesMap(conversations.value);
-
-      // 如果当前会话是后端会话且消息为空，自动从后端拉取
-      const currentId = currentConversationId.value;
-      if (currentId && !isLocalSession(currentId) && data?.length > 0) {
-        const currentConv = conversations.value.find((c) => c.id === currentId);
-        const hasRealMessages = (currentConv?.messages || []).some((m) => m.id !== 'welcome' && getMessageText(m));
-        if (!hasRealMessages) {
-          loadConversationMessages(currentId);
+        localStorage.setItem(CURRENT_CONVERSATION_KEY, currentConversationId.value);
+        isLoaded.value = true;
+        cleanupLegacyKeys();
+        _rebuildMessagesMap(conversations.value);
+        flushSave(conversations.value, currentConversationId.value);
+      } catch (error) {
+        if (generation !== loadGeneration) return;
+        reportError('loadConversations', error);
+        if (conversations.value.length === 0) {
+          ensureLocalFallback(conversations, currentConversationId);
         }
+        isLoaded.value = true;
+        _rebuildMessagesMap(conversations.value);
       }
-    } catch (error) {
-      reportError('loadConversations', error);
-      if (conversations.value.length === 0) {
-        ensureLocalFallback(conversations, currentConversationId);
-      }
-      isLoaded.value = true;
-    }
-  })();
-  loadingPromise.finally(() => { loadingPromise = null; });
-  return loadingPromise;
+    })();
+
+    loadingPromise = request;
+    request.then(
+      () => { if (loadingPromise === request) loadingPromise = null; },
+      () => { if (loadingPromise === request) loadingPromise = null; }
+    );
+    return request;
   };
 
   // 从统一缓存恢复消息（兼容旧版备份迁移）
@@ -295,8 +315,11 @@ export const useConversationStore = defineStore('conversation', () => {
     localStorage.setItem(CURRENT_CONVERSATION_KEY, id);
 
     const conv = conversations.value.find((c) => c.id === id);
-    if (conv && (!conv.messages || conv.messages.length === 0)) {
+    if (!isLocalSession(id) && isBackendAvailable()) {
       await loadConversationMessages(id);
+    } else if (conv && (!conv.messages || conv.messages.length === 0)) {
+      conv.messages = [createWelcomeMessage()];
+      _registerConversationMessages(id, conv.messages);
     }
     flushSave(conversations.value, id);
   };
@@ -316,6 +339,7 @@ export const useConversationStore = defineStore('conversation', () => {
         // 消息整体替换，重建该会话的索引
         _unregisterConversationMessages(conversationId);
         _registerConversationMessages(conversationId, conversations.value[index].messages);
+        flushSave(conversations.value, currentConversationId.value);
       }
     } catch (error) {
       reportError('loadConversationMessages', error, { conversationId });
@@ -415,6 +439,19 @@ export const useConversationStore = defineStore('conversation', () => {
     }
   };
 
+  const resetConversationState = () => {
+    loadGeneration += 1;
+    loadingPromise = null;
+    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+    if (backendSyncTimer) { clearTimeout(backendSyncTimer); backendSyncTimer = null; }
+    conversations.value = [];
+    currentConversationId.value = '';
+    isLoaded.value = false;
+    messagesMap.clear();
+    localStorage.removeItem(CURRENT_CONVERSATION_KEY);
+    localStorage.removeItem('chat_cache');
+  };
+
   // 页面刷新/关闭前将未保存的数据刷入 localStorage
   // 模块级单次注册：store 可能在 HMR/测试中被多次实例化，
   // 用标志位避免重复注册 beforeunload 监听和定时器造成泄漏
@@ -458,6 +495,7 @@ export const useConversationStore = defineStore('conversation', () => {
     isLocalSession,
     isBackendAvailable,
     scheduleSaveCache,
+    resetConversationState,
     // 消息索引 API（O(1) 按 ID 查找，供外部修改消息后同步）
     getMessage: (id) => messagesMap.get(id) || null,
     registerMessage: _registerMessage,

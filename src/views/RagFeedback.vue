@@ -102,12 +102,12 @@ onMounted(() => fetchFeedback());
   <div class="h-full overflow-y-auto bg-slate-50 dark:bg-gray-950">
     <div class="mx-auto max-w-7xl px-4 py-6 md:px-8">
       <div class="relative overflow-hidden rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-        <div class="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-blue-600 via-cyan-400 to-emerald-400"></div>
+        <div class="absolute inset-x-0 top-0 h-1 bg-wut-600"></div>
         <div class="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
           <div class="flex items-start gap-3">
             <MobileMenuButton class="mt-1" />
             <div>
-              <p class="text-xs font-black uppercase tracking-[0.24em] text-blue-600 dark:text-cyan-300">RAG Feedback</p>
+              <p class="text-xs font-black uppercase tracking-[0.24em] text-wut-600 dark:text-cyan-300">RAG Feedback</p>
               <h1 class="mt-2 text-2xl font-black text-slate-900 dark:text-white">用户反馈收集台</h1>
               <p class="mt-2 max-w-2xl text-sm text-slate-500 dark:text-gray-400">聚合用户对 RAG 回答的点赞和点踩，优先定位需要补资料、改检索或修回答的问题。</p>
             </div>
@@ -116,14 +116,14 @@ onMounted(() => fetchFeedback());
             <button
               @click="fetchFeedback(pagination.page)"
               :disabled="isLoading"
-              class="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold text-slate-600 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 disabled:opacity-60 dark:border-gray-700 dark:text-gray-300 dark:hover:border-blue-800 dark:hover:bg-blue-900/20"
+              class="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold text-slate-600 transition hover:border-wut-200 hover:bg-wut-50 hover:text-wut-700 disabled:opacity-60 dark:border-gray-700 dark:text-gray-300 dark:hover:border-wut-800 dark:hover:bg-wut-900/20"
             >
               <RefreshCw :size="16" :class="{ 'animate-spin': isLoading }" />
               刷新
             </button>
             <button
               @click="exportCsv"
-              class="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white shadow-lg shadow-slate-900/10 transition hover:-translate-y-0.5 hover:bg-blue-700 dark:bg-white dark:text-slate-900 dark:hover:bg-cyan-100"
+              class="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white shadow-lg shadow-slate-900/10 transition hover:-translate-y-0.5 hover:bg-wut-700 dark:bg-white dark:text-slate-900 dark:hover:bg-cyan-100"
             >
               <Download :size="16" />
               导出 CSV
@@ -136,7 +136,7 @@ onMounted(() => fetchFeedback());
         <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
           <div class="flex items-center justify-between">
             <span class="text-sm font-bold text-slate-500 dark:text-gray-400">总反馈</span>
-            <MessageCircle :size="18" class="text-blue-500" />
+            <MessageCircle :size="18" class="text-wut-500" />
           </div>
           <div class="mt-3 text-3xl font-black text-slate-900 dark:text-white">{{ summary.total }}</div>
         </div>
@@ -171,16 +171,16 @@ onMounted(() => fetchFeedback());
               v-model="keyword"
               @keyup.enter="fetchFeedback(1)"
               placeholder="搜索问题、回答、来源、用户或 TraceId"
-              class="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-9 pr-3 text-sm outline-none transition focus:border-blue-300 focus:bg-white focus:ring-2 focus:ring-blue-100 dark:border-gray-700 dark:bg-gray-800 dark:text-white dark:focus:border-blue-700 dark:focus:ring-blue-900/30"
+              class="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-9 pr-3 text-sm outline-none transition focus:border-wut-300 focus:bg-white focus:ring-2 focus:ring-blue-100 dark:border-gray-700 dark:bg-gray-800 dark:text-white dark:focus:border-wut-700 dark:focus:ring-blue-900/30"
             />
           </div>
           <select
             v-model="ratingFilter"
-            class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-bold text-slate-600 outline-none transition focus:border-blue-300 focus:bg-white dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
+            class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-bold text-slate-600 outline-none transition focus:border-wut-300 focus:bg-white dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
           >
             <option v-for="option in ratingOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
           </select>
-          <button @click="fetchFeedback(1)" class="rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-blue-500/20 transition hover:bg-blue-700">查询</button>
+          <button @click="fetchFeedback(1)" class="rounded-xl bg-wut-600 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-wut-500/20 transition hover:bg-wut-700">查询</button>
           <button @click="resetFilters" class="rounded-xl px-4 py-2.5 text-sm font-bold text-slate-500 transition hover:bg-slate-100 dark:text-gray-400 dark:hover:bg-gray-800">重置</button>
         </div>
       </div>
@@ -224,7 +224,7 @@ onMounted(() => fetchFeedback());
               </div>
               <button
                 @click="expandedId = expandedId === item.id ? '' : item.id"
-                class="shrink-0 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-500 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-blue-900/20"
+                class="shrink-0 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-500 transition hover:border-wut-200 hover:bg-wut-50 hover:text-wut-700 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-wut-900/20"
               >
                 {{ expandedId === item.id ? '收起详情' : '查看详情' }}
               </button>

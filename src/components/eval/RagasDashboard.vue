@@ -129,7 +129,7 @@ function clearTerminal() {
     <div class="md:col-span-2 bg-white dark:bg-gray-800 p-5 rounded-xl shadow-sm border border-slate-100 dark:border-gray-700 flex flex-col justify-between text-gray-800 dark:text-white">
       <div>
         <h2 class="text-base font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
-          <span class="w-2.5 h-2.5 rounded-full bg-blue-500 animate-pulse"></span>
+          <span class="w-2.5 h-2.5 rounded-full bg-wut-500 animate-pulse"></span>
           RAGAS 核心能力诊断看板
         </h2>
         <div class="space-y-3.5">
@@ -148,7 +148,7 @@ function clearTerminal() {
               <span class="font-bold text-slate-800 dark:text-white">{{ getMetricAvg('answer_relevancy') }}%</span>
             </div>
             <div class="w-full bg-slate-100 dark:bg-gray-700 h-2.5 rounded-full overflow-hidden">
-              <div class="bg-blue-500 h-full rounded-full transition-all duration-500" :style="{ width: getMetricAvg('answer_relevancy') + '%' }"></div>
+              <div class="bg-wut-500 h-full rounded-full transition-all duration-500" :style="{ width: getMetricAvg('answer_relevancy') + '%' }"></div>
             </div>
           </div>
           <div>
@@ -200,14 +200,14 @@ function clearTerminal() {
           <button
             @click="startSseEval"
             :disabled="isRunningEval"
-            class="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-semibold disabled:bg-slate-800 disabled:text-slate-600 transition"
+            class="px-2.5 py-1 bg-wut-600 hover:bg-wut-500 text-white rounded text-xs font-semibold disabled:bg-slate-800 disabled:text-slate-600 transition"
           >
             {{ isRunningEval ? '评测中...' : logs.length > 0 && evalProgress === 100 ? '重新评测' : '启动自动化评测' }}
           </button>
         </div>
       </div>
       <div class="mb-2 h-1 bg-slate-800 rounded-full overflow-hidden">
-        <div class="h-full bg-blue-500 rounded-full transition-all duration-300 ease-out" :style="{ width: evalProgress + '%' }"></div>
+        <div class="h-full bg-wut-500 rounded-full transition-all duration-300 ease-out" :style="{ width: evalProgress + '%' }"></div>
       </div>
       <div class="flex-1 overflow-y-auto font-mono text-[11px] space-y-1 scrollbar-thin scrollbar-thumb-slate-800" ref="terminalRef">
         <div v-if="logs.length === 0" class="text-slate-500 text-center py-16">
@@ -217,7 +217,7 @@ function clearTerminal() {
           <span class="text-slate-600">[{{ log.time }}]</span>
           <span v-if="log.type === 'success'" class="text-emerald-400 ml-1">✔</span>
           <span v-else-if="log.type === 'error'" class="text-red-400 ml-1">✖</span>
-          <span v-else class="text-blue-400 ml-1">›</span>
+          <span v-else class="text-wut-400 ml-1">›</span>
           <span class="text-slate-200 ml-1" :class="{
             'text-emerald-300': log.type === 'success',
             'text-red-300': log.type === 'error'

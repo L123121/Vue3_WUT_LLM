@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   toast: {
     error: vi.fn(),
     success: vi.fn(),
+    warning: vi.fn(),
   },
   getDocuments: vi.fn(),
   addDocument: vi.fn(),
@@ -101,6 +102,26 @@ describe('useKnowledgeBase', () => {
 
     result.searchQuery.value = '不存在';
     expect(result.filteredDocuments.value).toEqual([]);
+    wrapper.unmount();
+  });
+
+  it('文档已保存但索引失败时给出明确警告', async () => {
+    mocks.addDocument.mockResolvedValueOnce({
+      success: true,
+      data: {
+        vectorStatus: 'failed',
+        vectorMessage: 'Qdrant not initialized',
+      },
+    });
+    const { result, wrapper } = mountComposable();
+    await flushPromises();
+    result.newDoc.value = { title: '保研政策', content: '政策内容', category: '' };
+    result.newDocSubCategory.value = '保研:保研政策';
+
+    await result.submitDocument();
+
+    expect(mocks.toast.warning).toHaveBeenCalledWith('文档已保存，但向量索引失败：Qdrant not initialized');
+    expect(mocks.toast.success).not.toHaveBeenCalled();
     wrapper.unmount();
   });
 });

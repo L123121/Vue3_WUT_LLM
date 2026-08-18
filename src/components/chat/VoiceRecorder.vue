@@ -314,10 +314,10 @@ defineExpose({ startVoiceInput, stopVoiceInput, isRecording: recognizing, state 
         state === 'error'
           ? 'bg-red-100 text-red-500 dark:bg-red-900/30 dark:text-red-400'
           : state === 'recognizing'
-            ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/30 animate-pulse'
+            ? 'bg-wut-500 text-white shadow-lg shadow-wut-500/30 animate-pulse'
             : state === 'listening'
               ? 'bg-green-500 text-white shadow-lg shadow-green-500/30'
-              : 'bg-slate-200 text-slate-400 dark:bg-gray-700 dark:text-gray-500 hover:bg-blue-100 hover:text-blue-600',
+              : 'bg-slate-200 text-slate-400 dark:bg-gray-700 dark:text-gray-500 hover:bg-wut-100 hover:text-wut-600',
         disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer',
       ]"
       :title="state === 'error' ? errorMessage : (recognizing ? '点击停止录音' : '点击开始语音输入')"

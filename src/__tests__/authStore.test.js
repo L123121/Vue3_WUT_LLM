@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { setActivePinia, createPinia } from 'pinia';
 import { useAuthStore } from '../stores/auth.store.js';
 
@@ -9,10 +9,35 @@ describe('authStore', () => {
     vi.clearAllMocks();
   });
 
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it('starts unauthenticated', () => {
     const store = useAuthStore();
     expect(store.isAuthenticated).toBe(false);
     expect(store.user).toBeNull();
+  });
+
+  it('clears authentication and conversation cache before logout request completes', async () => {
+    let resolveLogout;
+    vi.stubGlobal('fetch', vi.fn(() => new Promise((resolve) => {
+      resolveLogout = resolve;
+    })));
+    const store = useAuthStore();
+    store.setUser({ id: 'user-1', name: 'User' });
+    localStorage.setItem('chat_cache', '{"version":1}');
+    localStorage.setItem('chat_current_conversation_id', 'conv_private');
+
+    const logoutPromise = store.logout();
+
+    expect(store.isAuthenticated).toBe(false);
+    expect(localStorage.getItem('user')).toBeNull();
+    expect(localStorage.getItem('chat_cache')).toBeNull();
+    expect(localStorage.getItem('chat_current_conversation_id')).toBeNull();
+
+    resolveLogout({ ok: true });
+    await logoutPromise;
   });
 
   // 以下用例依赖后端 API,需 mock fetch 或启动后端后再运行

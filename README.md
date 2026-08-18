@@ -283,6 +283,8 @@ RAG 与 Agent 评测脚本位于 `scripts/rag-eval/`，主要数据集位于 `sc
 
 `REDIS_URL` 存在时，RedisStore 会替代默认 SQLiteStore。首次从旧版升级时，SQLiteStore 可迁移已有 `store.json`。
 
+`ragdata/` 只是部署时挂载的源文件目录，不会自动导入 SQLite，也不会自动写入或刷新 Qdrant。新增或更新知识库资料时，请通过管理端上传接口写入文档库；若文档列表存在但状态不是“可检索”，需修复向量服务后调用 `POST /api/rag/documents/reindex` 重建索引。
+
 ## 项目结构
 
 ```text

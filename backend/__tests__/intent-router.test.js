@@ -34,7 +34,7 @@ function getRouter() {
 
 /**
  * fastRoute 是纯关键词路由（零 LLM），是路由正确性的核心。
- * 用例锁定：正向匹配（问候/多步任务）+ 不该被硬路由的边缘意图（应返回 null 走兜底 rag）。
+ * 用例锁定：普通聊天、工具任务与明确知识库问题必须正确分流。
  */
 describe('IntentRouter.fastRoute', () => {
   const chatCases = [
@@ -77,20 +77,33 @@ describe('IntentRouter.fastRoute', () => {
     });
   }
 
-  // 不应被硬路由的意图：知识问答/校园生活/政策咨询 → null（走兜底 rag）
+  const ragCases = [
+    ['校园问答-食堂', '学校食堂几点关门'],
+    ['校园问答-图书馆', '图书馆怎么借书'],
+    ['校园政策-奖学金', '怎么申请奖学金'],
+    ['课程资料-数据结构', '数据结构期末复习重点'],
+    ['显式知识库请求', '请根据知识库里的文档回答'],
+    ['复杂问候词尾', '你好，请问食堂在哪'],
+  ];
+  for (const [desc, input] of ragCases) {
+    it(`正向匹配 rag：${desc} → rag`, () => {
+      const r = getRouter().fastRoute(input);
+      expect(r).not.toBeNull();
+      expect(r.intent).toBe(INTENT_TYPES.KNOWLEDGE_QUERY);
+      expect(r.route).toBe('rag');
+      expect(r.confidence).toBeGreaterThan(0);
+    });
+  }
+
+  // 不应触发知识库的普通问题 → null（走兜底 chat）
   const nullCases = [
-    ['知识问答-食堂', '学校食堂几点关门'],
-    ['知识问答-图书馆', '图书馆怎么借书'],
-    ['知识问答-奖学金', '怎么申请奖学金'],
-    ['知识问答-算法题', '什么是数据结构'],
-    ['校园生活-宿舍', '宿舍几点熄灯'],
-    ['考试咨询', '期末考试安排'],
-    ['知识咨询-绩点算法', '绩点怎么算'],
-    ['模糊闲聊', '今天天气怎么样'],
-    ['复杂-但带闲聊词尾', '你好，请问食堂在哪'],
+    ['天气闲聊', '今天天气怎么样'],
+    ['普通写作', '帮我写一封请假邮件'],
+    ['通用编程知识', '什么是闭包'],
+    ['普通翻译', '把这句话翻译成英文'],
   ];
   for (const [desc, input] of nullCases) {
-    it(`不硬路由：${desc} → null（走兜底 rag）`, () => {
+    it(`不硬路由：${desc} → null（走兜底 chat）`, () => {
       const r = getRouter().fastRoute(input);
       expect(r).toBeNull();
     });
@@ -105,16 +118,23 @@ describe('IntentRouter.route', () => {
     expect(r.intent).toBe(INTENT_TYPES.GENERAL_CHAT);
   });
 
-  it('未命中时兜底默认走 rag（校园问答主场景）', async () => {
+  it('明确校园问题走 rag', async () => {
     const router = getRouter();
     const r = await router.route('学校食堂几点关门');
     expect(r.route).toBe('rag');
     expect(r.intent).toBe(INTENT_TYPES.KNOWLEDGE_QUERY);
-    expect(r.reason).toContain('兜底');
+    expect(r.reason).toContain('知识库');
   });
 
-  it('兜底 rag 的 confidence 大于 0', async () => {
-    const r = await getRouter().route('软件工程面试题有哪些');
+  it.each([
+    ['帮我写一封请假邮件'],
+    ['什么是闭包'],
+    ['今天天气怎么样'],
+  ])('普通问题兜底走 chat：%s', async (message) => {
+    const r = await getRouter().route(message);
+    expect(r.route).toBe('chat');
+    expect(r.intent).toBe(INTENT_TYPES.GENERAL_CHAT);
+    expect(r.reason).toContain('兜底');
     expect(r.confidence).toBeGreaterThan(0);
   });
 });
@@ -134,22 +154,22 @@ describe('IntentRouter.classify (LLM 兜底)', () => {
     expect(r.confidence).toBe(0.9);
   });
 
-  it('LLM 返回无法解析的内容时走兜底 rag', async () => {
+  it('LLM 返回无法解析的内容时走兜底 chat', async () => {
     const fakeAi = {
       getCompletion: async () => ({ content: '抱歉我无法分类', isMock: false }),
     };
     const router = new IntentRouter(fakeAi);
-    const r = await router.classify('食堂几点关门');
-    expect(r.route).toBe('rag');
-    expect(r.intent).toBe(INTENT_TYPES.KNOWLEDGE_QUERY);
+    const r = await router.classify('帮我润色这段话');
+    expect(r.route).toBe('chat');
+    expect(r.intent).toBe(INTENT_TYPES.GENERAL_CHAT);
   });
 
-  it('LLM 超时（15s）时走兜底 rag', async () => {
+  it('LLM 超时（15s）时走兜底 chat', async () => {
     const fakeAi = {
       getCompletion: () => new Promise(() => {}), // 永不 resolve，触发 race 超时
     };
     const router = new IntentRouter(fakeAi);
     const r = await router.classify('什么都不会超时的问题');
-    expect(r.route).toBe('rag');
+    expect(r.route).toBe('chat');
   }, 20000); // 超时用例需要等 15s race 触发
 });
