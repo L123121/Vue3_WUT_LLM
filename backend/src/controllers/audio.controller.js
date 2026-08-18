@@ -1,9 +1,12 @@
 "use strict";
 
-const { audioService } = require("../services/audio.service");
+const { applicationContainer } = require("../bootstrap/container");
 const { operationalMetrics } = require("../services/operational-metrics.service");
 
-const createSpeechHandler = (service = audioService) => async (req, res, next) => {
+const createSpeechHandler = (
+  service = applicationContainer.audioService,
+  metrics = operationalMetrics,
+) => async (req, res, next) => {
   const controller = new AbortController();
   const abortRequest = () => controller.abort();
   req.once("aborted", abortRequest);
@@ -17,7 +20,7 @@ const createSpeechHandler = (service = audioService) => async (req, res, next) =
     const startedAt = Date.now();
     const result = await service.synthesize(req.body?.text, { signal: controller.signal });
     if (!result.cacheHit) {
-      operationalMetrics.recordTtsUsage({
+      metrics.recordTtsUsage({
         model: result.model,
         characters: result.characters ?? String(req.body?.text || '').length,
         traceId: req.traceId,

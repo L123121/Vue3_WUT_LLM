@@ -1,5 +1,3 @@
-import router from '../router/index.js';
-
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
 const API_URL = API_BASE.endsWith('/') ? API_BASE.slice(0, -1) : API_BASE;
 
@@ -14,6 +12,12 @@ const fetchOpts = {
   credentials: 'include',
 };
 
+let authErrorHandler = null;
+
+export const configureAuthErrorHandler = (handler) => {
+  authErrorHandler = typeof handler === 'function' ? handler : null;
+};
+
 const handleResponse = async (response) => {
   if (!response.ok) {
     let errorMessage = `HTTP ${response.status}`;
@@ -26,7 +30,7 @@ const handleResponse = async (response) => {
 
     // 401 未授权 - 清除本地用户信息并跳转登录
     if (response.status === 401) {
-      handleAuthError();
+      void handleAuthError();
     }
 
     const error = new Error(errorMessage);
@@ -50,9 +54,7 @@ export const handleAuthError = async () => {
   localStorage.removeItem('chat_cache');
   localStorage.removeItem('chat_current_conversation_id');
   localStorage.removeItem('chat_cleared_conversations');
-  if (router.currentRoute.value.path !== '/login') {
-    router.push({ path: '/login', query: { redirect: router.currentRoute.value.fullPath } });
-  }
+  await authErrorHandler?.();
 };
 
 /**
