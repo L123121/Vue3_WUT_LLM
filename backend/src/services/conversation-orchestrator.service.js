@@ -16,6 +16,7 @@ class ConversationOrchestrator {
     this.memoryService = dependencies.memoryService || new MemoryService();
     this.intentRouter = dependencies.intentRouter || new IntentRouter(this.aiService);
     this.agentService = dependencies.agentService || new AgentService(this.aiService);
+    this.agenticRagService = dependencies.agenticRagService || null;
     this.intentRoutingEnabled = dependencies.intentRoutingEnabled
       ?? config.rag?.intentRoutingEnabled !== false;
   }
@@ -96,6 +97,8 @@ class ConversationOrchestrator {
 
     if (prepared.route === "chat") {
       result = await this._chatReply(message, prepared.history);
+    } else if (prepared.route === "rag" && this.agenticRagService?.enabled) {
+      result = await this.agenticRagService.chat(message, prepared.history, context);
     } else if (prepared.route === "agent" && this.agentService.enabled) {
       try {
         result = await this.agentService.chat(message, prepared.history, context);
@@ -138,6 +141,17 @@ class ConversationOrchestrator {
           fullReply += chunk.content;
           yield { type: "content", content: chunk.content, done: false };
         }
+      }
+      this._saveMemory(context.userId, message, fullReply);
+      return;
+    }
+
+    if (prepared.route === "rag" && this.agenticRagService?.enabled) {
+      for await (const event of this.agenticRagService.chatStream(message, prepared.history, context)) {
+        if (event.type === "content" && !event.done) fullReply += event.content || "";
+        yield event.type === "trace"
+          ? { ...event, channel: event.channel || "agentic_rag" }
+          : event;
       }
       this._saveMemory(context.userId, message, fullReply);
       return;

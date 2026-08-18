@@ -5,6 +5,7 @@ const { RagService } = require('../services/rag.service');
 const { MemoryService } = require('../services/memory.service');
 const { IntentRouter } = require('../services/intent-router.service');
 const { AgentService } = require('../services/agent.service');
+const { AgenticRagService } = require('../services/agentic-rag.service');
 const { ConversationOrchestrator } = require('../services/conversation-orchestrator.service');
 const { audioService } = require('../services/audio.service');
 
@@ -14,12 +15,14 @@ function createApplicationContainer(overrides = {}) {
   const memoryService = overrides.memoryService || new MemoryService();
   const intentRouter = overrides.intentRouter || new IntentRouter(aiService);
   const agentService = overrides.agentService || new AgentService(aiService);
+  const agenticRagService = overrides.agenticRagService || new AgenticRagService({ aiService, ragService });
   const conversationOrchestrator = overrides.conversationOrchestrator || new ConversationOrchestrator({
     aiService,
     ragService,
     memoryService,
     intentRouter,
     agentService,
+    agenticRagService,
   });
 
   return {
@@ -28,11 +31,25 @@ function createApplicationContainer(overrides = {}) {
     memoryService,
     intentRouter,
     agentService,
+    agenticRagService,
     conversationOrchestrator,
     audioService: overrides.audioService || audioService,
   };
 }
 
-const applicationContainer = createApplicationContainer();
+let applicationContainerInstance = null;
 
-module.exports = { createApplicationContainer, applicationContainer };
+function getApplicationContainer() {
+  if (!applicationContainerInstance) {
+    applicationContainerInstance = createApplicationContainer();
+  }
+  return applicationContainerInstance;
+}
+
+module.exports = {
+  createApplicationContainer,
+  getApplicationContainer,
+  get applicationContainer() {
+    return getApplicationContainer();
+  },
+};

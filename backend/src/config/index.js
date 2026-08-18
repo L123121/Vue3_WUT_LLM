@@ -142,6 +142,15 @@ module.exports = {
     // 多轮工具调度上限（L2）：最多轮次，防止无限循环；配合无进展检测强制收尾
     maxToolRounds: parseInt(process.env.AGENT_MAX_TOOL_ROUNDS, 10) || 2,
   },
+  // 受控 Agentic RAG：默认关闭，灰度开启后仅替换知识库问答链路
+  agenticRag: {
+    enabled: process.env.AGENTIC_RAG_ENABLED === 'true',
+    // 最多 3 轮，避免检索循环失控
+    maxRounds: Math.min(Math.max(parseInt(process.env.AGENTIC_RAG_MAX_ROUNDS, 10) || 2, 1), 3),
+    maxDurationMs: parseInt(process.env.AGENTIC_RAG_MAX_DURATION_MS, 10) || 20000,
+    rewriteTimeoutMs: parseInt(process.env.AGENTIC_RAG_REWRITE_TIMEOUT_MS, 10) || 8000,
+    minSources: Math.max(parseInt(process.env.AGENTIC_RAG_MIN_SOURCES, 10) || 1, 1),
+  },
   // 自有账号系统配置
   auth: {
     inviteCode: process.env.AUTH_INVITE_CODE || '',

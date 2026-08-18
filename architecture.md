@@ -5,7 +5,7 @@ tags: [architecture, overview]
 
 # 武理小精灵 整体架构
 
-> 版本：v0.2 | 最后更新：2026-08-18
+> 版本：v0.3 | 最后更新：2026-08-18
 
 ## 项目定位
 
@@ -277,6 +277,7 @@ backend/
     │   ├── conversation-orchestrator.service.js  # Chat/RAG/Agent 统一编排
     │   ├── intent-router.service.js  # 能力路由
     │   ├── agent.service.js    # 有界工具调度
+    │   ├── agentic-rag.service.js  # 受控多轮检索、证据判断与查询改写
     │   ├── tool-registry.service.js  # 工具校验/取消/元数据
     │   ├── memory.service.js   # 持久记忆读写与上下文注入
     │   ├── metrics.service.js  # 指标采集
@@ -301,20 +302,41 @@ backend/
 AiService
 ├── RagService
 ├── IntentRouter
-└── AgentService
+├── AgentService
+└── AgenticRagService
 
 MemoryService
 ConversationOrchestrator
-└── AiService + RagService + MemoryService + IntentRouter + AgentService
+└── AiService + RagService + MemoryService + IntentRouter + AgentService + AgenticRagService
 ```
 
 - `chat.controller.js` 通过 `createChatHandlers(orchestrator)` 接收对话编排器，非流式和 SSE 流式请求共享同一装配实例。
 - `audio.controller.js` 通过 `createSpeechHandler(service, metrics)` 接收语音服务和指标依赖。
 - 默认路由导出保持不变，因此现有 `routes/register.js` 不需要知道服务创建细节。
-- `createApplicationContainer(overrides)` 为测试、替换实现和后续按环境装配保留边界；`backend/__tests__/application-container.test.js` 覆盖完整依赖替换。
+- `createApplicationContainer(overrides)` 为测试、替换实现和后续按环境装配保留边界；默认单例通过 `getApplicationContainer()` 惰性创建，避免只导入工厂时提前初始化 SQLite 等基础设施。
 - 当前 RAG 和评测控制器仍存在局部直接实例化，后续可在不扩大本批改动范围的前提下继续迁移到组合根。
 
-### 3.4 配置体系
+### 3.4 受控 Agentic RAG
+
+`AgenticRagService` 位于传统 RAG 之上，不修改 `RagService` 的确定性检索算法。启用后，知识库问题按以下受控流程执行：
+
+```text
+原始问题
+  → search_knowledge_base（retrieveOnly）
+  → 证据数量与上下文检查
+  → 证据不足时 rewrite_knowledge_query
+  → 最多再次检索 1~2 轮
+  → 基于最终证据流式生成
+  → 无证据或异常时降级现有 RagService
+```
+
+- 默认通过 `AGENTIC_RAG_ENABLED=false` 关闭，避免未经评测直接改变线上知识库链路。
+- 最大检索轮数被限制在 3 轮，默认 2 轮，并设置总耗时预算和查询改写超时。
+- 复用现有 `tool_call`、`tool_result`、`sources` 和 SSE trace 协议，不输出模型内部思维过程。
+- trace 记录每轮查询、工具耗时、命中文档数、结束原因和降级原因。
+- `RagService` 继续承担检索、重排、父子段落和上下文组装，Agentic 层只负责策略编排。
+
+### 3.5 配置体系
 
 ```env
 # AI 生产模型
@@ -469,6 +491,11 @@ graph TB
 | `QDRANT_URL` | 向量库地址 | localhost:6333 |
 | `RAG_VECTOR_TOP_K` | 检索候选数 | 50 |
 | `RAG_RERANK_TOP_K` | 重排截断上限 | 10 |
+| `AGENTIC_RAG_ENABLED` | 是否启用受控 Agentic RAG | false |
+| `AGENTIC_RAG_MAX_ROUNDS` | 最大检索轮数（硬上限 3） | 2 |
+| `AGENTIC_RAG_MAX_DURATION_MS` | 单次编排总耗时预算 | 20000 |
+| `AGENTIC_RAG_REWRITE_TIMEOUT_MS` | 查询改写超时 | 8000 |
+| `AGENTIC_RAG_MIN_SOURCES` | 判定证据充分的最少来源数 | 1 |
 | `JWT_SECRET` | JWT 密钥 | - |
 | `SCHOOL_ENC_KEY` | 教务密码加密密钥 | - |
 
@@ -488,6 +515,7 @@ graph TB
 | 存储 | 无 Redis 降级 MemoryStore | 降低部署依赖 |
 | 组合根 | `bootstrap/container.js` 统一装配核心服务 | 控制依赖方向，便于测试替换和后续模块化 |
 | 鉴权错误处理 | API client 注入回调，入口层负责导航 | 避免 API 层与 Router 循环依赖 |
+| Agentic RAG | 独立编排层 + 确定性 RagService | 支持多轮检索，同时保留稳定降级路径 |
 
 ---
 
@@ -520,3 +548,10 @@ graph TB
 - 后端：新增 `bootstrap/container.js`，统一装配聊天链路和语音链路的核心依赖，控制器改为依赖注入工厂。
 - 回归：新增 API client 鉴权行为测试和应用容器替换测试。
 - 范围：本批只迁移聊天、语音两个高频入口；RAG 控制器和评测路由的直接实例化作为下一阶段候选。
+
+### 9.5 受控 Agentic RAG 第一阶段（2026-08-18）
+
+- 新增 `agentic-rag.service.js`，实现最多三轮的知识库检索、证据判断和查询改写。
+- 知识库证据充分时直接生成；无证据、查询改写失败或链路异常时自动回退现有 RAG。
+- 通过组合根注入 `ConversationOrchestrator`，同时覆盖非流式和 SSE 流式请求。
+- 默认关闭，通过环境变量灰度开启；新增首轮命中、二轮命中、降级和 SSE trace 回归测试。
