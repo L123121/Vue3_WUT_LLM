@@ -24,6 +24,20 @@ function writeStreamEvent(res, event, fallbackTraceId) {
     });
   } else if (event.type === "process") {
     writeSse(res, { traceId: fallbackTraceId, processCard: event.processCard });
+  } else if (event.type === "trace" && event.channel === "agentic_rag") {
+    const trace = event.trace || {};
+    writeSse(res, {
+      traceId: trace.traceId || fallbackTraceId,
+      agenticRag: {
+        rounds: trace.rounds || 0,
+        queries: trace.queries || [],
+        toolCalls: trace.toolCalls || [],
+        matchedDocs: trace.matchedDocs || 0,
+        totalMs: trace.totalMs || 0,
+        finishReason: trace.finishReason || null,
+        fallbackReason: trace.fallbackReason || null,
+      },
+    });
   } else if (event.type === "trace" && event.channel === "agent") {
     const trace = event.trace || {};
     writeSse(res, {

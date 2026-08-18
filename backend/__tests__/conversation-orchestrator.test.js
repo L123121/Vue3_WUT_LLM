@@ -55,4 +55,40 @@ describe('ConversationOrchestrator', () => {
     expect(events.some(event => event.type === 'content' && event.content === 'RAG 回答')).toBe(true);
     expect(memoryService.saveChatMemory).toHaveBeenCalledWith('u1', '制定计划', 'RAG 回答');
   });
+
+  it('知识库路由在开关启用时进入 Agentic RAG 链路', async () => {
+    const agenticRagService = {
+      enabled: true,
+      chat: vi.fn(async () => ({ reply: 'Agentic 回答', sources: [], model: 'agentic-rag' })),
+      async *chatStream() {
+        yield { type: 'trace', trace: { traceId: 'agentic-1', rounds: 2 } };
+        yield { type: 'content', content: 'Agentic 回答', done: false };
+        yield { type: 'content', content: '', done: true };
+      },
+    };
+    const ragService = {
+      chat: vi.fn(),
+      chatStream: vi.fn(),
+    };
+    const memoryService = { buildMemoryContext: vi.fn(async () => ''), saveChatMemory: vi.fn() };
+    const orchestrator = new ConversationOrchestrator({
+      aiService: {},
+      ragService,
+      agentService: { enabled: false },
+      agenticRagService,
+      memoryService,
+      intentRouter: { route: vi.fn(async () => ({ intent: 'knowledge_query', route: 'rag', confidence: 0.9, reason: 'test' })) },
+      intentRoutingEnabled: true,
+    });
+
+    const result = await orchestrator.chat('图书馆几点开门', [], { userId: 'u1' });
+    expect(result.reply).toBe('Agentic 回答');
+    expect(agenticRagService.chat).toHaveBeenCalledOnce();
+    expect(ragService.chat).not.toHaveBeenCalled();
+
+    const events = [];
+    for await (const event of orchestrator.chatStream('图书馆几点开门', [], { userId: 'u1' })) events.push(event);
+    expect(events).toContainEqual(expect.objectContaining({ type: 'trace', channel: 'agentic_rag' }));
+    expect(memoryService.saveChatMemory).toHaveBeenCalledWith('u1', '图书馆几点开门', 'Agentic 回答');
+  });
 });

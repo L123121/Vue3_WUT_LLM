@@ -11,6 +11,11 @@ function getStreamHandler() {
   return require('../src/controllers/chat.controller').streamHandler;
 }
 
+function getWriteStreamEvent() {
+  delete require.cache[require.resolve('../src/controllers/chat.controller')];
+  return require('../src/controllers/chat.controller').writeStreamEvent;
+}
+
 describe('chat.controller streamHandler', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -38,5 +43,30 @@ describe('chat.controller streamHandler', () => {
     expect(next).toHaveBeenCalledOnce();
     expect(next).toHaveBeenCalledWith(expectedError);
     expect(response.write).not.toHaveBeenCalled();
+  });
+
+  it('将 Agentic RAG trace 映射为独立 SSE 字段', () => {
+    const response = { write: vi.fn() };
+
+    getWriteStreamEvent()(response, {
+      type: 'trace',
+      channel: 'agentic_rag',
+      trace: {
+        traceId: 'agentic-1',
+        rounds: 2,
+        queries: ['原问题', '改写问题'],
+        matchedDocs: 3,
+        finishReason: 'evidence_found',
+      },
+    }, 'fallback-trace');
+
+    const payload = JSON.parse(response.write.mock.calls[0][0].slice(6));
+    expect(payload.traceId).toBe('agentic-1');
+    expect(payload.agenticRag).toEqual(expect.objectContaining({
+      rounds: 2,
+      queries: ['原问题', '改写问题'],
+      matchedDocs: 3,
+      finishReason: 'evidence_found',
+    }));
   });
 });
