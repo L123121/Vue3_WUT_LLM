@@ -78,26 +78,29 @@ let loadGeneration = 0; // 账号切换时使旧的异步加载结果失效
 const _triggerBackendSync = async () => {
   // 从模块变量读取最新 store 状态（兼容定时器/外部调用场景）
   const store = latestStoreRef.value;
-  if (!store) return;
+  if (!store) return true;
   const convId = store.currentConversationId;
   // 本地会话不推后端
-  if (!convId || convId.startsWith('local_') || convId === 'local') return;
+  if (!convId || convId.startsWith('local_') || convId === 'local') return true;
 
   // 检查认证状态（直接调用 light 版本避免创建 auth store 实例竞争）
   try {
     const authStore = useAuthStore();
-    if (!authStore.isAuthenticated) return;
+    if (!authStore.isAuthenticated) return true;
   } catch {
-    return; // 未初始化
+    return true; // 未初始化
   }
 
   const conv = store.conversations.find((c) => c.id === convId);
-  if (!conv || !conv.messages || conv.messages.length === 0) return;
+  if (!conv || !conv.messages || conv.messages.length === 0) return true;
 
   try {
-    await apiSaveMessages(convId, conv.messages);
+    const saved = await apiSaveMessages(convId, conv.messages);
+    if (!saved) throw new Error('服务端未确认会话消息保存成功');
+    return true;
   } catch (e) {
     reportError('BackendSync', e, { convId });
+    return false;
   }
 };
 
@@ -184,6 +187,41 @@ export const useConversationStore = defineStore('conversation', () => {
     return auth.isAuthenticated;
   };
 
+  const persistLocalConversation = async (conversation) => {
+    let created = null;
+    try {
+      created = await apiCreateConversation(conversation.title || '新会话');
+      const messages = Array.isArray(conversation.messages) ? conversation.messages : [];
+      if (messages.length > 0) {
+        const saved = await apiSaveMessages(created.id, messages);
+        if (!saved) throw new Error('本地会话消息迁移失败');
+      }
+      return { ...created, messages };
+    } catch (error) {
+      if (created?.id) {
+        try { await apiDeleteConversation(created.id); } catch {}
+      }
+      throw error;
+    }
+  };
+
+  const migrateLocalConversations = async (localConversations) => {
+    const replacements = new Map();
+    let allSucceeded = true;
+
+    for (const conversation of localConversations) {
+      try {
+        const persisted = await persistLocalConversation(conversation);
+        replacements.set(conversation.id, persisted);
+      } catch (error) {
+        allSucceeded = false;
+        reportError('ConversationMigration', error, { conversationId: conversation.id });
+      }
+    }
+
+    return { replacements, allSucceeded };
+  };
+
   const restoreCachedState = (cached) => {
     const cachedConversations = Array.isArray(cached?.conversations) ? cached.conversations : [];
     if (cachedConversations.length === 0) return false;
@@ -243,11 +281,22 @@ export const useConversationStore = defineStore('conversation', () => {
         const localOnly = cachedConversations.filter((conv) =>
           isLocalSession(conv.id) && !serverIds.has(conv.id)
         );
-        conversations.value = [...serverConvs, ...localOnly];
+        const migration = await migrateLocalConversations(localOnly);
+        const migratedLocal = localOnly.map((conv) => migration.replacements.get(conv.id) || conv);
+        conversations.value = [...serverConvs, ...migratedLocal];
+
+        const migratedCurrent = migration.replacements.get(currentConversationId.value);
+        if (migratedCurrent) currentConversationId.value = migratedCurrent.id;
 
         if (conversations.value.length === 0) {
-          const localConv = createLocalConversation('新会话');
-          conversations.value = [localConv];
+          try {
+            const serverConv = await apiCreateConversation('新会话');
+            conversations.value = [{ ...serverConv, messages: [createWelcomeMessage()] }];
+          } catch (error) {
+            reportError('createInitialConversation', error);
+            const localConv = createLocalConversation('新会话');
+            conversations.value = [localConv];
+          }
         }
 
         if (!conversations.value.some((conv) => conv.id === currentConversationId.value)) {
@@ -439,6 +488,30 @@ export const useConversationStore = defineStore('conversation', () => {
     }
   };
 
+  const flushPendingChanges = async () => {
+    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+    if (backendSyncTimer) { clearTimeout(backendSyncTimer); backendSyncTimer = null; }
+
+    flushSave(conversations.value, currentConversationId.value);
+
+    if (isBackendAvailable()) {
+      const localConversations = conversations.value.filter((conv) => isLocalSession(conv.id));
+      if (localConversations.length > 0) {
+        const migration = await migrateLocalConversations(localConversations);
+        conversations.value = conversations.value.map((conv) => migration.replacements.get(conv.id) || conv);
+
+        const migratedCurrent = migration.replacements.get(currentConversationId.value);
+        if (migratedCurrent) currentConversationId.value = migratedCurrent.id;
+
+        _rebuildMessagesMap(conversations.value);
+        flushSave(conversations.value, currentConversationId.value);
+        if (!migration.allSucceeded) return false;
+      }
+    }
+
+    return _triggerBackendSync();
+  };
+
   const resetConversationState = () => {
     loadGeneration += 1;
     loadingPromise = null;
@@ -495,6 +568,7 @@ export const useConversationStore = defineStore('conversation', () => {
     isLocalSession,
     isBackendAvailable,
     scheduleSaveCache,
+    flushPendingChanges,
     resetConversationState,
     // 消息索引 API（O(1) 按 ID 查找，供外部修改消息后同步）
     getMessage: (id) => messagesMap.get(id) || null,

@@ -6,6 +6,7 @@ import ConversationList from '../chat/ConversationList.vue';
 import { Database, MessageSquare, BarChart3, LogOut, MessagesSquare, ChevronUp } from 'lucide-vue-next';
 import { useAuthStore } from '../../stores/auth.store.js';
 import { useChatStore } from '../../stores/chat.store.js';
+import { useToastStore } from '../../stores/toast.store.js';
 import { prefetchRoute } from '../../utils/prefetch.js';
 import ProfilePanel from '../common/ProfilePanel.vue';
 import FavoritesPanel from './FavoritesPanel.vue';
@@ -15,6 +16,7 @@ const router = useRouter();
 const route = useRoute();
 const authStore = useAuthStore();
 const chatStore = useChatStore();
+const toast = useToastStore();
 const currentPath = computed(() => route.path);
 
 const showDevEval = import.meta.env.VITE_SHOW_DEV_EVAL === 'true';
@@ -27,6 +29,11 @@ const showProfilePanel = ref(false);
 const showAvatarPicker = ref(false);
 
 const handleLogout = async () => {
+  const synced = await chatStore.flushPendingChanges();
+  if (!synced) {
+    toast.error('对话记录同步失败，请稍后重试后再退出');
+    return;
+  }
   chatStore.resetConversationState();
   await authStore.logout();
   await router.replace('/login');
