@@ -28,6 +28,13 @@ function createHttpError(message, statusCode) {
   return error;
 }
 
+function createAbortError(reason) {
+  if (reason instanceof Error && reason.name === "AbortError") return reason;
+  const error = reason instanceof Error ? reason : new Error("Aborted");
+  error.name = "AbortError";
+  return error;
+}
+
 function createAbortContext(externalSignal, timeoutMs) {
   const controller = new AbortController();
   let timedOut = false;
@@ -103,6 +110,7 @@ class AudioService {
       maxEntries: this.config.cacheMaxEntries,
       maxBytes: this.config.cacheMaxBytes,
     });
+    this.inFlight = new Map();
   }
 
   async synthesize(text, options = {}) {
@@ -147,12 +155,70 @@ class AudioService {
     const cached = this.config.cacheEnabled === false ? null : this.cache.get(cacheKey);
     if (cached) return { ...cached, cacheHit: true };
 
-    const baseUrl = String(this.config.baseUrl || "https://api.stepfun.com/v1").replace(/\/$/, "");
-    const abortContext = createAbortContext(options.signal, this.config.timeout || 60000);
+    let entry = this.inFlight.get(cacheKey);
+    if (!entry) {
+      entry = this._createInFlightRequest(cacheKey, payload, responseFormat);
+    }
+    return this._waitForInFlight(entry, options.signal);
+  }
 
-    let response;
+  _createInFlightRequest(cacheKey, payload, responseFormat) {
+    const controller = new AbortController();
+    const entry = {
+      controller,
+      consumers: 0,
+      settled: false,
+      usageClaimed: false,
+      promise: null,
+    };
+    entry.promise = this._requestSpeech(payload, responseFormat, controller.signal)
+      .then((result) => {
+        if (this.config.cacheEnabled !== false) this.cache.set(cacheKey, result);
+        return result;
+      })
+      .finally(() => {
+        entry.settled = true;
+        if (this.inFlight.get(cacheKey) === entry) this.inFlight.delete(cacheKey);
+      });
+    this.inFlight.set(cacheKey, entry);
+    return entry;
+  }
+
+  async _waitForInFlight(entry, signal) {
+    if (signal?.aborted) throw createAbortError(signal.reason);
+    entry.consumers += 1;
+    let abortHandler;
+    const abortPromise = signal ? new Promise((_resolve, reject) => {
+      abortHandler = () => reject(createAbortError(signal.reason));
+      signal.addEventListener("abort", abortHandler, { once: true });
+    }) : null;
+
     try {
-      response = await this.fetch(`${baseUrl}/audio/speech`, {
+      const result = await (abortPromise ? Promise.race([entry.promise, abortPromise]) : entry.promise);
+      const cacheHit = entry.usageClaimed;
+      entry.usageClaimed = true;
+      return { ...result, cacheHit };
+    } finally {
+      signal?.removeEventListener("abort", abortHandler);
+      entry.consumers -= 1;
+      if (entry.consumers === 0 && !entry.settled) {
+        for (const [key, current] of this.inFlight.entries()) {
+          if (current === entry) this.inFlight.delete(key);
+        }
+        entry.controller.abort(createAbortError());
+      }
+    }
+  }
+
+  async _requestSpeech(payload, responseFormat, signal) {
+    const baseUrl = String(this.config.baseUrl || "https://api.stepfun.com/v1").replace(/\/$/, "");
+    const abortContext = createAbortContext(signal, this.config.timeout || 60000);
+    const maxAudioBytes = Number.isFinite(this.config.maxAudioBytes) && this.config.maxAudioBytes > 0
+      ? this.config.maxAudioBytes
+      : 16 * 1024 * 1024;
+
+    try {
+      const response = await this.fetch(`${baseUrl}/audio/speech`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${this.config.apiKey}`,
@@ -161,32 +227,42 @@ class AudioService {
         body: JSON.stringify(payload),
         signal: abortContext.signal,
       });
+
+      if (!response.ok) {
+        const detail = await response.text().catch(() => "");
+        console.error(`[Audio] StepFun 请求失败: ${response.status}`, detail.slice(0, 500));
+        throw createHttpError("语音生成失败，请稍后重试", 502);
+      }
+
+      const contentLength = Number.parseInt(response.headers.get("content-length") || "", 10);
+      if (Number.isFinite(contentLength) && contentLength > maxAudioBytes) {
+        throw createHttpError("语音响应过大，请缩短朗读内容", 502);
+      }
+
+      const buffer = Buffer.from(await response.arrayBuffer());
+      if (buffer.length > maxAudioBytes) {
+        throw createHttpError("语音响应过大，请缩短朗读内容", 502);
+      }
+
+      return {
+        buffer,
+        contentType: response.headers.get("content-type") || `audio/${responseFormat}`,
+        format: responseFormat,
+        model: payload.model,
+        characters: payload.input.length,
+      };
     } catch (error) {
-      if (error?.name === "AbortError") {
-        if (options.signal?.aborted && !abortContext.didTimeOut()) throw error;
+      if (error?.statusCode) throw error;
+      if (abortContext.didTimeOut()) {
         throw createHttpError("语音生成超时，请稍后重试", 504);
+      }
+      if (signal?.aborted || error?.name === "AbortError") {
+        throw createAbortError(signal?.reason || error);
       }
       throw createHttpError(`语音服务连接失败：${error.message}`, 502);
     } finally {
       abortContext.cleanup();
     }
-
-    if (!response.ok) {
-      const detail = await response.text().catch(() => "");
-      console.error(`[Audio] StepFun 请求失败: ${response.status}`, detail.slice(0, 500));
-      throw createHttpError("语音生成失败，请稍后重试", 502);
-    }
-
-    const result = {
-      buffer: Buffer.from(await response.arrayBuffer()),
-      contentType: response.headers.get("content-type") || `audio/${responseFormat}`,
-      format: responseFormat,
-      model,
-      characters: input.length,
-      cacheHit: false,
-    };
-    if (this.config.cacheEnabled !== false) this.cache.set(cacheKey, result);
-    return result;
   }
 }
 

@@ -1,6 +1,10 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const { createOperationalMetrics } = require('../src/services/operational-metrics.service');
+const { OperationalMetricsPersistence } = require('../src/services/operational-metrics-persistence.service');
 
 const originalTtsCost = process.env.TTS_COST_CNY_PER_10K_CHARS;
 
@@ -27,14 +31,83 @@ describe('operational-metrics.service', () => {
 
   it('跨自然日后重新计算当日成本', () => {
     process.env.TTS_COST_CNY_PER_10K_CHARS = '1';
-    let timestamp = new Date(2026, 7, 18, 23, 59).getTime();
-    const metrics = createOperationalMetrics({ now: () => timestamp });
+    let timestamp = Date.parse('2026-08-18T15:59:00.000Z');
+    const metrics = createOperationalMetrics({ now: () => timestamp, timeZone: 'Asia/Shanghai' });
     metrics.recordTtsUsage({ model: 'tts-test', characters: 10000 });
 
-    timestamp = new Date(2026, 7, 19, 0, 1).getTime();
+    timestamp = Date.parse('2026-08-18T16:01:00.000Z');
     metrics.recordTtsUsage({ model: 'tts-test', characters: 5000 });
 
     expect(metrics.snapshot().daily).toEqual({ date: '2026-08-19', estimatedCostCny: 0.5 });
     expect(metrics.snapshot().estimatedCostCny).toBe(1.5);
+  });
+
+  it('从持久化状态恢复累计总量并批量写回最新状态', () => {
+    process.env.TTS_COST_CNY_PER_10K_CHARS = '1';
+    const persistence = {
+      load: vi.fn(() => ({
+        totals: {
+          requests: 8,
+          requestErrors: 1,
+          llmCalls: 2,
+          promptTokens: 300,
+          completionTokens: 100,
+          llmCostCny: 0.4,
+          ttsCalls: 3,
+          ttsCharacters: 12000,
+          ttsCostCny: 1.2,
+        },
+        daily: { date: '2026-08-18', estimatedCostCny: 1.6 },
+      })),
+      save: vi.fn(),
+      close: vi.fn(),
+    };
+    const metrics = createOperationalMetrics({
+      now: () => Date.parse('2026-08-18T12:00:00.000Z'),
+      timeZone: 'Asia/Shanghai',
+      persistence,
+      persistDelayMs: 60000,
+    });
+
+    metrics.recordTtsUsage({ model: 'tts-test', characters: 5000 });
+    metrics.recordRequest({ method: 'GET', path: '/api/health', statusCode: 200, durationMs: 10 });
+    metrics.flush();
+
+    expect(metrics.snapshot()).toMatchObject({
+      requests: { total: 9, errors: 1 },
+      tts: { total: 4, characters: 17000, estimatedCostCny: 1.7 },
+      daily: { date: '2026-08-18', estimatedCostCny: 2.1 },
+      estimatedCostCny: 2.1,
+    });
+    expect(persistence.save).toHaveBeenCalledOnce();
+    expect(persistence.save).toHaveBeenCalledWith(expect.objectContaining({
+      totals: expect.objectContaining({ requests: 9, ttsCalls: 4, ttsCharacters: 17000 }),
+      daily: { date: '2026-08-18', estimatedCostCny: 2.1 },
+    }));
+
+    metrics.close();
+    expect(persistence.close).toHaveBeenCalledOnce();
+  });
+
+  it('通过 SQLite 保存并重新加载运营指标状态', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wuli-ops-metrics-'));
+    const dbPath = path.join(tempDir, 'metrics.db');
+    try {
+      const first = new OperationalMetricsPersistence({ dbPath });
+      first.save({
+        totals: { requests: 12, requestErrors: 2 },
+        daily: { date: '2026-08-18', estimatedCostCny: 3.5 },
+      });
+      first.close();
+
+      const second = new OperationalMetricsPersistence({ dbPath });
+      expect(second.load()).toEqual({
+        totals: { requests: 12, requestErrors: 2 },
+        daily: { date: '2026-08-18', estimatedCostCny: 3.5 },
+      });
+      second.close();
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });
