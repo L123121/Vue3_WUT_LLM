@@ -4,6 +4,7 @@ const { StringDecoder } = require('string_decoder');
 const config = require('../config');
 const { request, requestStream } = require('../utils/httpClient');
 const { metrics } = require('./metrics.service');
+const { operationalMetrics } = require('./operational-metrics.service');
 
 // ==================== 请求队列（API 并发限流） ====================
 // 防止 LLM API 限流（429 Too Many Requests），控制同时发往 API 的请求数量。
@@ -274,11 +275,13 @@ class AiService {
 
     if (content || toolCalls) {
       console.log(`[AI] 响应 ${content.length} 字符, tool_calls=${toolCalls?.length || 0}`);
+      const usage = result.data?.usage || null;
+      operationalMetrics.recordLlmUsage({ model: result.data?.model || provider.model, usage, traceId: opts.traceId, latencyMs: latency });
       return {
         content,
         isMock: false,
         model: result.data?.model || provider.model,
-        usage: result.data?.usage || null,
+        usage,
         toolCalls,
       };
     } else {
@@ -337,8 +340,7 @@ class AiService {
     }
   }
 
-  async *_streamProvider(provider, message, history, opts = {}) {
-    const path = provider.anthropicMode ? '/v1/messages' : '/v2/chat/completions';
+  _buildStreamPayload(provider, message, history, opts = {}) {
     const payload = {
       model: provider.model,
       messages: opts.messages || this._buildMessages(message, history),
@@ -350,10 +352,20 @@ class AiService {
     if (!provider.anthropicMode && !provider.enableThinking) {
       payload.enable_thinking = false;
     }
+    const supportsStreamUsage = /api\.(stepfun|openai)\.com/i.test(provider.baseUrl || '');
+    if (!provider.anthropicMode && supportsStreamUsage) {
+      payload.stream_options = { include_usage: true };
+    }
     // 原生 function calling（OpenAI 兼容）：调用方传 opts.tools 时携带工具描述
     if (!provider.anthropicMode && Array.isArray(opts.tools) && opts.tools.length > 0) {
       payload.tools = opts.tools;
     }
+    return payload;
+  }
+
+  async *_streamProvider(provider, message, history, opts = {}) {
+    const path = provider.anthropicMode ? '/v1/messages' : '/v2/chat/completions';
+    const payload = this._buildStreamPayload(provider, message, history, opts);
     const body = JSON.stringify(payload);
     const options = this._buildOptions(path, provider);
     options.headers['Content-Length'] = Buffer.byteLength(body, 'utf8');
@@ -388,11 +400,18 @@ class AiService {
 
   async *_parseStream(res, provider, opts = {}) {
     let buf = '';
+    let streamUsage = null;
+    let usageRecorded = false;
     const decoder = new StringDecoder('utf8');
     // tool_calls 增量拼接（OpenAI 兼容流式：delta.tool_calls 按 index 分片）
     const toolCallMap = new Map();
     let hasToolCalls = false;
     const needsTools = Array.isArray(opts.tools) && opts.tools.length > 0;
+    const recordUsage = () => {
+      if (usageRecorded || !streamUsage) return;
+      usageRecorded = true;
+      operationalMetrics.recordLlmUsage({ model: provider.model, usage: streamUsage, traceId: opts.traceId });
+    };
 
     for await (const chunk of res) {
       buf += decoder.write(chunk);
@@ -404,11 +423,13 @@ class AiService {
         if (!t.startsWith('data:')) continue;
         const d = t.slice(5).trim();
         if (d === '[DONE]') {
+          recordUsage();
           yield { content: '', done: true, tool_calls: this._assembleToolCalls(toolCallMap, hasToolCalls, needsTools) };
           return;
         }
         try {
           const j = JSON.parse(d);
+          if (j.usage) streamUsage = j.usage;
           let content = '';
           let done = false;
           if (provider.anthropicMode) {
@@ -435,6 +456,7 @@ class AiService {
           }
           if (content) yield { content, done: false };
           if (done) {
+            recordUsage();
             yield { content: '', done: true, tool_calls: this._assembleToolCalls(toolCallMap, hasToolCalls, needsTools) };
             return;
           }
@@ -457,6 +479,7 @@ class AiService {
         } catch { /* ignore */ }
       }
     }
+    recordUsage();
     yield { content: '', done: true, tool_calls: this._assembleToolCalls(toolCallMap, hasToolCalls, needsTools) };
   }
 

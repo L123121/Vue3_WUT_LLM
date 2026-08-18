@@ -25,9 +25,13 @@ app.use((req, res) => {
 
 // 错误处理
 app.use((err, req, res, _next) => {
+  const { operationalMetrics } = require('./services/operational-metrics.service');
+  operationalMetrics.recordError(err, { traceId: req.traceId, method: req.method, path: req.path, userId: req.userId || null });
   console.error('[Server] Unhandled error:', err);
   const statusCode = err.statusCode || err.status || 500;
-  const message = statusCode >= 500 ? '服务器内部错误' : (err.message || '请求处理失败');
+  const message = statusCode >= 500 && err.expose !== true
+    ? '服务器内部错误'
+    : (err.message || '请求处理失败');
   res.status(statusCode).json({
     success: false,
     error: message,

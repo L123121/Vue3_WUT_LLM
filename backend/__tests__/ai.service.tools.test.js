@@ -110,6 +110,37 @@ describe('AiService._assembleToolCalls', () => {
   });
 });
 
+describe('AiService._buildStreamPayload', () => {
+  it('OpenAI 兼容流式请求显式要求返回 usage', () => {
+    const svc = makeService();
+    svc._buildMessages = vi.fn().mockReturnValue([{ role: 'user', content: '你好' }]);
+    const payload = svc._buildStreamPayload({
+      anthropicMode: false,
+      baseUrl: 'https://api.stepfun.com/v1',
+      model: 'test-model',
+      maxTokens: 1000,
+      temperature: 0.2,
+      enableThinking: false,
+    }, '你好', [], {});
+
+    expect(payload.stream_options).toEqual({ include_usage: true });
+  });
+
+  it('Anthropic 请求不携带 OpenAI stream_options', () => {
+    const svc = makeService();
+    svc._buildMessages = vi.fn().mockReturnValue([{ role: 'user', content: '你好' }]);
+    const payload = svc._buildStreamPayload({
+      anthropicMode: true,
+      baseUrl: 'https://api.example.com/anthropic',
+      model: 'claude-test',
+      maxTokens: 1000,
+      temperature: 0.2,
+    }, '你好', [], {});
+
+    expect(payload).not.toHaveProperty('stream_options');
+  });
+});
+
 describe('AiService history compaction', () => {
   it('长对话压缩时保留 system 记忆消息', async () => {
     const svc = makeService();
