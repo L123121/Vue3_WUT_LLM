@@ -66,6 +66,10 @@ export const useChatStore = defineStore('chat', () => {
     if (messageStore.isLoading) messageStore.abortCurrentRequest();
     conversationStore.resetConversationState();
   };
+  const flushPendingChanges = async () => {
+    if (messageStore.isLoading) messageStore.abortCurrentRequest();
+    return conversationStore.flushPendingChanges();
+  };
   const deleteConversation = (id) => {
     // 如果正在删除的会话有流式传输，先中止
     if (messageStore.isLoading && conversationStore.currentConversationId === id) {
@@ -106,6 +110,7 @@ export const useChatStore = defineStore('chat', () => {
     createConversation,
     switchConversation,
     renameConversation,
+    flushPendingChanges,
     resetConversationState,
     deleteConversation,
     getLastMessagePreview,

@@ -30,8 +30,16 @@ describe('chatStore', () => {
     localStorage.clear();
     vi.clearAllMocks();
     vi.mocked(conversationsApi.fetchConversations).mockResolvedValue([]);
+    vi.mocked(conversationsApi.createConversation).mockResolvedValue({
+      id: 'conv_created',
+      title: '新会话',
+      messages: [],
+      createdAt: '2026-08-18T00:00:00.000Z',
+      updatedAt: '2026-08-18T00:00:00.000Z',
+    });
     vi.mocked(conversationsApi.fetchConversation).mockResolvedValue(null);
     vi.mocked(conversationsApi.deleteConversation).mockResolvedValue(true);
+    vi.mocked(conversationsApi.saveConversationMessages).mockResolvedValue(true);
   });
 
   it('initializes with empty state', () => {
@@ -100,7 +108,7 @@ describe('chatStore', () => {
     expect(store.conversations[0].messages[0].id).toBe('cached-message');
   });
 
-  it('removes stale server conversations while preserving local-only conversations', async () => {
+  it('removes stale server conversations while migrating local-only conversations', async () => {
     localStorage.setItem('chat_cache', JSON.stringify({
       version: 1,
       currentId: 'conv_stale',
@@ -117,7 +125,7 @@ describe('chatStore', () => {
     const store = useChatStore();
     await store.loadConversations();
 
-    expect(store.conversations.map((conv) => conv.id)).toEqual(['conv_server', 'local_keep']);
+    expect(store.conversations.map((conv) => conv.id)).toEqual(['conv_server', 'conv_created']);
     expect(store.currentConversationId).toBe('conv_server');
   });
 
@@ -137,6 +145,51 @@ describe('chatStore', () => {
 
     expect(store.conversations).toHaveLength(1);
     expect(store.currentConversationId).toBe('conv_cached');
+  });
+
+  it('creates a server conversation for an authenticated account with no history', async () => {
+    useAuthStore().setUser({ id: 'user-1', name: 'User' });
+    vi.mocked(conversationsApi.createConversation).mockResolvedValue({
+      id: 'conv_initial',
+      title: '新会话',
+      messages: [],
+      createdAt: '2026-08-18T00:00:00.000Z',
+      updatedAt: '2026-08-18T00:00:00.000Z',
+    });
+
+    const store = useChatStore();
+    await store.loadConversations();
+
+    expect(conversationsApi.createConversation).toHaveBeenCalledWith('新会话');
+    expect(store.currentConversationId).toBe('conv_initial');
+    expect(store.conversations[0].id).toBe('conv_initial');
+    expect(store.conversations[0].messages[0].id).toBe('welcome');
+  });
+
+  it('migrates a local conversation before account logout', async () => {
+    const store = useChatStore();
+    const localId = await store.createConversation('待同步会话');
+    store.conversations[0].messages.push({ id: 'local-message', role: 'user', content: '保留我' });
+
+    useAuthStore().setUser({ id: 'user-1', name: 'User' });
+    vi.mocked(conversationsApi.createConversation).mockResolvedValue({
+      id: 'conv_migrated',
+      title: '待同步会话',
+      messages: [],
+      createdAt: '2026-08-18T00:00:00.000Z',
+      updatedAt: '2026-08-18T00:00:00.000Z',
+    });
+
+    const synced = await store.flushPendingChanges();
+
+    expect(synced).toBe(true);
+    expect(conversationsApi.createConversation).toHaveBeenCalledWith('待同步会话');
+    expect(conversationsApi.saveConversationMessages).toHaveBeenCalledWith(
+      'conv_migrated',
+      expect.arrayContaining([expect.objectContaining({ id: 'local-message' })])
+    );
+    expect(store.currentConversationId).toBe('conv_migrated');
+    expect(store.conversations.some((conv) => conv.id === localId)).toBe(false);
   });
 
   it('clears in-memory and cached conversations on account reset', async () => {
