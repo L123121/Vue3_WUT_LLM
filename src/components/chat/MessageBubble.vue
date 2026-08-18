@@ -1,11 +1,13 @@
 <script setup>
 import { ref, computed } from 'vue';
 import { useRouter } from 'vue-router';
-import { User, Bot, Copy, RotateCcw, FileText, BookOpen, X, ThumbsUp, ThumbsDown, Star } from 'lucide-vue-next';
+import { User, Bot, Copy, RotateCcw, FileText, BookOpen, X, ThumbsUp, ThumbsDown, Star, Volume2, Square, Loader2 } from 'lucide-vue-next';
 import { useLanguageStore } from '../../stores/language.store.js';
 import { useChatStore } from '../../stores/chat.store.js';
 import { useAuthStore } from '../../stores/auth.store.js';
 import { useFavoritesStore } from '../../stores/favorites.store.js';
+import { useToastStore } from '../../stores/toast.store.js';
+import { useSpeechPlayer } from '../../composables/useSpeechPlayer.js';
 import { submitRagFeedback } from '../../api/rag.js';
 import MarkdownRenderer from './MarkdownRenderer.vue';
 import RetrievalTracePanel from './RetrievalTracePanel.vue';
@@ -28,6 +30,8 @@ const languageStore = useLanguageStore();
 const chatStore = useChatStore();
 const authStore = useAuthStore();
 const favoritesStore = useFavoritesStore();
+const toast = useToastStore();
+const speechPlayer = useSpeechPlayer();
 
 const userAvatar = computed(() => authStore.user?.avatar || '');
 
@@ -130,6 +134,12 @@ const openSourceInKnowledgeBase = () => {
 };
 
 const messageText = computed(() => props.message.content ?? props.message.text ?? '');
+const isSpeechActive = computed(() => speechPlayer.activeMessageId.value === props.message.id);
+const isSpeechLoading = computed(() => isSpeechActive.value && speechPlayer.isLoading.value);
+const speechProgress = computed(() => {
+  if (!isSpeechActive.value || speechPlayer.chunkCount.value <= 1) return '';
+  return `${speechPlayer.chunkIndex.value}/${speechPlayer.chunkCount.value}`;
+});
 
 const formatTime = (timestamp) => languageStore.formatTime(timestamp);
 
@@ -137,6 +147,17 @@ const copyMessage = (text) => {
   navigator.clipboard.writeText(text)
     .then(() => emit('copy', text))
     .catch(() => emit('copy', text)); // 复制失败也通知外层（toast 兜底）
+};
+
+const toggleSpeech = async () => {
+  try {
+    const result = await speechPlayer.play(props.message.id, messageText.value);
+    if (result?.truncated) toast.warning('回答较长，本次仅朗读前 4000 字');
+  } catch (error) {
+    if (error?.name === 'AbortError') return;
+    console.error('[Speech] 播放失败:', error);
+    toast.error(error?.message || '语音播放失败，请稍后重试');
+  }
 };
 
 // 收藏/取消收藏消息
@@ -424,6 +445,18 @@ const timeClasses = computed(() => {
           </div>
           <span v-if="isRagAnswer && (selectedFeedback || feedbackState === 'done')" class="text-xs opacity-60">已反馈</span>
           <span v-else-if="isRagAnswer && feedbackState === 'error'" class="text-xs text-red-400 dark:text-red-300">提交失败</span>
+          <button
+            v-if="isModel && !isError && messageText"
+            class="flex items-center gap-1 hover:text-wut-500 transition-all duration-200 cursor-pointer px-1.5 py-0.5 rounded hover:bg-wut-50 dark:hover:bg-gray-700 text-sm opacity-60 hover:opacity-100"
+            @click="toggleSpeech"
+            :title="isSpeechActive ? '停止朗读' : '朗读回答'"
+            :aria-label="isSpeechActive ? '停止朗读' : '朗读回答'"
+          >
+            <Loader2 v-if="isSpeechLoading" :size="14" class="animate-spin" />
+            <Square v-else-if="isSpeechActive" :size="13" class="fill-current" />
+            <Volume2 v-else :size="14" />
+            <span>{{ isSpeechLoading ? `生成中${speechProgress ? ` ${speechProgress}` : ''}` : (isSpeechActive ? `停止${speechProgress ? ` ${speechProgress}` : ''}` : '朗读') }}</span>
+          </button>
           <button
             v-if="isModel && !isError && messageText"
             class="flex items-center gap-1 hover:text-wut-500 transition-all duration-200 cursor-pointer px-1.5 py-0.5 rounded hover:bg-wut-50 dark:hover:bg-gray-700 text-sm opacity-60 hover:opacity-100"

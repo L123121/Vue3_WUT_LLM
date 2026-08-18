@@ -8,6 +8,7 @@ const config = require('../config');
 function applyRoutes(app, chatLimiter) {
   const { router: apiRoutes } = require('./index');
   const { chatHandler, streamHandler } = require('../controllers/chat.controller');
+  const { speechHandler } = require('../controllers/audio.controller');
   const { chatUpload, parseFile } = require('../services/file-upload.service');
   const { requireAuth } = require('../middleware/auth.middleware');
   const { router: authRoutes } = require('./auth.routes');
@@ -42,6 +43,7 @@ function applyRoutes(app, chatLimiter) {
         { method: 'GET', path: '/api', description: 'API列表' },
         { method: 'POST', path: '/api', description: '聊天接口（非流式）' },
         { method: 'POST', path: '/api/stream', description: '流式聊天接口' },
+        { method: 'POST', path: '/api/audio/speech', description: 'AI 回复语音合成' },
         { method: 'POST', path: '/api/auth/login', description: '登录' },
         { method: 'POST', path: '/api/auth/register', description: '注册' },
         { method: 'GET', path: '/api/auth/me', description: '当前用户' },
@@ -64,6 +66,9 @@ function applyRoutes(app, chatLimiter) {
 
   // SSE 流式聊天
   app.post('/api/stream', chatLimiter, streamHandler);
+
+  // AI 回复语音合成（服务端代理，避免在浏览器暴露 StepFun API Key）
+  app.post('/api/audio/speech', requireAuth, chatLimiter, speechHandler);
 
   // 聊天文件上传
   app.post('/api/chat/upload', requireAuth, chatUpload.single('file'), async (req, res) => {

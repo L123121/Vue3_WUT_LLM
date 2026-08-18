@@ -72,7 +72,7 @@ jobs:
           npm audit --omit=dev --audit-level=high --prefix backend
 
       - name: Run tests
-        run: npm test
+        run: npm run test:all
         env:
           JWT_SECRET: test-secret
           AI_API_KEY: test-ai-key

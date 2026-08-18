@@ -13,6 +13,7 @@
     "@huggingface/transformers": "^3.8.1",
     "@qdrant/js-client-rest": "^1.19.0",
     "axios": "^1.19.0",
+    "better-sqlite3": "^12.11.1",
     "cookie-parser": "^1.4.6",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
@@ -37,9 +38,6 @@
   "overrides": {
     "path-to-regexp": "0.1.13",
     "sharp": "0.35.3"
-  },
-  "optionalDependencies": {
-    "better-sqlite3": "^12.11.1"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"

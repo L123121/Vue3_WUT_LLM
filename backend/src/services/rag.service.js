@@ -20,6 +20,8 @@ const {
   jaccardBigrams,
   mmrDedupe,
 } = require('./rag-ranking.service');
+const ragPrompt = require('./rag-prompt.service');
+const resultMapper = require('./rag-result-mapper.service');
 
 class RagService {
   constructor(aiService = null) {
@@ -644,96 +646,28 @@ class RagService {
   }
 
   buildParentChildPrompt(query, context) {
-    if (!context) return query;
-
-    return `你是武汉理工大学校园知识助手。请严格根据“参考资料”回答用户问题。
-
-要求：
-1. 回答要详细、完整、具体：把资料中的关键信息（时间、地点、条件、流程、数量、联系方式等）都展开说明，分点或分条组织，不要只给一句话结论。
-2. 优先使用参考资料，不要编造资料中没有的信息；资料不足时明确说明缺什么，并建议用户补充资料或换一种问法。
-3. 回答关键事实时引用文档编号，例如“根据【文档 1】”。
-4. 如果不同文档存在冲突，优先说明冲突点，不要自行合并成确定结论。
-5. 输出用 Markdown 排版：标题（如 "###"）和列表项（"-" 或 "1."）必须各自独占一行、写在行首，标题前后留空行；不要把 "###"、序号或 "-" 直接接在上一句话后面。重要信息加粗，方便阅读。
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-参考资料：
-${context}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-用户问题：${query}`;
+    return ragPrompt.buildParentChildPrompt(query, context);
   }
 
   /**
    * 流程类问题识别：办理/申请/补办等结构化流程问题
    */
   isProcessQuestion(query) {
-    return /补办|办理|申请|报名|流程|步骤|手续|怎么办|如何办理|怎么做|需要什么材料|材料|多久|多长时间|在哪办|哪里办|费用是多少/.test(String(query || ''));
+    return ragPrompt.isProcessQuestion(query);
   }
 
   /**
    * 流程类问题的结构化输出 prompt：强制 LLM 输出 JSON 步骤卡片
    */
   buildProcessPrompt(query, context) {
-    if (!context) return query;
-
-    return `你是武汉理工大学校园知识助手。请严格根据“参考资料”回答用户问题，并且必须输出严格 JSON。
-
-要求：
-1. 只依据参考资料回答，不要编造资料中没有的信息；资料不足时对应字段填 null 或空数组。
-2. 必须输出严格合法的 JSON 对象（不要用 markdown 代码块包裹，不要输出任何其他文字），结构如下：
-{
-  "summary": "一句话概述办理结果",
-  "steps": [{"title": "步骤标题", "detail": "具体操作说明"}],
-  "materials": ["所需材料1", "所需材料2"],
-  "location": "办理地点，资料未提及则为 null",
-  "duration": "办理时长/周期，资料未提及则为 null",
-  "notes": "注意事项，资料未提及则为 null"
-}
-3. 步骤中的关键事实请标注文档引用，例如 detail 中写“根据【文档 1】”。
-4. steps 至少 1 项；materials 无材料时为空数组。
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-参考资料：
-${context}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-用户问题：${query}`;
+    return ragPrompt.buildProcessPrompt(query, context);
   }
 
   /**
    * 从 LLM 回复中解析流程卡片 JSON（容忍 markdown 代码块包裹 / 前后杂文本）
    */
   parseProcessCard(reply) {
-    if (!reply || typeof reply !== 'string') return null;
-    try {
-      const text = String(reply).trim();
-      const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-      const raw = fenced ? fenced[1] : text;
-      const start = raw.indexOf('{');
-      const end = raw.lastIndexOf('}');
-      if (start === -1 || end === -1 || end <= start) return null;
-      const parsed = JSON.parse(raw.slice(start, end + 1));
-      if (!parsed || typeof parsed !== 'object') return null;
-      const card = {
-        summary: typeof parsed.summary === 'string' ? parsed.summary : '',
-        steps: Array.isArray(parsed.steps)
-          ? parsed.steps
-            .filter((s) => s && (s.title || s.detail))
-            .map((s) => ({ title: String(s.title || '').trim(), detail: String(s.detail || '').trim() }))
-          : [],
-        materials: Array.isArray(parsed.materials)
-          ? parsed.materials.map((m) => String(m || '').trim()).filter(Boolean)
-          : [],
-        location: parsed.location ? String(parsed.location) : null,
-        duration: parsed.duration ? String(parsed.duration) : null,
-        notes: parsed.notes ? String(parsed.notes) : null,
-      };
-      // 至少要有一个有意义的字段才算有效卡片
-      const hasContent = card.steps.length > 0 || card.materials.length > 0 || card.location || card.duration;
-      return hasContent ? card : null;
-    } catch {
-      return null;
-    }
+    return ragPrompt.parseProcessCard(reply);
   }
 
   _extractQueryTerms(query) {
@@ -945,120 +879,27 @@ ${context}
     }
   }
   _hasReliableCandidates(candidates) {
-    return candidates.length > 0 && (candidates[0].score || 0) >= this.minSourceScore;
+    return resultMapper.hasReliableCandidates(candidates, this.minSourceScore);
   }
 
   _buildParentSource(doc, match) {
-    const chunkIndexes = [...new Set(match.chunks.map(chunk => chunk.chunkIndex).filter(index => index !== undefined))];
-    const channels = [...new Set(match.chunks.flatMap(chunk => chunk._retrievalChannels || []))];
-    const rerankScore = match.bestChunk._rerankScore || 0;
-    return {
-      id: doc.id,
-      title: doc.title,
-      category: doc.category,
-      chunkCount: doc.chunkCount,
-      matchedChunks: chunkIndexes.length || match.chunks.length,
-      matchedChunkIds: chunkIndexes,
-      snippet: (match.parentText || match.bestChunk?.text || '').substring(0, 1500),
-      matchedScore: rerankScore || match.bestChunk.score || 0,
-      vectorScore: match.bestChunk._vectorScore || 0,
-      sparseScore: match.bestChunk._sparseScore || 0,
-      hybridScore: match.bestChunk._hybridScore || match.bestChunk.score || 0,
-      keywordScore: match.bestChunk._keywordScore || 0,
-      rerankScore,
-      rerankModel: match.bestChunk._rerankModel || '',
-      retrievalChannels: channels,
-    };
+    return resultMapper.buildParentSource(doc, match);
   }
 
   _parentMatchToCandidate(match, doc, rank, options = {}) {
-    const includeChildren = options.includeChildren !== false;
-    const chunkIndexes = [...new Set(match.chunks.map(chunk => chunk.chunkIndex).filter(index => index !== undefined))];
-    const channels = [...new Set(match.chunks.flatMap(chunk => chunk._retrievalChannels || []))];
-    const parentId = match.parentId || match.bestChunk.parentId || `${match.docId}_para_${match.parentIdx ?? 0}`;
-
-    return {
-      rank,
-      id: parentId,
-      parentId,
-      docId: match.docId,
-      title: doc?.title || match.bestChunk.title || '',
-      category: doc?.category || match.bestChunk.category || '',
-      parentIdx: match.parentIdx ?? match.bestChunk.parentIdx ?? -1,
-      parentText: match.parentText || match.bestChunk.text || doc?.content || '',
-      matchedChunks: chunkIndexes.length || match.chunks.length,
-      matchedChunkIds: chunkIndexes,
-      firstChildRank: match.firstChildRank,
-      bestChildRank: match.bestChunk._childRank || match.firstChildRank,
-      matchedScore: match.bestChunk.score || 0,
-      vectorScore: match.bestChunk._vectorScore || 0,
-      sparseScore: match.bestChunk._sparseScore || 0,
-      hybridScore: match.bestChunk._hybridScore || match.bestChunk.score || 0,
-      keywordScore: match.bestChunk._keywordScore || 0,
-      retrievalChannels: channels,
-      children: includeChildren
-        ? match.chunks.map(chunk => this._chunkToCandidate(chunk, chunk._childRank)).sort((a, b) => a.rank - b.rank)
-        : undefined,
-    };
+    return resultMapper.parentMatchToCandidate(match, doc, rank, options);
   }
 
   _chunkToCandidate(chunk, rank) {
-    return {
-      rank,
-      id: chunk.id || `${chunk.docId}:${chunk.chunkIndex}`,
-      docId: chunk.docId,
-      parentId: chunk.parentId || `${chunk.docId}_para_${chunk.parentIdx ?? 0}`,
-      parentIdx: chunk.parentIdx ?? -1,
-      chunkIndex: chunk.chunkIndex ?? -1,
-      title: chunk.title || '',
-      category: chunk.category || '',
-      text: chunk.text || '',
-      score: chunk.score || 0,
-      vectorScore: chunk._vectorScore || 0,
-      sparseScore: chunk._sparseScore || 0,
-      hybridScore: chunk._hybridScore || chunk.score || 0,
-      keywordScore: chunk._keywordScore || 0,
-      rerankScore: chunk._rerankScore || 0,
-      rerankModel: chunk._rerankModel || '',
-      retrievalChannels: chunk._retrievalChannels || [],
-    };
+    return resultMapper.chunkToCandidate(chunk, rank);
   }
 
   _chunkToSource(chunk) {
-    return {
-      id: chunk.docId,
-      title: chunk.title,
-      category: chunk.category,
-      chunkIndex: chunk.chunkIndex,
-      matchedScore: chunk.score || 0,
-      parentId: chunk.parentId || chunk.docId,
-      vectorScore: chunk._vectorScore || 0,
-      sparseScore: chunk._sparseScore || 0,
-      hybridScore: chunk._hybridScore || chunk.score || 0,
-      keywordScore: chunk._keywordScore || 0,
-      rerankScore: chunk._rerankScore || 0,
-      rerankModel: chunk._rerankModel || '',
-      retrievalChannels: chunk._retrievalChannels || [],
-    };
+    return resultMapper.chunkToSource(chunk);
   }
 
   _summarizeRetrievalTrace(trace) {
-    if (!trace) return null;
-    return {
-      mode: trace.mode,
-      category: trace.category,
-      topK: trace.topK,
-      rerank: {
-        enabled: this.rerankEnabled,
-        topK: this.rerankTopK,
-        model: 'bge-reranker-base',
-      },
-      embedding: trace.embedding,
-      vector: trace.vector,
-      keyword: trace.keyword,
-      fused: trace.fused,
-      queryRewrite: trace.queryRewrite || null,
-    };
+    return resultMapper.summarizeRetrievalTrace(trace, { enabled: this.rerankEnabled, topK: this.rerankTopK });
   }
 
   /**
@@ -1412,23 +1253,15 @@ ${historyText}
   }
 
   _preferFilledFields(existing, incoming) {
-    return {
-      text: existing.text || incoming.text || '',
-      title: existing.title || incoming.title || '',
-      category: existing.category || incoming.category || '',
-      docId: existing.docId || incoming.docId || '',
-      parentId: existing.parentId || incoming.parentId || existing.docId || incoming.docId || '',
-      chunkIndex: existing.chunkIndex ?? incoming.chunkIndex ?? -1,
-    };
+    return resultMapper.preferFilledFields(existing, incoming);
   }
 
   _normalizeScore(score) {
-    if (!Number.isFinite(score)) return 0;
-    return Math.max(0, Math.min(1, score));
+    return resultMapper.normalizeScore(score);
   }
 
   _buildNoReliableSourcesReply() {
-    return '知识库中没有检索到足够可靠的来源。请换一种问法，或先在知识库中上传/补充相关文档后再试。';
+    return ragPrompt.buildNoReliableSourcesReply();
   }
 }
 

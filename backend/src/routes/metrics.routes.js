@@ -3,6 +3,7 @@
  */
 const express = require('express');
 const { requireAuth } = require('../middleware/auth.middleware');
+const { operationalMetrics } = require('../services/operational-metrics.service');
 
 const router = express.Router();
 
@@ -59,6 +60,11 @@ router.get('/web-vitals', requireAuth, (req, res) => {
     success: true,
     data: { total: webVitalsStore.length, recent, averages },
   });
+});
+
+router.get('/operations', requireAuth, (req, res) => {
+  if (req.role !== 'admin') return res.status(403).json({ success: false, error: '需要管理员权限' });
+  res.json({ success: true, data: operationalMetrics.snapshot() });
 });
 
 module.exports = { router };

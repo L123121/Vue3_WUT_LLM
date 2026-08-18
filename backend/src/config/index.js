@@ -1,6 +1,7 @@
 // config.js
 require('dotenv').config();
 const path = require('path');
+const aiBaseUrl = process.env.AI_BASE_URL || 'https://api.stepfun.com/v1';
 
 if (!process.env.VITEST) {
   const requiredEnv = ['AI_API_KEY', 'JWT_SECRET'];
@@ -16,7 +17,7 @@ module.exports = {
   // AI 模型服务（OpenAI-compatible API）
   ai: {
     apiKey: process.env.AI_API_KEY,
-    baseUrl: process.env.AI_BASE_URL || 'https://api.stepfun.com/v1',
+    baseUrl: aiBaseUrl,
     model: process.env.AI_MODEL || 'step-3.7-flash',
     maxTokens: 4000,
     temperature: 0.7,
@@ -32,6 +33,21 @@ module.exports = {
       temperature: parseFloat(process.env.AI_FALLBACK_TEMPERATURE) || 0.7,
       timeout: parseInt(process.env.AI_FALLBACK_TIMEOUT, 10) || 60000,
     },
+  },
+  audio: {
+    apiKey: process.env.STEPFUN_API_KEY || (aiBaseUrl.includes('api.stepfun.com') ? process.env.AI_API_KEY : ''),
+    baseUrl: process.env.STEPFUN_AUDIO_BASE_URL || 'https://api.stepfun.com/v1',
+    model: process.env.STEPFUN_TTS_MODEL || 'stepaudio-2.5-tts',
+    voice: process.env.STEPFUN_TTS_VOICE || 'cixingnansheng',
+    responseFormat: process.env.STEPFUN_TTS_FORMAT || 'mp3',
+    speed: Number.parseFloat(process.env.STEPFUN_TTS_SPEED || '1'),
+    instruction: process.env.STEPFUN_TTS_INSTRUCTION || '自然、亲切、清晰，像校园里的学长学姐耐心回答问题',
+    timeout: parseInt(process.env.STEPFUN_TTS_TIMEOUT, 10) || 60000,
+    maxInputLength: 1000,
+    cacheEnabled: process.env.STEPFUN_TTS_CACHE_ENABLED !== 'false',
+    cacheTtlMs: parseInt(process.env.STEPFUN_TTS_CACHE_TTL_MS, 10) || 30 * 60 * 1000,
+    cacheMaxEntries: parseInt(process.env.STEPFUN_TTS_CACHE_MAX_ENTRIES, 10) || 100,
+    cacheMaxBytes: parseInt(process.env.STEPFUN_TTS_CACHE_MAX_BYTES, 10) || 64 * 1024 * 1024,
   },
   // LLM-as-judge 评测专用（独立 Key，不跟生产抢配额）
   judge: {
@@ -149,7 +165,3 @@ module.exports = {
     };
   })(),
 };
-
-
-
-

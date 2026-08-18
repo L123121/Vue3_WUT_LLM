@@ -17,7 +17,7 @@
 - **文件对话与 OCR**：支持图片、PDF、DOCX、PPTX、TXT、Markdown；扫描件和图片可走视觉 OCR。
 - **会话管理**：创建、切换、重命名、删除、重试、收藏和后端持久化。
 - **公开分享**：登录用户可生成只读分享快照，访问 `/share/:code` 无需登录。
-- **语音输入**：浏览器支持 Web Speech API 时可实时转写。
+- **语音交互**：浏览器支持 Web Speech API 时可实时转写；配置 StepFun TTS 后支持逐条朗读、停止播放与 AI 自动朗读。
 - **评测与反馈**：包含检索评测、RAGAS、LLM-as-judge、Agent 路由评测和人工评分页面。
 - **个性化体验**：主题、语言、头像、个人资料与用户授权记忆。
 
@@ -203,7 +203,9 @@ npm run dev          # 启动 Vite
 npm start            # 启动 Express
 npm run lint:check   # ESLint 检查
 npm run lint         # ESLint 自动修复
-npm test             # 前后端 Vitest
+npm test             # 日常快速测试：前后端并行，目标 60 秒内
+npm run test:all     # 完整测试：包含重型存储与解析用例
+npm run test:integration # 单独运行重型集成测试
 npm run build        # 生产前端构建
 npm run format       # Prettier
 ```
@@ -220,6 +222,13 @@ RAG 与 Agent 评测脚本位于 `scripts/rag-eval/`，主要数据集位于 `sc
 | `JWT_SECRET` | 无 | JWT 签名密钥，非测试环境必须设置 |
 | `AI_BASE_URL` | `https://api.stepfun.com/v1` | OpenAI-compatible API 地址 |
 | `AI_MODEL` | `step-3.7-flash` | 主对话模型 |
+| `STEPFUN_API_KEY` | 复用 StepFun `AI_API_KEY` | StepAudio TTS Key；主模型不是 StepFun 时需要单独设置 |
+| `STEPFUN_TTS_MODEL` | `stepaudio-2.5-tts` | AI 回复语音合成模型 |
+| `STEPFUN_TTS_VOICE` | `cixingnansheng` | TTS 官方或自定义音色 ID |
+| `STEPFUN_TTS_INSTRUCTION` | 校园助手自然语气 | StepAudio 2.5 TTS 全局表演指令 |
+| `STEPFUN_TTS_CACHE_ENABLED` | `true` | 是否启用进程内 TTS 缓存；敏感场景可关闭 |
+| `STEPFUN_TTS_CACHE_TTL_MS` | `1800000` | TTS 内存缓存有效期，默认 30 分钟 |
+| `STEPFUN_TTS_CACHE_MAX_BYTES` | `67108864` | 单实例 TTS 缓存内存上限，默认 64MB |
 | `CORS_ORIGIN` | 无 | 生产跨域白名单，多个来源用逗号分隔 |
 
 ### Agent 与路由
@@ -324,6 +333,7 @@ RAG 与 Agent 评测脚本位于 `scripts/rag-eval/`，主要数据集位于 `sc
 ```bash
 npm run lint:check
 npm test
+npm run test:all
 npm run build
 docker compose config --quiet
 ```

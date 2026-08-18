@@ -8,6 +8,7 @@ const morgan = require('morgan');
 const cookieParser = require('cookie-parser');
 const rateLimit = require('express-rate-limit');
 const { createTraceId, logEvent, sanitizeTraceId } = require('../services/observability.service');
+const { operationalMetrics } = require('../services/operational-metrics.service');
 
 function applyMiddleware(app) {
   const isProduction = process.env.NODE_ENV === 'production';
@@ -21,13 +22,16 @@ function applyMiddleware(app) {
 
     const startedAt = Date.now();
     res.on('finish', () => {
+      const durationMs = Date.now() - startedAt;
+      const requestPath = req.path || String(req.originalUrl || '').split('?')[0];
+      operationalMetrics.recordRequest({ method: req.method, path: requestPath, statusCode: res.statusCode, durationMs, traceId });
       if (process.env.HTTP_TRACE_LOGS === 'false') return;
       logEvent('info', 'http_request', {
         traceId,
         method: req.method,
-        path: req.originalUrl,
+        path: requestPath,
         statusCode: res.statusCode,
-        durationMs: Date.now() - startedAt,
+        durationMs,
         userId: req.userId || null,
       });
     });
@@ -96,5 +100,3 @@ function applyMiddleware(app) {
 }
 
 module.exports = { applyMiddleware };
-
-
