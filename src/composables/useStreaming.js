@@ -17,6 +17,18 @@ import {
 const STREAM_STALL_TIMEOUT = 60000;
 
 /**
+ * 模块级「当前已注册的 visibilitychange handler」引用。
+ *
+ * useStreaming() 在 message.store（app 级单例）里调用，其 onUnmounted 清理
+ * 在 store 上永不触发。HMR 重载 store 模块时，旧实例的 cleanup 不会被调用，
+ * 新实例又 addEventListener，导致 document 上监听器逐次叠加。
+ *
+ * 解决：每次 setupVisibilityHandler 注册前，先移除「上一次注册的 handler」。
+ * 这样无论 useStreaming 被实例化多少次，document 上恒为最多一个监听器。
+ */
+let registeredVisibilityHandler = null;
+
+/**
  * 更新消息对象的辅助函数
  * 用新数组替换 conv.messages（属性赋值），触发 Vue 响应式链
  *
@@ -68,6 +80,12 @@ export function useStreaming() {
   // pendingContent 中，直到切回前台或流结束才一次性刷新，用户体验上是"长时间无反应"
   // 加这个监听后，只要切到后台就立即刷到消息，保证下次切回来时能看到最新内容
   const setupVisibilityHandler = () => {
+    // 先移除上一次注册的 handler（可能是别的 useStreaming 实例留下的，
+    // 例如 HMR 重载后），保证 document 上恒为最多一个监听器。
+    if (registeredVisibilityHandler) {
+      document.removeEventListener('visibilitychange', registeredVisibilityHandler);
+      registeredVisibilityHandler = null;
+    }
     visibilityHandler = () => {
       if (document.visibilityState === 'hidden' && pendingContent) {
         // 取消待执行的 RAF（避免重复写）
@@ -87,6 +105,7 @@ export function useStreaming() {
       }
     };
     document.addEventListener('visibilitychange', visibilityHandler);
+    registeredVisibilityHandler = visibilityHandler;
   };
   setupVisibilityHandler();
 
@@ -121,6 +140,10 @@ export function useStreaming() {
     cancelPendingRaf();
     if (visibilityHandler) {
       document.removeEventListener('visibilitychange', visibilityHandler);
+      // 若模块级引用仍指向自己，一并清空，避免后续 setup 误判为「已有注册」
+      if (registeredVisibilityHandler === visibilityHandler) {
+        registeredVisibilityHandler = null;
+      }
       visibilityHandler = null;
     }
     if (currentAbortController) {
