@@ -117,15 +117,21 @@ export function useMarkdownRenderer() {
 
   // 更新渲染内容
   const updateRender = async (content) => {
-    // 使用 Web Worker 处理大内容
+    // 使用 Web Worker 处理大内容；Worker 不可用/超时/onerror 时 reject，走主线程兜底
     if (content && content.length > WORKER_THRESHOLD) {
       isLoadingWorker.value = true;
-      const html = await renderInWorker(content);
-      if (html) {
-        renderedContent.value = html;
-        lastRenderedAt.value = content;
-      } else {
-        // Worker 回退
+      try {
+        const html = await renderInWorker(content);
+        if (html) {
+          renderedContent.value = html;
+          lastRenderedAt.value = content;
+        } else {
+          // 空内容（合法渲染输出）— 不算失败，正常收尾
+          renderedContent.value = html;
+          lastRenderedAt.value = content;
+        }
+      } catch {
+        // Worker 失败/超时/不可用 → 主线程回退（原有行为）
         renderedContent.value = renderMarkdownMain(content);
         lastRenderedAt.value = content;
       }

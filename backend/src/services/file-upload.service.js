@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { AsyncLocalStorage } = require('async_hooks');
 const multer = require('multer');
 const mammoth = require('mammoth');
 const JSZip = require('jszip');
@@ -85,8 +86,15 @@ if (!fs.existsSync(mediaDir)) {
   fs.mkdirSync(mediaDir, { recursive: true });
 }
 
-/** 图片计数器（单次解析内递增，用于生成唯一文件名） */
-let _imageCounter = 0;
+/**
+ * 单次 DOCX 解析的图片计数上下文。
+ * 旧实现用模块级 `_imageCounter` 做差值统计本次保存的图片数，但
+ * turndownService 是模块级单例，多个 parseDocx 并发时会共享同一计数器，
+ * 导致 savedImages = _imageCounter - counterBefore 把对方保存的图片也算进来。
+ * 改为 AsyncLocalStorage：每次 parseDocx 在自己的 store({ count: 0 }) 里
+ * 递增，互不串扰。计数器仅用于统计，不参与文件名生成（文件名用时间戳+随机）。
+ */
+const docxImageContext = new AsyncLocalStorage();
 
 /**
  * 保存 base64 图片到 media 目录
@@ -95,9 +103,11 @@ let _imageCounter = 0;
  * @returns {string} 文件名
  */
 function saveBase64Image(dataUri, _alt) {
-  _imageCounter++;
+  // 仅统计本次解析保存的图片数；未运行在 parseDocx 上下文时（理论不会发生）则跳过
+  const store = docxImageContext.getStore();
+  if (store) store.count++;
   const match = dataUri.match(/^data:image\/(\w+);base64,(.+)$/);
-  // 文件名用时间戳+随机后缀保证唯一（全局计数器并发时会冲突）
+  // 文件名用时间戳+随机后缀保证唯一
   const rand = Math.random().toString(36).slice(2, 8);
   if (!match) return `image-${Date.now()}-${rand}.png`;
 
@@ -391,10 +401,12 @@ async function parseImage(filePath, ext) {
  * - 公式 → mammoth 不直接支持 Office Math，尝试提取原始 XML 中的公式文本
  */
 async function parseDocx(filePath) {
-  // 记录本次解析前的全局计数，用差值统计本次保存的图片数（不重置，避免并发解析互相干扰）
-  const counterBefore = _imageCounter;
+  // 本次解析的图片计数容器；saveBase64Image 在 ALS 上下文内递增它，
+  // 并发解析各自独立，互不串扰（详见 docxImageContext 注释）。
+  const imageStore = { count: 0 };
 
-  // 第一步：用 convertToHtml 保留表格和图片
+  // 第一步：用 convertToHtml 保留表格和图片（图片保存发生在下面 turndown 阶段，
+  // 不在 mammoth 内，故 mammoth 调用本身不需要 ALS 上下文）
   const { value: html, messages } = await mammoth.convertToHtml({
     path: filePath,
   });
@@ -406,12 +418,13 @@ async function parseDocx(filePath) {
   // 第二步：提取公式（Office Math）
   const formulas = await extractDocxFormulas(filePath);
 
-  // 第三步：HTML → Markdown
-  let markdown = turndownService.turndown(html);
+  // 第三步：HTML → Markdown。turndown 的 image rule 会调 saveBase64Image，
+  // 必须在 ALS 上下文内执行，该解析保存的图片才会计入 imageStore.count。
+  const markdown = docxImageContext.run(imageStore, () => turndownService.turndown(html));
 
   // 第四步：在顶部添加摘要
   const notes = [];
-  const savedImages = _imageCounter - counterBefore; // 本次解析实际保存的图片数
+  const savedImages = imageStore.count; // 本次解析实际保存的图片数
   if (imageCount > 0 || savedImages > 0) {
     const totalImages = Math.max(imageCount, savedImages);
     notes.push(`> 📷 本文档包含 ${totalImages} 张图片，已保存至附件目录 (media/)`);

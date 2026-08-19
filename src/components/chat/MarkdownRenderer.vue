@@ -123,15 +123,21 @@ const renderCitations = (html) => html.replace(
   const updateRender = async () => {
     const content = props.content;
 
-    // Use Web Worker for large content
+    // Use Web Worker for large content; reject 语义：不可用/超时/onerror → 主线程兜底
     if (content && content.length > WORKER_THRESHOLD) {
       isLoadingWorker.value = true;
-      const html = await renderInWorker(content);
-      if (html) {
-        renderedContent.value = wrapHighlight(renderCitations(DOMPurify.sanitize(html, { ALLOWED_TAGS, ALLOWED_ATTR })));
-        lastRenderedAt.value = content;
-      } else {
-        // Worker fallback
+      try {
+        const html = await renderInWorker(content);
+        if (html) {
+          renderedContent.value = wrapHighlight(renderCitations(DOMPurify.sanitize(html, { ALLOWED_TAGS, ALLOWED_ATTR })));
+          lastRenderedAt.value = content;
+        } else {
+          // Worker fallback
+          renderedContent.value = renderMarkdownMain(content);
+          lastRenderedAt.value = content;
+        }
+      } catch {
+        // Worker 失败/超时/不可用 → 主线程兜底（与原 fallback 行为一致）
         renderedContent.value = renderMarkdownMain(content);
         lastRenderedAt.value = content;
       }
