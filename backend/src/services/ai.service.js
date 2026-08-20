@@ -11,6 +11,13 @@ const { operationalMetrics } = require('./operational-metrics.service');
 // 多余的请求排队等待，而非直接报错。
 
 const LLM_CONCURRENCY = parseInt(process.env.LLM_CONCURRENCY || '3', 10);
+const { QueryCache } = require('../utils/query-cache');
+
+// history compaction 缓存（模块级单例）
+const compactCache = new QueryCache(
+  config?.rag?.compactCacheMaxEntries || 200,
+  config?.rag?.compactCacheTtlMs || 1800000,
+);
 
 class RequestQueue {
   constructor(maxConcurrent) {
@@ -185,10 +192,29 @@ class AiService {
     const early = conversation.slice(0, conversation.length - MAX_HISTORY_MESSAGES);
     const recent = conversation.slice(-MAX_HISTORY_MESSAGES);
 
+    // 缓存拦截：相同的早期消息窗口可直接返回缓存的摘要
+    if (config?.rag?.cacheEnabled) {
+      const hash = this._compactHash(early);
+      const cached = compactCache.get(hash);
+      if (cached !== undefined) {
+        return [
+          ...systemMessages,
+          { role: 'system', content: `（此前对话摘要）${cached}` },
+          ...recent,
+        ];
+      }
+    }
+
     try {
       const summary = await this.judgeService.summarize(early);
       if (summary) {
         console.log(`[AI] 滚动摘要: ${early.length} 条早期消息 → ${summary.length} 字摘要`);
+
+        // 缓存写入
+        if (config?.rag?.cacheEnabled) {
+          compactCache.set(this._compactHash(early), summary);
+        }
+
         return [
           ...systemMessages,
           { role: 'system', content: `（此前对话摘要）${summary}` },
@@ -199,6 +225,12 @@ class AiService {
       console.warn(`[AI] 滚动摘要失败，降级为直接截断: ${err.message}`);
     }
     return [...systemMessages, ...recent];
+  }
+
+  /** 将早期消息列表 hash 为短字符串，用于 compaction 缓存 key */
+  _compactHash(messages) {
+    if (!messages || !messages.length) return 'empty';
+    return messages.map(m => `${m.role}:${(m.content || '').slice(0, 80)}`).join('|');
   }
 
   // ========== 非流式（经队列） ==========

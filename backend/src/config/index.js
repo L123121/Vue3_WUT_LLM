@@ -132,6 +132,14 @@ module.exports = {
     intentRoutingEnabled: process.env.INTENT_ROUTING_ENABLED !== 'false',
     // LLM 意图分类兜底（默认关：避免每条消息多一次 LLM 调用拖慢首包延迟；fastRoute 零成本路由常开）
     intentClassifyEnabled: process.env.INTENT_CLASSIFY_ENABLED === 'true',
+    // 检索多级缓存（2026-08-20 新增）
+    cacheEnabled: process.env.RAG_CACHE_ENABLED !== 'false',
+    cacheTtlMs: parseInt(process.env.RAG_CACHE_TTL_MS, 10) || 300000,           // 5min
+    cacheMaxEntries: parseInt(process.env.RAG_CACHE_MAX_ENTRIES, 10) || 500,
+    rerankerCacheMaxEntries: parseInt(process.env.RAG_RERANKER_CACHE_MAX, 10) || 2000,
+    rewriteCacheMaxEntries: parseInt(process.env.RAG_REWRITE_CACHE_MAX, 10) || 500,
+    compactCacheMaxEntries: parseInt(process.env.RAG_COMPACT_CACHE_MAX, 10) || 200,
+    compactCacheTtlMs: parseInt(process.env.RAG_COMPACT_CACHE_TTL_MS, 10) || 1800000, // 30min
   },
   // 轻量 Agent 工具调度（V2.0）：默认启用；AGENT_TOOL_ENABLED=false 可一键回退 RAG
   agent: {
