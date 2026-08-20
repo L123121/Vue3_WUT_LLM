@@ -22,6 +22,17 @@ const {
 } = require('./rag-ranking.service');
 const ragPrompt = require('./rag-prompt.service');
 const resultMapper = require('./rag-result-mapper.service');
+const { QueryCache } = require('../utils/query-cache');
+
+// 检索结果缓存 + query rewrite 缓存（模块级单例）
+const retrievalCache = new QueryCache(
+  config.rag.cacheMaxEntries || 500,
+  config.rag.cacheTtlMs || 300000,
+);
+const rewriteCache = new QueryCache(
+  config.rag.rewriteCacheMaxEntries || 500,
+  config.rag.cacheTtlMs || 300000,
+);
 
 class RagService {
   constructor(aiService = null) {
@@ -283,6 +294,7 @@ class RagService {
         isMock: false,
         sources: [],
         context: '',
+        topChunks: [],
         model: 'local-hybrid-search+no-source',
         questionType: pipeline.questionType,
         rewrittenQuery: pipeline.rewrittenQuery,
@@ -364,6 +376,7 @@ class RagService {
       isMock: false,
       sources: pipeline.sources,
       context: pipeline.context,
+      topChunks: pipeline.topChunks,
       model: 'local-hybrid-search+parent-child',
       questionType: pipeline.questionType,
       rewrittenQuery: pipeline.rewrittenQuery,
@@ -386,6 +399,19 @@ class RagService {
     const searchTopK = parseInt(options.topK || options.childTopK || this.searchTopK, 10) || this.searchTopK;
     const tracer = options.tracer || null;
     const queryVariant = options.queryVariant || 'primary';
+
+    // 缓存拦截：tracer/noCache/category 存在时不缓存
+    const canCache = config.rag.cacheEnabled && !tracer && !options.noCache && !options.category;
+    if (canCache) {
+      const cacheKey = String(query || '').trim().toLowerCase();
+      const cached = retrievalCache.get(cacheKey);
+      if (cached) {
+        cached.trace = cached.trace || {};
+        cached.trace.cacheHit = true;
+        cached.trace.queryVariant = queryVariant;
+        return cached;
+      }
+    }
 
     // 元数据过滤（Multi-faceted Filtering）：显式 category 优先；
     // 未指定时按问题关键词自动推断（低置信返回 null → 不设过滤，保持全库召回）
@@ -504,6 +530,12 @@ class RagService {
       topScore: trace.fused.topScore,
       channels: trace.fused.channels,
     });
+
+    // 缓存写入
+    if (canCache) {
+      const cacheKey = String(query || '').trim().toLowerCase();
+      retrievalCache.set(cacheKey, { candidates, trace, rewrittenQuery: trace?.rewrittenQuery || null });
+    }
 
     return { candidates, trace, vectorResults: candidates, keywordResults: [] };
   }
@@ -986,6 +1018,15 @@ class RagService {
    */
   async rewriteQuery(query, history) {
     if (!history || history.length === 0) return null;
+
+    // 缓存拦截：同 query + 最近 6 条历史窗口时直接返回
+    if (config.rag.cacheEnabled) {
+      const historyHash = this._hashHistory(history.slice(-6));
+      const cacheKey = `${String(query || '').trim().toLowerCase()}|${historyHash}`;
+      const cached = rewriteCache.get(cacheKey);
+      if (cached !== undefined) return cached;
+    }
+
     // 取最近 3 轮（6 条消息），在 token 成本和跨度覆盖之间折中
     // 3 轮覆盖绝大多数指代场景，超过 3 轮的指代即使人工也难判断
     const recentHistory = history.slice(-6);
@@ -1014,12 +1055,26 @@ ${historyText}
       if (!rewritten || rewritten.length < 2) return null;
       // 防止改写后和原文一模一样（LLM 偷懒）
       if (rewritten === query.trim()) return null;
+
+      // 缓存写入
+      if (config.rag.cacheEnabled) {
+        const historyHash = this._hashHistory(recentHistory);
+        const cacheKey = `${String(query || '').trim().toLowerCase()}|${historyHash}`;
+        rewriteCache.set(cacheKey, rewritten);
+      }
+
       console.log(`[QueryRewrite] "${query}" → "${rewritten}"`);
       return rewritten;
     } catch (err) {
       console.warn(`[QueryRewrite] 改写失败: ${err.message}`);
       return null;
     }
+  }
+
+  /** 将消息列表 hash 为短字符串，用于 rewrite 缓存 key */
+  _hashHistory(messages) {
+    if (!messages || !messages.length) return 'empty';
+    return messages.map(m => `${m.role}:${(m.content || '').slice(0, 100)}`).join('|');
   }
 
   /**

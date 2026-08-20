@@ -206,11 +206,14 @@ npm run lint         # ESLint 自动修复
 npm test             # 日常快速测试：前后端并行，目标 60 秒内
 npm run test:all     # 完整测试：包含重型存储与解析用例
 npm run test:integration # 单独运行重型集成测试
+npm run eval:rag-baseline   # 调用评测 API，生成 Recall/MRR/nDCG 基线
 npm run build        # 生产前端构建
 npm run format       # Prettier
 ```
 
 RAG 与 Agent 评测脚本位于 `scripts/rag-eval/`，主要数据集位于 `scripts/rag-eval/dataset/`。
+
+检索基线默认读取 `scripts/rag-eval/dataset/full-coverage-qa.json`，评测前需启动后端或设置 `EVAL_API_BASE` 指向可访问的评测 API；可用 `DATASET_PATH`、`RESULTS_DIR` 和 `EVAL_AUTH_TOKEN` 覆盖数据集、结果目录和认证信息。
 
 ## 环境变量
 

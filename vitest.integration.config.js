@@ -10,6 +10,7 @@ export default defineConfig({
       'backend/__tests__/vector-store-qdrant.test.js',
       'backend/__tests__/agent-tools.test.js',
       'backend/__tests__/chat.controller.test.js',
+      'backend/__tests__/rag-pipeline.e2e.test.js',
     ],
     environment: 'node',
     pool: 'forks',

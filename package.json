@@ -20,6 +20,7 @@
     "test:frontend": "node scripts/run-test-suites.mjs frontend",
     "test:backend": "node scripts/run-test-suites.mjs backend",
     "test:integration": "node scripts/run-test-suites.mjs integration",
+    "eval:rag-baseline": "node backend/scripts/rag-eval/eval-baseline.mjs",
     "test:watch": "vitest --pool=threads --maxWorkers=1",
     "postinstall": "cd backend && npm install",
     "eval:ragas": "cd scripts/rag-eval && npm run eval:ragas",

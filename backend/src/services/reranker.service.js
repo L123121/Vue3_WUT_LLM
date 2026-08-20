@@ -10,9 +10,18 @@
  * Cache: .model-cache/Xenova/bge-reranker-base/
  */
 const path = require('path');
+const crypto = require('crypto');
 
 const MODEL_NAME = 'Xenova/bge-reranker-base';
 const MODEL_CACHE_DIR = path.resolve(__dirname, '../../../.model-cache');
+const { QueryCache } = require('../utils/query-cache');
+const config = require('../config');
+
+// reranker 分数缓存（模块级单例）
+const rerankerScoreCache = new QueryCache(
+  config?.rag?.rerankerCacheMaxEntries || 2000,
+  config?.rag?.cacheTtlMs || 300000,
+);
 
 let modelInstance = null;
 let loadPromise = null;
@@ -77,6 +86,33 @@ class RerankerService {
       return candidates;
     }
 
+    const qKey = String(query || '').trim().toLowerCase();
+
+    if (config?.rag?.cacheEnabled) {
+      const uncached = [];
+      let allCached = true;
+      for (const c of candidates) {
+        const textHash = crypto.createHash('md5')
+          .update(String(c.text || '').slice(0, 200)).digest('hex').slice(0, 12);
+        const score = rerankerScoreCache.get(`${qKey}|${textHash}`);
+        if (score !== undefined) {
+          c._rerankScore = score;
+          c._rerankModel = 'cache';
+        } else {
+          allCached = false;
+          uncached.push(c);
+        }
+      }
+      if (allCached) {
+        candidates.forEach(c => { c._rerankModel = 'cache'; });
+        candidates.sort((a, b) => (b._rerankScore || 0) - (a._rerankScore || 0));
+        return candidates.slice(0, topK);
+      }
+      if (uncached.length < candidates.length) {
+        candidates = uncached;
+      }
+    }
+
     let model;
     try {
       model = await this._loadModel();
@@ -85,16 +121,14 @@ class RerankerService {
       return candidates.slice(0, topK).map(c => ({ ...c, _rerankScore: c.score || 0, _rerankModel: 'fallback' }));
     }
 
-    const { tokenizer, model: reranker } = model;
+    const { tokenizer, model: rerankerModel } = model;
 
     try {
       const MAX_RERANK = 30;
-      const needed = Math.min(candidates.length, Math.max(topK * 2, 10), MAX_RERANK); // 多取一些给 rerank 筛选，上限 30
+      const needed = Math.min(candidates.length, Math.max(topK * 2, 10), MAX_RERANK);
       const slices = candidates.slice(0, needed);
       const texts = slices.map(c => String(c.text || ''));
 
-      // Batch tokenize: 构造 (query, text) 对
-      // BGE-reranker 官方格式: [CLS] query [SEP] passage [SEP] —— query 必须是主输入
       const inputs = await tokenizer(texts.map(() => query), {
         text_pair: texts,
         padding: true,
@@ -103,21 +137,35 @@ class RerankerService {
         return_tensors: 'pt',
       });
 
-      const outputs = await reranker(inputs);
-      const logits = outputs.logits.data; // Float32Array
+      const outputs = await rerankerModel(inputs);
+      const logits = outputs.logits.data;
 
-      // 对每个候选赋值 rerank 分数
       for (let i = 0; i < slices.length; i++) {
-        // BGE-reranker 输出 logit，sigmoid 转成 0-1 分数
         const logit = logits[i] ?? 0;
-        const score = 1 / (1 + Math.exp(-logit)); // sigmoid
+        const score = 1 / (1 + Math.exp(-logit));
         slices[i]._rerankScore = score;
         slices[i]._rerankModel = 'bge-reranker-base';
       }
 
-      // 按 rerank 分数重排
-      slices.sort((a, b) => b._rerankScore - a._rerankScore);
-      return slices.slice(0, topK);
+      // 回写缓存
+      if (config?.rag?.cacheEnabled) {
+        for (const c of slices) {
+          if (c._rerankScore !== undefined) {
+            const textHash = crypto.createHash('md5')
+              .update(String(c.text || '').slice(0, 200)).digest('hex').slice(0, 12);
+            rerankerScoreCache.set(`${qKey}|${textHash}`, c._rerankScore);
+          }
+        }
+      }
+
+      // 合并部分缓存结果
+      const allResults = this._pendingMerge
+        ? [...slices, ...this._pendingMerge]
+        : slices;
+      this._pendingMerge = undefined;
+
+      allResults.sort((a, b) => (b._rerankScore || 0) - (a._rerankScore || 0));
+      return allResults.slice(0, topK);
     } catch (err) {
       console.warn('[Reranker] 推理失败，退回原始排序:', err.message);
       return candidates.slice(0, topK).map(c => ({ ...c, _rerankScore: c.score || 0, _rerankModel: 'fallback' }));

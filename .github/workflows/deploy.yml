@@ -77,6 +77,14 @@ jobs:
           JWT_SECRET: test-secret
           AI_API_KEY: test-ai-key
 
+      # 可选：配置仓库变量 RAG_EVAL_ENABLED=true 后，对部署中的评测 API 执行检索回归基线
+      - name: Run RAG retrieval baseline
+        if: ${{ vars.RAG_EVAL_ENABLED == 'true' }}
+        run: npm run eval:rag-baseline
+        env:
+          EVAL_API_BASE: ${{ secrets.RAG_EVAL_API_BASE }}
+          EVAL_AUTH_TOKEN: ${{ secrets.RAG_EVAL_AUTH_TOKEN }}
+
   # ========== 2. 构建 & 推送 Docker 镜像 ==========
   build:
     name: Build & Push Docker Image
