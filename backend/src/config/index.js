@@ -36,7 +36,7 @@ module.exports = {
   },
   audio: {
     apiKey: process.env.STEPFUN_API_KEY || (aiBaseUrl.includes('api.stepfun.com') ? process.env.AI_API_KEY : ''),
-    baseUrl: process.env.STEPFUN_AUDIO_BASE_URL || 'https://api.stepfun.com/v1',
+    baseUrl: process.env.STEPFUN_AUDIO_BASE_URL || (aiBaseUrl.includes('/step_plan/v1') ? aiBaseUrl : 'https://api.stepfun.com/v1'),
     model: process.env.STEPFUN_TTS_MODEL || 'stepaudio-2.5-tts',
     voice: process.env.STEPFUN_TTS_VOICE || 'cixingnansheng',
     responseFormat: process.env.STEPFUN_TTS_FORMAT || 'mp3',

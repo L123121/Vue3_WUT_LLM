@@ -49,6 +49,31 @@ describe('audio.service', () => {
     });
   });
 
+  it('将上游额度耗尽映射为可识别的客户端错误', async () => {
+    const service = new AudioService({
+      fetch: vi.fn().mockResolvedValue({
+        ok: false,
+        status: 402,
+        text: async () => JSON.stringify({ error: { type: 'quota_exceeded' } }),
+      }),
+      config: {
+        apiKey: 'test-key',
+        baseUrl: 'https://api.stepfun.com/v1',
+        model: 'stepaudio-2.5-tts',
+        voice: 'cixingnansheng',
+        responseFormat: 'mp3',
+        speed: 1,
+        timeout: 1000,
+        maxInputLength: 1000,
+      },
+    });
+
+    await expect(service.synthesize('测试朗读')).rejects.toMatchObject({
+      statusCode: 402,
+      code: 'TTS_QUOTA_EXCEEDED',
+    });
+  });
+
   it('缓存相同配置与文本的语音结果', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
