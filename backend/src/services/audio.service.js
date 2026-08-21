@@ -21,11 +21,25 @@ function normalizeSpeechText(value) {
     .trim();
 }
 
-function createHttpError(message, statusCode) {
+function createHttpError(message, statusCode, code) {
   const error = new Error(message);
   error.statusCode = statusCode;
   error.expose = true;
+  if (code) error.code = code;
   return error;
+}
+
+function getUpstreamSpeechError(detail, statusCode) {
+  try {
+    const payload = JSON.parse(detail);
+    const code = payload?.error?.type || payload?.code;
+    if (code === "quota_exceeded" || statusCode === 402) {
+      return createHttpError("语音服务额度已耗尽，已切换为浏览器朗读", 402, "TTS_QUOTA_EXCEEDED");
+    }
+  } catch {
+    // 上游未返回 JSON 时使用通用错误。
+  }
+  return createHttpError("语音生成失败，请稍后重试", 502, "TTS_UPSTREAM_ERROR");
 }
 
 function createAbortError(reason) {
@@ -231,7 +245,7 @@ class AudioService {
       if (!response.ok) {
         const detail = await response.text().catch(() => "");
         console.error(`[Audio] StepFun 请求失败: ${response.status}`, detail.slice(0, 500));
-        throw createHttpError("语音生成失败，请稍后重试", 502);
+        throw getUpstreamSpeechError(detail, response.status);
       }
 
       const contentLength = Number.parseInt(response.headers.get("content-length") || "", 10);

@@ -35,6 +35,7 @@ app.use((err, req, res, _next) => {
   res.status(statusCode).json({
     success: false,
     error: message,
+    ...(err.code ? { code: err.code } : {}),
     ...(statusCode >= 500 ? {} : { details: err.message }),
   });
 });

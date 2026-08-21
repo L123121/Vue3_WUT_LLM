@@ -152,6 +152,7 @@ const copyMessage = (text) => {
 const toggleSpeech = async () => {
   try {
     const result = await speechPlayer.play(props.message.id, messageText.value);
+    if (result?.fallback) toast.warning('语音服务额度已耗尽，正在使用浏览器本地朗读');
     if (result?.truncated) toast.warning('回答较长，本次仅朗读前 4000 字');
   } catch (error) {
     if (error?.name === 'AbortError') return;

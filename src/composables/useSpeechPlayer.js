@@ -9,6 +9,7 @@ let currentAudio = null;
 let currentObjectUrl = null;
 let currentController = null;
 let resolveCurrentPlayback = null;
+let resolveBrowserPlayback = null;
 let playbackToken = 0;
 
 export const normalizeReadableText = (value) => String(value || '')
@@ -87,6 +88,9 @@ const stop = () => {
   playbackToken += 1;
   currentController?.abort();
   currentController = null;
+  resolveBrowserPlayback?.(false);
+  resolveBrowserPlayback = null;
+  window.speechSynthesis?.cancel();
   releaseAudio();
   activeMessageId.value = null;
   isLoading.value = false;
@@ -110,6 +114,33 @@ const playBlob = (blob, token) => new Promise((resolve, reject) => {
   }, { once: true });
   currentAudio.play().catch(reject);
 });
+
+const playWithBrowserSpeech = async (chunks, token, startIndex = 0) => {
+  if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) {
+    throw new Error('语音服务额度已耗尽，且当前浏览器不支持本地朗读');
+  }
+
+  for (let index = 0; index < chunks.length; index += 1) {
+    if (token !== playbackToken) return false;
+    chunkIndex.value = startIndex + index + 1;
+    await new Promise((resolve, reject) => {
+      const utterance = new window.SpeechSynthesisUtterance(chunks[index]);
+      utterance.lang = 'zh-CN';
+      utterance.rate = 1;
+      resolveBrowserPlayback = (completed) => {
+        resolveBrowserPlayback = null;
+        resolve(completed);
+      };
+      utterance.addEventListener('end', () => resolveBrowserPlayback?.(true), { once: true });
+      utterance.addEventListener('error', () => {
+        resolveBrowserPlayback = null;
+        reject(new Error('浏览器语音朗读失败'));
+      }, { once: true });
+      window.speechSynthesis.speak(utterance);
+    });
+  }
+  return true;
+};
 
 const play = async (messageId, text) => {
   if (activeMessageId.value === messageId) {
@@ -136,7 +167,14 @@ const play = async (messageId, text) => {
       isLoading.value = true;
       chunkIndex.value = index + 1;
       const { blob, error } = await pendingChunk;
-      if (error) throw error;
+      if (error) {
+        if (error.code === 'TTS_QUOTA_EXCEEDED') {
+          isLoading.value = false;
+          const played = await playWithBrowserSpeech(chunks.slice(index), token, index);
+          return { played, truncated, fallback: true };
+        }
+        throw error;
+      }
       if (token !== playbackToken) return { played: false, truncated };
       pendingChunk = index + 1 < chunks.length ? loadChunk(chunks[index + 1]) : null;
       isLoading.value = false;
