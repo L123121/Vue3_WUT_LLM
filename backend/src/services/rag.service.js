@@ -354,6 +354,7 @@ class RagService {
       usedParentChild: !!pipeline.context,
       matchedDocs: pipeline.sources.length,
       retrievedChunks: pipeline.topChunks.length,
+      hasSources: pipeline.sources.length > 0,
     });
 
     tracer.setRetrieval(pipeline.retrieval);

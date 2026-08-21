@@ -33,7 +33,8 @@ class MetricsService {
       ragQueries: 0,          // 启用 RAG 的查询数
       parentChildQueries: 0,  // 使用父子召回的查询数
       matchedDocCount: 0,     // 匹配到的父文档总数
-      totalRetrievedChunks: 0 // 检索到的总切片数
+      totalRetrievedChunks: 0, // 检索到的总切片数
+      queriesWithSources: 0 // 返回至少一个引用来源的查询数
     };
 
     // 延迟分段（用于计算 p50/p95/p99）
@@ -49,6 +50,7 @@ class MetricsService {
     };
 
     this.stageStats = {};
+    this.latestEvaluation = null;
 
     this.startTime = Date.now();
   }
@@ -109,6 +111,17 @@ class MetricsService {
     if (options.usedParentChild) this.rag.parentChildQueries++;
     if (options.matchedDocs) this.rag.matchedDocCount += options.matchedDocs;
     if (options.retrievedChunks) this.rag.totalRetrievedChunks += options.retrievedChunks;
+    if (options.hasSources) this.rag.queriesWithSources += 1;
+  }
+
+  recordEvaluation({ metrics: evaluationMetrics, avgLatency = 0, sampleCount = 0, evaluatedAt = new Date().toISOString() } = {}) {
+    if (!evaluationMetrics) return;
+    this.latestEvaluation = {
+      ...evaluationMetrics,
+      avgLatency: Number(avgLatency) || 0,
+      sampleCount: Number(sampleCount) || 0,
+      evaluatedAt,
+    };
   }
 
   // ==================== 聚合输出 ====================
@@ -165,6 +178,9 @@ class MetricsService {
     const ragCoverage = this.rag.totalQueries > 0
       ? ((this.rag.parentChildQueries / this.rag.totalQueries) * 100).toFixed(1)
       : 0;
+    const sourceCoverage = this.rag.ragQueries > 0
+      ? ((this.rag.queriesWithSources / this.rag.ragQueries) * 100).toFixed(1)
+      : 0;
     const avgMatchedDocs = this.rag.parentChildQueries > 0
       ? (this.rag.matchedDocCount / this.rag.parentChildQueries).toFixed(1)
       : 0;
@@ -178,8 +194,10 @@ class MetricsService {
         parentChildQueries: this.rag.parentChildQueries,
         parentChildCoverage: `${ragCoverage}%`,
         avgMatchedDocs,
-        totalRetrievedChunks: this.rag.totalRetrievedChunks
+        totalRetrievedChunks: this.rag.totalRetrievedChunks,
+        sourceCoverage: `${sourceCoverage}%`,
       },
+      evaluation: this.latestEvaluation,
       observability: {
         stages: this._getStageSummary(),
         alertThresholds: {

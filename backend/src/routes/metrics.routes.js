@@ -4,6 +4,8 @@
 const express = require('express');
 const { requireAuth } = require('../middleware/auth.middleware');
 const { operationalMetrics } = require('../services/operational-metrics.service');
+const { metrics } = require('../services/metrics.service');
+const { getFeedbackSummary } = require('../controllers/rag.controller');
 
 const router = express.Router();
 
@@ -65,6 +67,25 @@ router.get('/web-vitals', requireAuth, (req, res) => {
 router.get('/operations', requireAuth, (req, res) => {
   if (req.role !== 'admin') return res.status(403).json({ success: false, error: '需要管理员权限' });
   res.json({ success: true, data: operationalMetrics.snapshot() });
+});
+
+router.get('/dashboard', requireAuth, async (req, res, next) => {
+  if (req.role !== 'admin') return res.status(403).json({ success: false, error: '需要管理员权限' });
+  try {
+    const feedback = await getFeedbackSummary();
+    const quality = metrics.getSummary();
+    res.json({
+      success: true,
+      data: {
+        generatedAt: new Date().toISOString(),
+        quality,
+        operations: operationalMetrics.snapshot(),
+        satisfaction: feedback,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
 });
 
 module.exports = { router };

@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import wutLogoImg from '../../assets/wuhan-university-logo.png';
 import ConversationList from '../chat/ConversationList.vue';
-import { Database, MessageSquare, BarChart3, LogOut, MessagesSquare, ChevronUp } from 'lucide-vue-next';
+import { Activity, Database, MessageSquare, BarChart3, LogOut, MessagesSquare, ChevronUp } from 'lucide-vue-next';
 import { useAuthStore } from '../../stores/auth.store.js';
 import { useChatStore } from '../../stores/chat.store.js';
 import { useToastStore } from '../../stores/toast.store.js';
@@ -111,6 +111,25 @@ watch(showProfilePanel, (val) => {
           <span>评测</span>
         </button>
         </div>
+    </div>
+
+    <div v-if="authStore.isAdmin" class="px-3 mb-2">
+      <button
+        @click="router.push('/dashboard')"
+        @mouseenter="prefetchRoute('/dashboard')"
+        :class="[
+          'w-full h-10 rounded-xl inline-flex items-center justify-between px-3 text-xs font-bold transition-all border',
+          currentPath === '/dashboard'
+            ? 'bg-slate-900 text-white border-slate-800 shadow-lg shadow-slate-900/20 dark:bg-cyan-500 dark:text-slate-950 dark:border-cyan-400'
+            : 'bg-white/70 dark:bg-gray-800/60 text-slate-600 dark:text-gray-300 border-slate-200 dark:border-gray-700 hover:border-cyan-200 hover:bg-cyan-50 hover:text-cyan-700 dark:hover:bg-cyan-900/20'
+        ]"
+      >
+        <span class="inline-flex items-center gap-2">
+          <Activity :size="15" />
+          运营驾驶舱
+        </span>
+        <span class="rounded-full bg-white/20 px-2 py-0.5 text-[10px] uppercase tracking-wide" :class="currentPath === '/dashboard' ? 'text-cyan-200 dark:text-slate-950' : 'text-cyan-600 dark:text-cyan-300'">LIVE</span>
+      </button>
     </div>
 
     <div v-if="authStore.isAdmin" class="px-3 mb-3">
