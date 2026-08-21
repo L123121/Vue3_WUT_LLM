@@ -35,6 +35,11 @@ const routes = [
     name: 'Feedback',
     component: () => import('../views/RagFeedback.vue'),
     meta: { requiresAuth: true, requiresAdmin: true }
+  },  {
+    path: '/dashboard',
+    name: 'OperationsDashboard',
+    component: () => import('../views/OperationsDashboard.vue'),
+    meta: { requiresAuth: true, requiresAdmin: true }
   },
   {
     path: '/share/:code',

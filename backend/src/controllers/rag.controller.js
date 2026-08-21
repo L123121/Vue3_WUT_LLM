@@ -39,6 +39,25 @@ function normalizeFeedbackSources(sources = []) {
   }));
 }
 
+async function getAllFeedback() {
+  const all = await store.hgetall(FEEDBACK_ALL_KEY);
+  return Object.values(all || {}).map(parseFeedbackItem).filter(Boolean);
+}
+
+async function getFeedbackSummary() {
+  const feedbackList = await getAllFeedback();
+  const summary = feedbackList.reduce((acc, item) => {
+    acc.total += 1;
+    if (item.rating === 'like') acc.like += 1;
+    if (item.rating === 'dislike') acc.dislike += 1;
+    if (Array.isArray(item.sources) && item.sources.length > 0) acc.withSources += 1;
+    return acc;
+  }, { total: 0, like: 0, dislike: 0, withSources: 0 });
+  return {
+    ...summary,
+    satisfactionRate: summary.total > 0 ? Math.round((summary.like / summary.total) * 1000) / 10 : null,
+  };
+}
 async function trimFeedbackEvents(eventsKey) {
   if (typeof store.llen !== 'function' || typeof store.ltrim !== 'function') return;
   const length = await store.llen(eventsKey);
@@ -254,10 +273,7 @@ const listFeedback = async (req, res, next) => {
     const pageSize = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 200);
     const keyword = String(q || '').trim().toLowerCase();
 
-    const all = await store.hgetall(FEEDBACK_ALL_KEY);
-    const feedbackList = Object.values(all || {})
-      .map(parseFeedbackItem)
-      .filter(Boolean)
+    const feedbackList = await getAllFeedback()
       .filter((item) => !rating || item.rating === rating)
       .filter((item) => {
         if (!keyword) return true;
@@ -541,6 +557,7 @@ module.exports = {
   ragChatStream,
   submitFeedback,
   listFeedback,
+  getFeedbackSummary,
   retrieveParentCandidates,
   addDocument,
   addDocuments,

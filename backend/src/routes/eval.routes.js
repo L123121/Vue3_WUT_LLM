@@ -130,6 +130,12 @@ router.post('/run', requireAdmin, async (req, res) => {
       context_recall: validMetrics.reduce((s, r) => s + r.metrics.context_recall, 0) / validMetrics.length,
     } : null;
 
+    metrics.recordEvaluation({
+      metrics: avgMetrics ? { ...avgMetrics, overall: overallScore } : null,
+      avgLatency,
+      sampleCount: results.length,
+    });
+
     res.write(`data: ${JSON.stringify({
       type: 'done',
       overallScore,
