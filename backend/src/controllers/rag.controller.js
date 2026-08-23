@@ -8,6 +8,7 @@ const { redis: store } = require('../services/memory-store');
 const { MemoryService } = require('../services/memory.service');
 const { successResponse, errorResponse } = require('../utils/response');
 const { upload, parseFile, cleanupFile } = require('../services/file-upload.service');
+const { recordAudit } = require('../services/quality-governance.service');
 
 const ragService = new RagService(aiService);
 const memoryService = new MemoryService();
@@ -115,6 +116,14 @@ const ragChat = async (req, res, next) => {
 
     const result = await ragService.chat(message, history || [], getTraceOptions(req, { category, ...getRerankOverrides(req) }));
     res.setHeader('X-Trace-Id', result.traceId || req.traceId);
+    void recordAudit({
+      question: message,
+      answer: result.reply,
+      sources: result.sources,
+      traceId: result.traceId || req.traceId,
+      userId: req.userId,
+      route: 'rag-direct',
+    }).catch((error) => console.warn('[QualityAudit] RAG 非流式记录失败:', error.message));
     successResponse(res, result, 'RAG 处理完成');
     saveChatMemory(req.userId, message, result.reply);
   } catch (error) {
@@ -141,6 +150,7 @@ const ragChatStream = async (req, res, next) => {
     }
 
     let fullReply = '';
+    const audit = { sources: [], traceId: req.traceId };
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
@@ -161,8 +171,10 @@ const ragChatStream = async (req, res, next) => {
       if (chunk.type === 'retrieval') {
         res.write(`data: ${JSON.stringify({ traceId: chunk.traceId || req.traceId, retrieval: chunk.retrieval, trace: chunk.trace })}\n\n`);
       } else if (chunk.type === 'sources') {
+        audit.sources = chunk.sources || [];
         res.write(`data: ${JSON.stringify({ traceId: req.traceId, sources: chunk.sources })}\n\n`);
       } else if (chunk.type === 'trace') {
+        if (chunk.trace?.traceId) audit.traceId = chunk.trace.traceId;
         res.write(`data: ${JSON.stringify({ traceId: chunk.trace?.traceId || req.traceId, trace: chunk.trace })}\n\n`);
       } else if (chunk.type === 'process') {
         res.write(`data: ${JSON.stringify({ traceId: req.traceId, processCard: chunk.processCard })}\n\n`);
@@ -178,6 +190,15 @@ const ragChatStream = async (req, res, next) => {
 
     cleanupClientClose();
     res.end();
+
+    void recordAudit({
+      question: message,
+      answer: fullReply,
+      sources: audit.sources,
+      traceId: audit.traceId,
+      userId: req.userId,
+      route: 'rag-direct-stream',
+    }).catch((error) => console.warn('[QualityAudit] RAG 流式记录失败:', error.message));
 
     saveChatMemory(req.userId, message, fullReply);
   } catch (error) {
@@ -569,7 +590,6 @@ module.exports = {
   uploadMiddleware,
   reindexAll,
 };
-
 
 
 

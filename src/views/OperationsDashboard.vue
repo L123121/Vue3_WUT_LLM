@@ -8,20 +8,27 @@ import {
   AlertCircle,
   Clock3,
   Coins,
+  ClipboardCheck,
   DatabaseZap,
+  FilePlus2,
+  Flame,
   Gauge,
+  GitCompareArrows,
+  ListChecks,
   RefreshCw,
   ShieldCheck,
   Sparkles,
   ThumbsUp,
 } from 'lucide-vue-next';
-import MobileMenuButton from '../components/layout/MobileMenuButton.vue';
-import { getOperationsDashboard } from '../api/operations.js';
+import { createKnowledgeTask, getOperationsDashboard } from '../api/operations.js';
+import { useToastStore } from '../stores/toast.store.js';
 
 const dashboard = ref(null);
 const isLoading = ref(true);
 const errorMessage = ref('');
 const lastUpdated = ref('');
+const toast = useToastStore();
+const creatingTaskId = ref('');
 
 const emptyQuality = {
   evaluation: null,
@@ -40,7 +47,13 @@ const operations = computed(() => dashboard.value?.operations || {
 const satisfaction = computed(() => dashboard.value?.satisfaction || {
   total: 0, like: 0, dislike: 0, satisfactionRate: null,
 });
-const evaluation = computed(() => quality.value.evaluation);
+const evaluationHistory = computed(() => dashboard.value?.evaluationHistory || { current: null, previous: null, deltas: {}, best: null, ranked: [] });
+const riskAudit = computed(() => dashboard.value?.riskAudit || { totalQuestions: 0, highRiskCount: 0, knowledgeGapCount: 0, topTopics: [], highRisk: [], tasks: [] });
+const evaluation = computed(() => {
+  if (quality.value.evaluation) return quality.value.evaluation;
+  const current = evaluationHistory.value.current;
+  return current ? { ...current.metrics, avgLatency: current.avgLatency, sampleCount: current.sampleCount, evaluatedAt: current.createdAt } : null;
+});
 const stages = computed(() => Object.entries(quality.value.observability?.stages || {}));
 const totalCost = computed(() => Number(operations.value.estimatedCostCny || 0));
 const totalTokens = computed(() => Number(operations.value.llm?.promptTokens || 0) + Number(operations.value.llm?.completionTokens || 0));
@@ -58,6 +71,34 @@ const metricPercent = (value) => {
   return Number.isFinite(number) ? Math.max(0, Math.min(100, number * 100)) : 0;
 };
 const formatDate = (value) => value ? new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : '尚未运行';
+const formatSignedPercent = (value) => {
+  if (value === null || value === undefined) return '—';
+  return `${value > 0 ? '+' : ''}${Number(value).toFixed(1)}%`;
+};
+const formatSignedLatency = (value) => {
+  if (value === null || value === undefined) return '—';
+  return `${value > 0 ? '+' : ''}${Math.round(value)} ms`;
+};
+const deltaTone = (value, inverse = false) => {
+  if (value === null || value === undefined || value === 0) return 'text-slate-400';
+  const positive = inverse ? value < 0 : value > 0;
+  return positive ? 'text-emerald-600 dark:text-emerald-300' : 'text-rose-600 dark:text-rose-300';
+};
+
+const createTask = async (item) => {
+  if (!item?.id || creatingTaskId.value) return;
+  creatingTaskId.value = item.id;
+  try {
+    const response = await createKnowledgeTask({ auditId: item.id });
+    if (!response?.success) throw new Error(response?.error || '任务创建失败');
+    toast.success('补充文档任务已创建');
+    await loadDashboard();
+  } catch (error) {
+    toast.error(error.message || '任务创建失败');
+  } finally {
+    creatingTaskId.value = '';
+  }
+};
 
 const qualityRows = computed(() => [
   { label: '检索召回率', hint: 'Context recall', value: evaluation.value?.context_recall, icon: DatabaseZap, tone: 'cyan' },
@@ -144,6 +185,30 @@ onMounted(loadDashboard);
           <div class="metric-foot">{{ formatNumber(satisfaction.total) }} 条有效反馈</div>
         </article>
       </div>
+
+      <section class="panel-card version-panel">
+        <div class="section-heading">
+          <div><div class="eyebrow">Evaluation lineage</div><h2>版本演进与自动决策</h2></div>
+          <div class="heading-chip"><GitCompareArrows :size="14" /> 持续迭代</div>
+        </div>
+        <div v-if="evaluationHistory.current" class="mt-6 grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
+          <div class="version-summary">
+            <div class="flex items-start justify-between gap-4">
+              <div><div class="version-kicker">当前运行版本</div><div class="mt-2 text-2xl font-black tracking-tight">{{ evaluationHistory.current.promptVersion }}</div><div class="mt-2 flex flex-wrap gap-2 text-xs font-bold text-slate-500 dark:text-slate-400"><span class="meta-pill">{{ evaluationHistory.current.datasetVersion }}</span><span class="meta-pill">{{ evaluationHistory.current.model }}</span></div></div>
+              <div class="recommend-badge"><ClipboardCheck :size="14" /> {{ evaluationHistory.best?.id === evaluationHistory.current.id ? '推荐上线' : '继续观察' }}</div>
+            </div>
+            <div class="mt-6 grid grid-cols-2 gap-3">
+              <div class="decision-stat"><span>综合得分</span><strong>{{ formatPercent(evaluationHistory.current.metrics.overall) }}</strong></div>
+              <div class="decision-stat"><span>平均延迟</span><strong>{{ formatLatency(evaluationHistory.current.avgLatency) }}</strong></div>
+              <div class="decision-stat"><span>满意度</span><strong>{{ evaluationHistory.current.satisfactionRate === null ? '—' : formatPercent(evaluationHistory.current.satisfactionRate) }}</strong></div>
+              <div class="decision-stat"><span>评测成本</span><strong>{{ formatCost(evaluationHistory.current.costCny) }}</strong></div>
+            </div>
+            <div v-if="evaluationHistory.previous" class="comparison-callout mt-4"><div class="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-cyan-700 dark:text-cyan-300"><ArrowUpRight :size="14" /> 相比上一次</div><div class="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-sm font-black"><span :class="deltaTone(evaluationHistory.deltas.context_recall)">召回率 {{ formatSignedPercent(evaluationHistory.deltas.context_recall) }}</span><span :class="deltaTone(evaluationHistory.deltas.citationCoverage)">引用 {{ formatSignedPercent(evaluationHistory.deltas.citationCoverage) }}</span><span :class="deltaTone(evaluationHistory.deltas.avgLatency, true)">延迟 {{ formatSignedLatency(evaluationHistory.deltas.avgLatency) }}</span><span :class="deltaTone(evaluationHistory.deltas.costPercent, true)">成本 {{ formatSignedPercent(evaluationHistory.deltas.costPercent) }}</span></div></div>
+          </div>
+          <div class="overflow-x-auto rounded-2xl border border-slate-100 dark:border-slate-800"><table class="history-table"><thead><tr><th>运行版本</th><th>召回率</th><th>引用覆盖</th><th>延迟</th><th>成本</th><th>决策</th></tr></thead><tbody><tr v-for="row in evaluationHistory.ranked" :key="row.id"><td><div class="font-black text-slate-800 dark:text-slate-100">{{ row.promptVersion }}</div><div class="mt-1 text-[10px] text-slate-400">{{ row.datasetVersion }} · {{ formatDate(row.createdAt) }}</div></td><td class="tabular-nums">{{ formatPercent(row.metrics.context_recall) }}</td><td class="tabular-nums">{{ row.citationCoverage === null ? '—' : formatPercent(row.citationCoverage) }}</td><td class="tabular-nums">{{ formatLatency(row.avgLatency) }}</td><td class="tabular-nums">{{ formatCost(row.costCny) }}</td><td><span v-if="evaluationHistory.best?.id === row.id" class="success-pill"><ClipboardCheck :size="12" /> 推荐</span><span v-else class="neutral-pill">{{ row.compositeScore.toFixed(3) }}</span></td></tr></tbody></table></div>
+        </div>
+        <div v-else class="empty-quality"><div class="empty-orbit"><GitCompareArrows :size="22" /></div><div><h3>等待第一次可追溯评测</h3><p>每次运行都会保存数据集、模型、Prompt、四项质量分、延迟与成本，下一次自动生成差异。</p></div></div>
+      </section>
 
       <div class="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
         <section class="panel-card">
@@ -243,6 +308,15 @@ onMounted(loadDashboard);
         </section>
       </div>
 
+      <section class="panel-card audit-panel">
+        <div class="section-heading"><div><div class="eyebrow">High-risk answer review</div><h2>高风险回答审核与知识缺口</h2></div><div class="heading-chip heading-chip-danger"><Flame :size="14" /> {{ riskAudit.highRiskCount }} 条待关注</div></div>
+        <div class="mt-6 grid gap-6 xl:grid-cols-[0.72fr_1.28fr]">
+          <div><div class="audit-stats"><div><span>学生问题</span><strong>{{ formatNumber(riskAudit.totalQuestions) }}</strong></div><div><span>知识缺口</span><strong>{{ formatNumber(riskAudit.knowledgeGapCount) }}</strong></div></div><div class="mt-5 text-xs font-black uppercase tracking-wider text-slate-400">学生最常问什么</div><div v-if="riskAudit.topTopics.length" class="mt-3 space-y-3"><div v-for="(topic, index) in riskAudit.topTopics" :key="topic.key" class="topic-row"><div class="flex items-center justify-between gap-3 text-sm"><span class="font-bold">{{ index + 1 }}. {{ topic.label }}</span><strong>{{ topic.count }} 次</strong></div><div class="topic-track"><div class="topic-fill" :style="{ width: `${Math.max(10, (topic.count / riskAudit.topTopics[0].count) * 100)}%` }"></div></div><div class="mt-1 text-[10px] font-bold text-slate-400">{{ topic.gaps }} 条可能缺资料</div></div></div><div v-else class="empty-table"><ListChecks :size="18" /> 等待学生问题样本</div></div>
+          <div class="audit-list"><div class="mb-3 flex items-center justify-between gap-3"><div class="text-xs font-black uppercase tracking-wider text-slate-400">需要管理员判断</div><span class="text-xs font-bold text-slate-400">高风险 / 资料不足</span></div><div v-if="riskAudit.highRisk.length" class="space-y-3"><article v-for="item in riskAudit.highRisk" :key="item.id" class="audit-item"><div class="flex items-start gap-3"><span class="risk-mark" :class="item.riskLevel === 'high' ? 'risk-mark-high' : 'risk-mark-medium'"><Flame :size="14" /></span><div class="min-w-0 flex-1"><div class="flex flex-wrap items-center gap-2"><span class="topic-tag">{{ item.topic?.label || '综合咨询' }}</span><span class="text-[10px] font-black uppercase tracking-wider text-slate-400">风险 {{ item.riskScore }}</span></div><p class="mt-2 text-sm font-bold leading-6 text-slate-800 dark:text-slate-100">{{ item.question }}</p><div class="mt-2 flex flex-wrap gap-2 text-[10px] font-bold text-slate-400"><span>{{ item.sources?.length ? `${item.sources.length} 个引用` : '无引用来源' }}</span><span>{{ item.knowledgeGap ? '建议补充知识库' : '需人工复核' }}</span></div></div><button v-if="item.knowledgeGap" class="task-button" :disabled="creatingTaskId === item.id" @click="createTask(item)"><FilePlus2 :size="14" />{{ creatingTaskId === item.id ? '创建中' : '建任务' }}</button></div></article></div><div v-else class="empty-table"><ShieldCheck :size="18" /> 当前没有待审核高风险回答</div></div>
+        </div>
+        <div v-if="riskAudit.tasks.length" class="mt-6 border-t border-slate-100 pt-4 dark:border-slate-800"><div class="text-xs font-black uppercase tracking-wider text-slate-400">最近补充文档任务</div><div class="mt-3 flex flex-wrap gap-2"><span v-for="task in riskAudit.tasks.slice(0, 4)" :key="task.id" class="task-pill"><ListChecks :size="13" />{{ task.title }}</span></div></div>
+      </section>
+
       <footer class="flex flex-wrap items-center justify-between gap-3 px-1 pb-4 text-xs font-semibold text-slate-400">
         <span>指标口径：离线评测 + 线上请求 + 用户反馈</span>
         <span>仅管理员可见 · 用于运营监控与答辩展示</span>
@@ -282,4 +356,16 @@ onMounted(loadDashboard);
 .telemetry-line { display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #f1f5f9; padding-bottom:0.75rem; color:#64748b; font-size:0.82rem; font-weight:700; }.dark .telemetry-line { border-color:#1e293b; color:#94a3b8; }.telemetry-line strong { color:#0f172a; font-size:0.95rem; }.dark .telemetry-line strong { color:#f8fafc; }.latency-band { display:grid; grid-template-columns:1fr 1fr; gap:0.75rem; border-radius:1rem; background:#0f172a; padding:1rem; color:white; }.latency-band div { display:flex; flex-direction:column; gap:0.25rem; }.latency-band span { color:#94a3b8; font-size:0.65rem; font-weight:800; text-transform:uppercase; letter-spacing:0.08em; }.latency-band strong { font-size:1.1rem; }
 .cost-panel { background:linear-gradient(145deg, rgba(255,251,235,0.95), rgba(255,255,255,0.82)); }.dark .cost-panel { background:linear-gradient(145deg, rgba(69,45,8,0.34), rgba(15,23,42,0.75)); }.cost-total { margin-top:1.7rem; font-size:2.7rem; font-weight:950; letter-spacing:-0.07em; color:#b45309; }.dark .cost-total { color:#fbbf24; }.cost-tile { display:flex; flex-direction:column; gap:0.3rem; border:1px solid rgba(245,158,11,0.2); border-radius:1rem; background:rgba(255,255,255,0.55); padding:0.85rem; }.dark .cost-tile { background:rgba(30,41,59,0.5); }.cost-tile span { color:#92400e; font-size:0.65rem; font-weight:900; text-transform:uppercase; }.dark .cost-tile span { color:#fcd34d; }.cost-tile strong { font-size:1.1rem; }.cost-tile small { color:#a16207; font-size:0.68rem; font-weight:700; }.dark .cost-tile small { color:#fbbf24; }
 .stage-table { width:100%; border-collapse:collapse; min-width:32rem; text-align:left; font-size:0.76rem; }.stage-table th { padding:0.65rem 0.75rem; color:#94a3b8; font-size:0.63rem; font-weight:900; text-transform:uppercase; letter-spacing:0.08em; }.stage-table td { border-top:1px solid #f1f5f9; padding:0.8rem 0.75rem; color:#64748b; font-weight:700; }.dark .stage-table td { border-color:#1e293b; color:#94a3b8; }.success-pill { display:inline-flex; border-radius:999px; background:#dcfce7; color:#15803d; padding:0.25rem 0.5rem; font-size:0.68rem; font-weight:900; }.success-pill.is-warn { background:#fef3c7; color:#b45309; }.dark .success-pill { background:rgba(16,185,129,0.15); color:#6ee7b7; }.dark .success-pill.is-warn { background:rgba(245,158,11,0.15); color:#fcd34d; }.empty-table { display:flex; align-items:center; justify-content:center; gap:0.5rem; min-height:10rem; color:#94a3b8; font-size:0.78rem; font-weight:700; }
+.version-panel, .audit-panel { overflow: hidden; }
+.version-summary { border-radius: 1.35rem; background: linear-gradient(145deg, #ecfeff, rgba(255,255,255,0.8)); padding: 1.2rem; }.dark .version-summary { background: linear-gradient(145deg, rgba(8,145,178,0.16), rgba(15,23,42,0.8)); }
+.version-kicker { color:#0e7490; font-size:0.65rem; font-weight:900; letter-spacing:0.14em; text-transform:uppercase; }.dark .version-kicker { color:#67e8f9; }
+.meta-pill, .topic-tag, .neutral-pill, .task-pill { display:inline-flex; align-items:center; gap:0.3rem; border-radius:999px; background:rgba(255,255,255,0.72); padding:0.35rem 0.55rem; }.dark .meta-pill, .dark .topic-tag, .dark .neutral-pill, .dark .task-pill { background:rgba(30,41,59,0.76); }
+.recommend-badge { display:inline-flex; align-items:center; gap:0.35rem; border-radius:999px; background:#d1fae5; color:#047857; padding:0.4rem 0.6rem; font-size:0.65rem; font-weight:900; }.dark .recommend-badge { background:rgba(16,185,129,0.18); color:#6ee7b7; }
+.decision-stat { border-radius:0.95rem; background:rgba(255,255,255,0.65); padding:0.8rem; }.dark .decision-stat { background:rgba(15,23,42,0.55); }.decision-stat span { display:block; color:#64748b; font-size:0.65rem; font-weight:800; }.decision-stat strong { display:block; margin-top:0.25rem; font-size:1.1rem; }
+.comparison-callout { border-left:3px solid #06b6d4; border-radius:0.8rem; background:rgba(255,255,255,0.62); padding:0.8rem; }.dark .comparison-callout { background:rgba(15,23,42,0.52); }
+.history-table { width:100%; min-width:40rem; border-collapse:collapse; text-align:left; font-size:0.75rem; }.history-table th { padding:0.75rem 0.85rem; color:#94a3b8; font-size:0.62rem; font-weight:900; letter-spacing:0.08em; text-transform:uppercase; }.history-table td { border-top:1px solid #f1f5f9; padding:0.85rem; color:#64748b; font-weight:700; }.dark .history-table td { border-color:#1e293b; color:#94a3b8; }.neutral-pill { color:#64748b; font-size:0.65rem; font-weight:900; }
+.heading-chip-danger { background:#fff1f2; color:#be123c; }.dark .heading-chip-danger { background:rgba(225,29,72,0.15); color:#fda4af; }
+.audit-stats { display:grid; grid-template-columns:1fr 1fr; gap:0.75rem; }.audit-stats div { border-radius:1rem; background:#fff7ed; padding:0.9rem; }.dark .audit-stats div { background:rgba(120,53,15,0.18); }.audit-stats span { display:block; color:#9a3412; font-size:0.65rem; font-weight:900; }.dark .audit-stats span { color:#fdba74; }.audit-stats strong { display:block; margin-top:0.3rem; color:#7c2d12; font-size:1.55rem; }.dark .audit-stats strong { color:#fed7aa; }
+.topic-row { border-bottom:1px solid #f1f5f9; padding-bottom:0.8rem; }.dark .topic-row { border-color:#1e293b; }.topic-row strong { color:#0891b2; }.topic-track { height:0.38rem; margin-top:0.45rem; overflow:hidden; border-radius:99px; background:#e2e8f0; }.dark .topic-track { background:#334155; }.topic-fill { height:100%; border-radius:99px; background:linear-gradient(90deg, #06b6d4, #10b981); }
+.audit-item { border:1px solid #ffe4e6; border-radius:1rem; background:#fffafb; padding:0.8rem; }.dark .audit-item { border-color:rgba(190,24,93,0.28); background:rgba(76,5,25,0.16); }.risk-mark { display:flex; width:2rem; height:2rem; align-items:center; justify-content:center; flex-shrink:0; border-radius:0.7rem; }.risk-mark-high { background:#ffe4e6; color:#e11d48; }.risk-mark-medium { background:#fef3c7; color:#d97706; }.topic-tag { color:#9f1239; font-size:0.65rem; font-weight:900; }.dark .topic-tag { color:#fda4af; }.task-button { display:inline-flex; align-items:center; gap:0.3rem; flex-shrink:0; border-radius:0.7rem; background:#0f172a; padding:0.45rem 0.6rem; color:white; font-size:0.65rem; font-weight:900; transition:transform .2s, background .2s; }.task-button:hover:not(:disabled) { transform:translateY(-1px); background:#0e7490; }.task-button:disabled { opacity:0.6; }.task-pill { color:#0e7490; font-size:0.65rem; font-weight:900; }.dark .task-pill { color:#67e8f9; }
 </style>

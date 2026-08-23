@@ -11,6 +11,8 @@ const isRunningEval = ref(false);
 const logs = ref([]);
 const terminalRef = ref(null);
 const evalProgress = ref(0);
+const datasetVersion = ref('campus-qa-v1');
+const promptVersion = ref('rag-prompt-v1');
 
 function scrollTerminalToBottom() {
   nextTick(() => {
@@ -27,7 +29,10 @@ async function startSseEval() {
   evalProgress.value = 0;
 
   try {
-    const response = await evalApi.runEvaluation(props.evalData?.results?.length || 45);
+    const response = await evalApi.runEvaluation(props.evalData?.results?.length || 45, props.evalData?.results || null, {
+      datasetVersion: datasetVersion.value,
+      promptVersion: promptVersion.value,
+    });
 
     if (response.ok && response.body) {
       const reader = response.body.getReader();
@@ -189,6 +194,8 @@ function clearTerminal() {
           <span v-else-if="evalProgress === 100 && logs.length > 0" class="text-[10px] font-mono text-emerald-400">COMPLETED</span>
         </div>
         <div class="flex items-center gap-1.5">
+          <input v-model="datasetVersion" :disabled="isRunningEval" class="w-28 rounded border border-slate-700 bg-slate-800 px-2 py-1 text-[10px] text-slate-200 outline-none" placeholder="数据集版本" title="数据集版本" />
+          <input v-model="promptVersion" :disabled="isRunningEval" class="w-28 rounded border border-slate-700 bg-slate-800 px-2 py-1 text-[10px] text-slate-200 outline-none" placeholder="Prompt 版本" title="Prompt 版本" />
           <button
             @click="clearTerminal"
             :disabled="isRunningEval || logs.length === 0"

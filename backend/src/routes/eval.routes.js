@@ -4,6 +4,10 @@ const { RagService } = require('../services/rag.service');
 const { aiService } = require('../services/ai.service');
 const { JudgeService } = require('../services/judge.service');
 const { metrics } = require('../services/metrics.service');
+const { operationalMetrics } = require('../services/operational-metrics.service');
+const { getFeedbackSummary } = require('../controllers/rag.controller');
+const { saveEvaluation, getEvaluations, compareEvaluations } = require('../services/quality-governance.service');
+const config = require('../config');
 
 const router = Router();
 
@@ -27,7 +31,13 @@ router.get('/metrics', (req, res) => {
  * 真实 RAG 评测 — 调用实际 RAG 管道 + LLM-as-judge（独立 Key，不抢生产配额）
  */
 router.post('/run', requireAdmin, async (req, res) => {
-  const { datasetSize = 5, enableRag = true } = req.body;
+  const {
+    datasetSize = 5,
+    enableRag = true,
+    datasetVersion = 'campus-qa-v1',
+    promptVersion = process.env.RAG_PROMPT_VERSION || 'rag-prompt-v1',
+  } = req.body;
+  const operationsBefore = operationalMetrics.snapshot();
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -86,7 +96,10 @@ router.post('/run', requireAdmin, async (req, res) => {
           answer,
           ground_truth: tc.ground_truth,
           context,
+          sources: ragResult.sources || [],
           metrics,
+          model: ragResult.model || config.ai.model,
+          usage: ragResult.usage || null,
           judgeModel: judgeResult.model,
           judgeLatency: judgeResult.latency,
           latency,
@@ -130,6 +143,25 @@ router.post('/run', requireAdmin, async (req, res) => {
       context_recall: validMetrics.reduce((s, r) => s + r.metrics.context_recall, 0) / validMetrics.length,
     } : null;
 
+    const citationCoverage = results.length > 0
+      ? results.filter((result) => Array.isArray(result.sources) && result.sources.length > 0).length / results.length
+      : 0;
+    const feedback = await getFeedbackSummary();
+    const operationsAfter = operationalMetrics.snapshot();
+    const costCny = Math.max(0, Number(operationsAfter.llm?.estimatedCostCny || 0) - Number(operationsBefore.llm?.estimatedCostCny || 0));
+    const evaluation = await saveEvaluation({
+      datasetVersion,
+      model: results.find((result) => result.model)?.model || config.ai.model,
+      promptVersion,
+      metrics: avgMetrics ? { ...avgMetrics, overall: overallScore } : null,
+      avgLatency,
+      costCny,
+      satisfactionRate: feedback.satisfactionRate === null ? null : feedback.satisfactionRate / 100,
+      citationCoverage,
+      sampleCount: results.length,
+    });
+    const comparison = compareEvaluations(await getEvaluations());
+
     metrics.recordEvaluation({
       metrics: avgMetrics ? { ...avgMetrics, overall: overallScore } : null,
       avgLatency,
@@ -141,6 +173,9 @@ router.post('/run', requireAdmin, async (req, res) => {
       overallScore,
       avgLatency,
       metrics: avgMetrics,
+      evaluation,
+      comparison,
+      costCny,
       results,
     })}\n\n`);
 

@@ -14,6 +14,17 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+const fs = require('fs');
+const path = require('path');
+
+// 真实 ONNX 用例依赖本地模型缓存（.model-cache）。缓存缺失（全新环境/CI 未预热）时
+// embedding 加载会失败并导致整组断言误报，这里显式 skip 而不是让用例挂掉。
+const EMBEDDING_ONNX_PATH = path.resolve(
+  __dirname,
+  '../../.model-cache/Xenova/bge-small-zh-v1.5/onnx/model_quantized.onnx'
+);
+const hasEmbeddingCache = fs.existsSync(EMBEDDING_ONNX_PATH);
+const describeE2E = hasEmbeddingCache ? describe : describe.skip;
 
 // ─── Reranker Service Mock ────────────────────────────────────
 // 本地无 bge-reranker-base 模型缓存，用关键词 overlap 模拟 cross-encoder 打分
@@ -266,7 +277,7 @@ function createDocService(docs) {
 
 // ─── E2E 测试 ────────────────────────────────────────────────
 
-describe('RAG Pipeline E2E (real ONNX)', () => {
+describeE2E('RAG Pipeline E2E (real ONNX)', () => {
   beforeEach(() => resetAll());
 
   /**
@@ -295,7 +306,11 @@ describe('RAG Pipeline E2E (real ONNX)', () => {
     expect(result.sources.length).toBeGreaterThan(0);
     expect(result.context).toBeTruthy();
     expect(result.context.length).toBeGreaterThan(0);
-    expect(result.model).toContain('local-hybrid-search');
+    // model 契约（2026-08 更新）：返回真实 LLM 模型名（无 API Key 的 mock 模式为 'mock'），
+    // 不再是检索管道标记；token 用量随 result.usage 一并返回（mock 模式为 null）
+    expect(typeof result.model).toBe('string');
+    expect(result.model.length).toBeGreaterThan(0);
+    expect(result.usage).toBeDefined();
     expect(result._metrics.matchedDocs).toBeGreaterThan(0);
     expect(result.questionType).toBeDefined();
     expect(result.topChunks.length).toBeGreaterThan(0);
