@@ -227,7 +227,7 @@ sequenceDiagram
 |---|------|:----:|
 | 运行时 | Node.js | 20+ |
 | 框架 | Express | 4.18 |
-| 向量库 | Qdrant 独立服务（默认） | 1.19+（文件持久化可切换） |
+| 向量库 | Qdrant 独立服务（默认） | 1.12.5（compose 固定版本；文件持久化可切换） |
 | Embedding | BGE-small-zh (ONNX) | 本地 |
 | Reranker | BGE-reranker-base (ONNX) | 本地 |
 | 主模型 | StepFun step-3.7-flash | API |
