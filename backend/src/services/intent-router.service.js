@@ -1,6 +1,7 @@
 "use strict";
 
 const { AiService } = require("./ai.service");
+const { logEvent } = require("./observability.service");
 
 /**
  * IntentRouter — 意图识别与自动路由层（V2.0）
@@ -45,6 +46,13 @@ const KNOWLEDGE_PATTERNS = [
   /(武理|武汉理工|学校|本校|校内|校园|校区|教务|食堂|宿舍|图书馆|奖学金|助学金|资助|社团|培养方案|选课|学分|绩点|期末考试|考试安排|缓考|补考|成绩复核|学籍|保研|推免|大创|学科竞赛|校招|校园招聘|毕业设计|论文答辩|校园卡|校园网|信息化服务|实验室安全|校园应急|心理健康|学术诚信|新生入学)/,
   /(计算机网络|计算机组成(?:原理)?|离散结构|面向对象编程|软件工程基础|数据结构|算法设计与分析|前端.{0,6}面试题|codetop|python.{0,6}题库|rag系统|agent学习)/i,
 ];
+
+/**
+ * 问候/感谢/告别模式（唯一事实来源）
+ * fastRoute 用于零误判 chat 路由；ConversationOrchestrator 在意图路由关闭时
+ * 复用同一模式判断"纯寒暄"，避免两处正则漂移。
+ */
+const GREETING_PATTERN = /^(你好|您好|嗨|哈喽|hello|hi|hey|在吗|早上好|中午好|下午好|晚上好|晚安|谢谢|感谢|多谢|再见|拜拜|bye|goodbye|辛苦了|好的|好的吧)[!！.。~～]?$/i;
 
 /**
  * 轻量级意图分类 prompt（LLM 兜底，默认关闭）
@@ -93,7 +101,7 @@ class IntentRouter {
     const lower = String(message || "").toLowerCase().trim();
 
     // 问候/感谢/告别 —— 零误判，走纯 LLM 聊天（不触发检索）
-    if (/^(你好|您好|嗨|哈喽|hello|hi|hey|在吗|早上好|中午好|下午好|晚上好|晚安|谢谢|感谢|多谢|再见|拜拜|bye|goodbye|辛苦了|好的|好的吧)[!！.。~～]?$/i.test(lower)) {
+    if (GREETING_PATTERN.test(lower)) {
       return {
         intent: INTENT_TYPES.GENERAL_CHAT,
         confidence: 0.95,
@@ -158,14 +166,14 @@ class IntentRouter {
         ),
       ]);
       if (response._timeout) {
-        console.warn("[IntentRouter] LLM 分类超时(15s)，走兜底路由");
+        logEvent("warn", "intent_classify_timeout", { timeoutMs: 15000 });
         return this._fallbackRoute(message);
       }
 
       const content = String(response.content || "").trim();
       const jsonMatch = content.match(/\{[\s\S]*\}/);
       if (!jsonMatch) {
-        console.warn("[IntentRouter] 无法从 LLM 响应中提取 JSON:", content);
+        logEvent("warn", "intent_classify_invalid_json", { content });
         return this._fallbackRoute(message);
       }
 
@@ -184,7 +192,7 @@ class IntentRouter {
         tool: null,
       };
     } catch (err) {
-      console.error("[IntentRouter] 意图分类失败:", err.message);
+      logEvent("error", "intent_classify_failed", { error: err.message });
       return this._fallbackRoute(message);
     }
   }
@@ -197,7 +205,7 @@ class IntentRouter {
   async route(message) {
     const quickRoute = this.fastRoute(message);
     if (quickRoute) {
-      console.log(`[IntentRouter] 快速路由: ${quickRoute.intent} (${quickRoute.route})`);
+      logEvent("info", "intent_route", { via: "fast", intent: quickRoute.intent, route: quickRoute.route });
       return quickRoute;
     }
 
@@ -209,14 +217,14 @@ class IntentRouter {
       const config = require("../config");
       if (config.rag?.intentClassifyEnabled) {
         const classified = await this.classify(message);
-        console.log(`[IntentRouter] LLM 路由: ${classified.intent} (${classified.route})`);
+        logEvent("info", "intent_route", { via: "llm", intent: classified.intent, route: classified.route });
         return classified;
       }
     } catch (err) {
-      console.warn("[IntentRouter] 读取 intentClassifyEnabled 失败，走兜底:", err.message);
+      logEvent("warn", "intent_config_read_failed", { error: err.message });
     }
 
-    console.log(`[IntentRouter] 兜底路由: ${fallback.intent} (${fallback.route})`);
+    logEvent("info", "intent_route", { via: "fallback", intent: fallback.intent, route: fallback.route });
     return fallback;
   }
 
@@ -235,4 +243,4 @@ class IntentRouter {
   }
 }
 
-module.exports = { IntentRouter, INTENT_TYPES, ROUTE_MAP };
+module.exports = { IntentRouter, INTENT_TYPES, ROUTE_MAP, GREETING_PATTERN };

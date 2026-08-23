@@ -3,11 +3,10 @@
 const { AiService } = require("./ai.service");
 const { RagService } = require("./rag.service");
 const { MemoryService } = require("./memory.service");
-const { IntentRouter } = require("./intent-router.service");
+const { IntentRouter, INTENT_TYPES, GREETING_PATTERN } = require("./intent-router.service");
 const { AgentService } = require("./agent.service");
+const { logEvent } = require("./observability.service");
 const config = require("../config");
-
-const SIMPLE_CHAT_RE = /^(你好|您好|hi|hello|嗨|hey|在吗|thanks|谢谢|bye|再见|早上好|晚上好|下午好)[!！.。]?$/i;
 
 class ConversationOrchestrator {
   constructor(dependencies = {}) {
@@ -26,7 +25,7 @@ class ConversationOrchestrator {
     try {
       return await this.intentRouter.route(message);
     } catch (err) {
-      console.warn("[Conversation] 意图路由失败，按默认链路处理:", err.message);
+      logEvent("warn", "conversation_intent_route_failed", { error: err.message });
       return null;
     }
   }
@@ -43,8 +42,27 @@ class ConversationOrchestrator {
         ...safeHistory,
       ]
       : safeHistory;
-    const route = routing?.route || (SIMPLE_CHAT_RE.test(String(message || "").trim()) ? "chat" : "rag");
+    const route = routing?.route || (GREETING_PATTERN.test(String(message || "").trim()) ? "chat" : "rag");
     return { routing, route, history: enrichedHistory };
+  }
+
+  /**
+   * Agent 失败降级后的统一路由描述：
+   * 有原始路由 → 改写 route/reason；无原始路由（规则关闭或未命中）→ 合成最小意图，
+   * 保证非流式 result.intent 与流式 intent 事件在两条路径上行为一致。
+   */
+  _agentFallbackRouting(routing) {
+    const reason = "agent 链路失败，自动降级知识库检索";
+    return routing
+      ? { ...routing, route: "rag", reason }
+      : {
+        intent: INTENT_TYPES.COMPLEX_TASK,
+        confidence: 0,
+        params: {},
+        tool: null,
+        route: "rag",
+        reason,
+      };
   }
 
   async _readMemory(userId, message) {
@@ -52,7 +70,7 @@ class ConversationOrchestrator {
     try {
       return await this.memoryService.buildMemoryContext(userId, message);
     } catch (err) {
-      console.warn("[Conversation Memory] 读取失败:", err.message);
+      logEvent("warn", "conversation_memory_read_failed", { error: err.message });
       return "";
     }
   }
@@ -62,7 +80,7 @@ class ConversationOrchestrator {
     try {
       this.memoryService.saveChatMemory(userId, message, reply);
     } catch (err) {
-      console.warn("[Conversation Memory] 保存失败:", err.message);
+      logEvent("warn", "conversation_memory_save_failed", { error: err.message });
     }
   }
 
@@ -104,11 +122,9 @@ class ConversationOrchestrator {
         result = await this.agentService.chat(message, prepared.history, context);
       } catch (err) {
         if (!err?.agentShouldFallback) throw err;
-        console.warn("[Conversation] Agent 失败，降级 RAG:", err.message);
+        logEvent("warn", "conversation_agent_fallback", { error: err.message });
         result = await this.ragService.chat(message, prepared.history, context);
-        prepared.routing = prepared.routing
-          ? { ...prepared.routing, route: "rag", reason: "agent 链路失败，自动降级知识库检索" }
-          : null;
+        prepared.routing = this._agentFallbackRouting(prepared.routing);
       }
     } else {
       result = await this.ragService.chat(message, prepared.history, context);
@@ -162,7 +178,7 @@ class ConversationOrchestrator {
       for await (const event of this.agentService.chatStream(message, prepared.history, context)) {
         if (event.type === "error") {
           agentFailed = true;
-          console.warn("[Conversation] Agent 流失败，降级 RAG:", event.error?.message);
+          logEvent("warn", "conversation_agent_stream_fallback", { error: event.error?.message });
           break;
         }
         if (event.type === "content" && !event.done) fullReply += event.content || "";
@@ -173,16 +189,8 @@ class ConversationOrchestrator {
         return;
       }
       fullReply = "";
-      if (prepared.routing) {
-        yield {
-          type: "intent",
-          intent: {
-            ...this._intentResult(prepared.routing),
-            route: "rag",
-            reason: "agent 链路失败，自动降级知识库检索",
-          },
-        };
-      }
+      prepared.routing = this._agentFallbackRouting(prepared.routing);
+      yield { type: "intent", intent: this._intentResult(prepared.routing) };
     }
 
     for await (const event of this.ragService.chatStream(message, prepared.history, context)) {
@@ -193,4 +201,4 @@ class ConversationOrchestrator {
   }
 }
 
-module.exports = { ConversationOrchestrator, SIMPLE_CHAT_RE };
+module.exports = { ConversationOrchestrator };
