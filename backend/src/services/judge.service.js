@@ -13,6 +13,7 @@
 
 const config = require('../config');
 const { request } = require('../utils/httpClient');
+const { operationalMetrics } = require('./operational-metrics.service');
 
 class JudgeService {
   constructor() {
@@ -94,6 +95,8 @@ ${answer}`;
       const latency = Date.now() - start;
 
       const content = res.data?.choices?.[0]?.message?.content || '';
+      const usage = res.data?.usage || null;
+      operationalMetrics.recordLlmUsage({ model: this.model, usage, latencyMs: latency });
       let metrics;
       try {
         metrics = JSON.parse(content);
@@ -112,6 +115,7 @@ ${answer}`;
         ...metrics,
         latency,
         model: this.model,
+        usage,
       };
     } catch (err) {
       console.warn(`[Judge] API 失败: ${err.message}，降级为关键词匹配`);

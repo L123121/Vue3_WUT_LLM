@@ -8,6 +8,7 @@ const { RerankerService } = require('./reranker.service');
 const config = require('../config');
 const { metrics } = require('./metrics.service');
 const { RagTracer } = require('./rag-tracer.service');
+const { logEvent } = require('./observability.service');
 const {
   QUESTION_TYPE,
   TYPE_CONFIG,
@@ -91,7 +92,7 @@ class RagService {
     const message = String(err?.message || err || '').toLowerCase();
     if (/timeout|timed out|abort/.test(message)) return 'timeout';
     if (/rate|429|quota|limit/.test(message)) return 'rate_limit';
-    if (/milvus|vector|collection/.test(message)) return 'vector_store';
+    if (/qdrant|向量库|vector|collection/.test(message)) return 'vector_store';
     if (/embedding|transformer|model/.test(message)) return 'embedding';
     if (/network|econn|enotfound|socket|fetch/.test(message)) return 'network';
     return 'unknown';
@@ -320,6 +321,8 @@ class RagService {
     // 生成回答
     let reply = '';
     let aiLatency = 0;
+    let llmUsage = null;
+    let llmModel = config.ai.model || 'step-3.7-flash';
     let processCard = null;
     if (pipeline.context) {
       const aiStart = Date.now();
@@ -337,6 +340,8 @@ class RagService {
           usage: llmResult.usage || null,
         });
         reply = llmResult.content;
+        llmUsage = llmResult.usage || null;
+        llmModel = llmResult.model || llmModel;
         if (isProcess) processCard = this.parseProcessCard(reply);
       } catch (err) {
         aiLatency = this._recordTraceStage(tracer, 'llm', aiStart, false, { model: config.ai.model || 'step-3.7-flash' }, err);
@@ -378,7 +383,8 @@ class RagService {
       sources: pipeline.sources,
       context: pipeline.context,
       topChunks: pipeline.topChunks,
-      model: 'local-hybrid-search+parent-child',
+      model: llmModel,
+      usage: llmUsage,
       questionType: pipeline.questionType,
       rewrittenQuery: pipeline.rewrittenQuery,
       retrieval: pipeline.retrieval,
@@ -421,7 +427,7 @@ class RagService {
     const effectiveCategory = explicitCategory || autoCategory || null;
 
     const trace = {
-      mode: 'bge-small-zh-milvus-hybrid',
+      mode: 'bge-small-zh-qdrant-hybrid',
       category: effectiveCategory,
       autoCategory,
       topK: {
@@ -429,7 +435,7 @@ class RagService {
         final: searchTopK,
       },
       embedding: { ok: false, dense: false, sparse: false, latency: 0, model: null },
-      vector: { count: 0, latency: 0, error: null, backend: 'milvus_hybrid' },
+      vector: { count: 0, latency: 0, error: null, backend: 'qdrant_hybrid' },
       keyword: { enabled: false, count: 0, latency: 0, error: null },
       fused: { count: 0, topScore: 0, channels: [] },
     };
@@ -461,7 +467,7 @@ class RagService {
 
       if (queryEmbedding?.dense) {
         const searchStart = Date.now();
-        currentStage = 'milvus_search';
+        currentStage = 'vector_search';
         currentStageStart = searchStart;
         // RRF 融合在 vector-store 内完成（稠密/稀疏独立排名，无需动态权重路由）
         candidates = await this.vectorStore.search(queryEmbedding, searchTopK, filter);
@@ -486,10 +492,10 @@ class RagService {
           count: candidates.length,
           latency: Date.now() - searchStart,
           error: null,
-          backend: 'milvus_hybrid',
+          backend: 'qdrant_hybrid',
         };
         metrics.recordLatency('vectorSearch', trace.vector.latency);
-        this._recordTraceStage(tracer, 'milvus_search', searchStart, true, {
+        this._recordTraceStage(tracer, 'vector_search', searchStart, true, {
           queryVariant,
           topK: searchTopK,
           count: candidates.length,
@@ -498,7 +504,7 @@ class RagService {
           backend: trace.vector.backend,
         });
       } else {
-        this._recordTraceStage(tracer, 'milvus_search', Date.now(), false, {
+        this._recordTraceStage(tracer, 'vector_search', Date.now(), false, {
           queryVariant,
           reason: 'missing_dense_embedding',
         });
@@ -510,7 +516,7 @@ class RagService {
         trace.vector.error = err.message;
       }
       this._recordTraceStage(tracer, currentStage, currentStageStart, false, { queryVariant }, err);
-      console.warn(`[RAG] BGE-small-zh + Milvus 混合召回失败: ${err.message}`);
+      logEvent('warn', 'rag_vector_search_failed', { error: err.message });
     }
 
     this._recordTraceStage(tracer, 'keyword_search', Date.now(), true, {
@@ -761,6 +767,7 @@ class RagService {
         sources: [],
         context: '',
         model: config.ai.model || 'step-3.7-flash',
+        usage: result.usage || null,
       }, { usedRag: false, usedParentChild: false });
     } catch (err) {
       this._recordTraceStage(tracer, 'llm', aiStart, false, { model: config.ai.model || 'step-3.7-flash' }, err);

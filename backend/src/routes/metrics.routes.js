@@ -6,6 +6,12 @@ const { requireAuth } = require('../middleware/auth.middleware');
 const { operationalMetrics } = require('../services/operational-metrics.service');
 const { metrics } = require('../services/metrics.service');
 const { getFeedbackSummary } = require('../controllers/rag.controller');
+const {
+  getEvaluations,
+  compareEvaluations,
+  getRiskSummary,
+  createKnowledgeTask,
+} = require('../services/quality-governance.service');
 
 const router = express.Router();
 
@@ -74,6 +80,8 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
   try {
     const feedback = await getFeedbackSummary();
     const quality = metrics.getSummary();
+    const evaluationHistory = await getEvaluations();
+    const riskAudit = await getRiskSummary();
     res.json({
       success: true,
       data: {
@@ -81,8 +89,23 @@ router.get('/dashboard', requireAuth, async (req, res, next) => {
         quality,
         operations: operationalMetrics.snapshot(),
         satisfaction: feedback,
+        evaluationHistory: compareEvaluations(evaluationHistory),
+        riskAudit,
       },
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/risk-audit/tasks', requireAuth, async (req, res, next) => {
+  if (req.role !== 'admin') return res.status(403).json({ success: false, error: '需要管理员权限' });
+  try {
+    const task = await createKnowledgeTask({
+      ...req.body,
+      createdBy: req.userId || 'admin',
+    });
+    res.json({ success: true, data: task });
   } catch (error) {
     next(error);
   }

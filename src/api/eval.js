@@ -20,11 +20,11 @@ export const evalApi = {
    * @param {Array} testCases - 可选，自定义测试集
    * @returns {ReadableStream} SSE 流
    */
-  runEvaluation: (datasetSize = 5, testCases = null) => {
+  runEvaluation: (datasetSize = 5, testCases = null, metadata = {}) => {
     return fetch(`${API_BASE}/eval/run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ datasetSize, testCases, enableRag: true }),
+      body: JSON.stringify({ datasetSize, testCases, enableRag: true, ...metadata }),
     });
   },
 

@@ -1,6 +1,7 @@
 "use strict";
 
 const { applicationContainer } = require("../bootstrap/container");
+const { recordAudit } = require('../services/quality-governance.service');
 
 function writeSse(res, payload) {
   res.write(`data: ${JSON.stringify(payload)}\n\n`);
@@ -80,6 +81,14 @@ function createChatHandlers(conversationOrchestrator) {
         userId: req.userId,
         conversationId: req.body?.conversationId || null,
       });
+      void recordAudit({
+        question: message,
+        answer: result.reply,
+        sources: result.sources,
+        traceId: result.traceId || req.traceId,
+        userId: req.userId,
+        route: result.sources?.length ? 'rag' : 'chat',
+      }).catch((error) => console.warn('[QualityAudit] 非流式记录失败:', error.message));
       res.json({ success: true, data: result });
     } catch (error) {
       console.error("[Chat] 非流式错误:", error);
@@ -114,10 +123,22 @@ function createChatHandlers(conversationOrchestrator) {
         conversationId: req.body?.conversationId || null,
         signal: abortController.signal,
       };
+      const audit = { answer: '', sources: [], traceId: req.traceId };
       for await (const event of conversationOrchestrator.chatStream(message, history || [], context)) {
+        if (event.type === 'content' && !event.done) audit.answer += event.content || '';
+        if (event.type === 'sources') audit.sources = event.sources || [];
+        if (event.type === 'trace' && event.trace?.traceId) audit.traceId = event.trace.traceId;
         writeStreamEvent(res, event, req.traceId);
       }
 
+      void recordAudit({
+        question: message,
+        answer: audit.answer,
+        sources: audit.sources,
+        traceId: audit.traceId,
+        userId: req.userId,
+        route: audit.sources.length ? 'rag-stream' : 'chat-stream',
+      }).catch((error) => console.warn('[QualityAudit] 流式记录失败:', error.message));
       cleanupClientClose();
       res.end();
     } catch (error) {
