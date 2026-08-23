@@ -355,7 +355,7 @@ function registerDocumentProvider(provider) {
 
 // ==================== 按 backend 分发 ====================
 // VECTOR_STORE_BACKEND=qdrant → 使用 Qdrant 独立服务版；
-// 其余（file / milvus 遗留配置）→ 保持文件持久化版，行为不变。
+// file → 保持文件持久化版，行为不变。
 const vectorBackend = config.vectorStore?.backend || 'file';
 if (vectorBackend === 'qdrant') {
   module.exports = require('./vector-store-qdrant.service');
