@@ -7,7 +7,7 @@ const { EmbeddingService } = require('./embedding.service');
  *
  * 两层父子切片架构：
  *   父级 = 段落（按 \n\n 分割） → 作为 LLM 上下文
- *   子级 = 句子（按 。！？.!? 分割） → 向量化存入 Milvus 用于检索
+ *   子级 = 句子（按 。！？.!? 分割） → 向量化存入 Qdrant 用于检索
  *
  * 检索流程：匹配子级句子 → 取父级段落作为上下文注入 LLM
  */
@@ -188,7 +188,7 @@ class IndexingService {
   }
 
   /**
-   * 索引单个文档（段落→句子双层切片 → 向量化子级 → 存储到 Milvus）
+   * 索引单个文档（段落→句子双层切片 → 向量化子级 → 存储到 Qdrant）
    */
   async indexDocument(docId, title, content, category = 'general') {
     // 1. 按段落分割（父级）
@@ -234,7 +234,7 @@ class IndexingService {
       return 0;
     }
 
-    // 4. 构造 Milvus ID 并存储
+    // 4. 构造 point ID（docId_sent_i，确定性可重放）并存储
     const ids = childChunks.map((_, i) => `${docId}_sent_${i}`);
 
     await this.vectorStore.addChunks(ids, embeddings, childChunks, metadatas);

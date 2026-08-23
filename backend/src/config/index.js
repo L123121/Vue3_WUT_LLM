@@ -90,20 +90,15 @@ module.exports = {
     secret: process.env.JWT_SECRET,
     expiresIn: '7d',
   },
-  // 向量数据库（Qdrant 独立服务 / Milvus 兼容字段保留，实际由 vector-store 按 backend 分发）
+  // 向量数据库（Qdrant 独立服务；VECTOR_STORE_BACKEND=file 时切换本地文件持久化版）
   vectorStore: {
     backend: process.env.VECTOR_STORE_BACKEND || 'qdrant',
-    // Qdrant（VECTOR_STORE_BACKEND=qdrant 时启用）
     qdrantUrl: process.env.QDRANT_URL || 'http://localhost:6333',
     qdrantApiKey: process.env.QDRANT_API_KEY || '',
-    collectionName: process.env.QDRANT_COLLECTION || process.env.MILVUS_COLLECTION || 'wuli_elf_chunks',
-    // Milvus 兼容字段（遗留，未启用时忽略）
-    milvusAddress: process.env.MILVUS_ADDRESS || process.env.MILVUS_URI || 'localhost:19530',
-    milvusToken: process.env.MILVUS_TOKEN || '',
-    denseField: process.env.MILVUS_DENSE_FIELD || 'dense_vector',
-    sparseField: process.env.MILVUS_SPARSE_FIELD || 'sparse_vector',
-    vectorWeight: Number.parseFloat(process.env.MILVUS_DENSE_WEIGHT || process.env.RAG_VECTOR_WEIGHT || '0.6'),
-    sparseWeight: Number.parseFloat(process.env.MILVUS_SPARSE_WEIGHT || process.env.RAG_SPARSE_WEIGHT || '0.4'),
+    collectionName: process.env.QDRANT_COLLECTION || 'wuli_elf_chunks',
+    // 混合检索权重（客户端加权融合；RAG_FUSION=rrf 时改用 RRF 排名融合）
+    vectorWeight: Number.parseFloat(process.env.RAG_VECTOR_WEIGHT || '0.6'),
+    sparseWeight: Number.parseFloat(process.env.RAG_SPARSE_WEIGHT || '0.4'),
     // RRF 融合常数（文件后端默认融合方式，RAG_RRF_K 全局共享）
     rrfK: parseInt(process.env.RAG_RRF_K, 10) || 60,
     // 混合检索融合方式：weighted（默认，0.6/0.4 加权打分，官方评测优于 RRF）

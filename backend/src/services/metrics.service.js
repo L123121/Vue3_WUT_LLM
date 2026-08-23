@@ -20,7 +20,7 @@ class MetricsService {
       embedding: [],     // Embedding 生成
       ai: [],            // LLM 直接调用
       chatdoc: [],       // ChatDoc 检索（保留，兼容旧指标）
-      vectorSearch: [],  // Milvus 向量检索
+      vectorSearch: [],  // Qdrant 向量检索
       keywordSearch: [], // 关键词检索
       parentChild: [],   // 父子召回增强阶段
       total: [],         // 端到端总延迟

@@ -53,7 +53,7 @@ const stages = computed(() => {
   const timings = props.trace?.timings || [];
   const stageLabels = {
     embedding: '向量化',
-    milvus_search: '向量检索',
+    vector_search: '向量检索',
     child_select: '子句精排',
     rerank: 'Rerank 重排',
     parent_child: '父段落组装',
