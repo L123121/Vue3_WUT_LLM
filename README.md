@@ -18,7 +18,7 @@
 - **会话管理**：创建、切换、重命名、删除、重试、收藏和后端持久化。
 - **公开分享**：登录用户可生成只读分享快照，访问 `/share/:code` 无需登录。
 - **语音交互**：浏览器支持 Web Speech API 时可实时转写；配置 StepFun TTS 后支持逐条朗读、停止播放与 AI 自动朗读。
-- **评测与反馈**：包含检索评测、RAGAS、LLM-as-judge、Agent 路由评测和人工评分页面。
+- **评测与反馈**：包含检索评测、RAGAS、LLM-as-judge、Agent 路由评测和人工评分页面；点踩反馈可一键加入评测集候选，经 `export-badcases.cjs` 导出回流回归评测，形成线上质量闭环。
 - **个性化体验**：主题、语言、头像、个人资料与用户授权记忆。
 
 ### 工程能力
@@ -278,6 +278,7 @@ RAG 与 Agent 评测脚本位于 `scripts/rag-eval/`，主要数据集位于 `sc
 | `RAG_MIN_SOURCE_SCORE` | `0.03` | 可靠来源最低分数 |
 | `RAG_FUSION` | `weighted` | `weighted` 或 `rrf` |
 | `RAG_MMR_ENABLED` | `true` | 启用父段 MMR 去重 |
+| `RAG_SEMANTIC_CACHE_ENABLED` | `false` | 语义缓存：近义问题按向量相似度复用检索候选池 |
 
 ### 可选能力
 

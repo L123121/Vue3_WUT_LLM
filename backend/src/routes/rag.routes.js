@@ -15,6 +15,8 @@ router.post('/chat', ragController.ragChat);
 router.post('/chat/stream', ragController.ragChatStream);
 router.get('/feedback', ragController.listFeedback);
 router.post('/feedback', ragController.submitFeedback);
+// 反馈 → 评测集数据飞轮（仅管理员）：queued 入队 / exported 已导出
+router.post('/feedback/eval-status', requireAdmin, ragController.updateFeedbackEvalStatus);
 
 // 离线评估
 router.post('/retrieval/parents', ragController.retrieveParentCandidates);

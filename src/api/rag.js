@@ -98,3 +98,11 @@ export const getRagFeedback = async (params = {}) => {
   const response = await apiGet(`/rag/feedback${suffix}`);
   return response.json();
 };
+
+/**
+ * 管理员更新反馈的评测集状态（queued 入队 / exported 已导出）
+ */
+export const updateRagFeedbackEvalStatus = async (payload) => {
+  const response = await apiPost('/rag/feedback/eval-status', payload);
+  return response.json();
+};
