@@ -1,14 +1,16 @@
 <script setup>
-import { ref, computed } from 'vue';
+import { ref, computed, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
-import { User, Bot, Copy, RotateCcw, FileText, BookOpen, X, ThumbsUp, ThumbsDown, Star, Volume2, Square, Loader2 } from 'lucide-vue-next';
+import { User, Bot, Copy, RotateCcw, FileText, BookOpen, X, ThumbsUp, ThumbsDown, Star, Volume2, Square, Loader2, GitFork, Pencil, Check } from 'lucide-vue-next';
 import { useLanguageStore } from '../../stores/language.store.js';
 import { useChatStore } from '../../stores/chat.store.js';
+import { useConversationStore } from '../../stores/conversation.store.js';
 import { useAuthStore } from '../../stores/auth.store.js';
 import { useFavoritesStore } from '../../stores/favorites.store.js';
 import { useToastStore } from '../../stores/toast.store.js';
 import { useSpeechPlayer } from '../../composables/useSpeechPlayer.js';
 import { submitRagFeedback } from '../../api/rag.js';
+import { forkConversation } from '../../api/conversations.js';
 import MarkdownRenderer from './MarkdownRenderer.vue';
 import RetrievalTracePanel from './RetrievalTracePanel.vue';
 import ProcessCard from './ProcessCard.vue';
@@ -212,6 +214,49 @@ const toggleFavorite = () => {
   favoritesStore.toggleFavorite(props.message, chatStore.currentConversation);
 };
 
+// ===== 消息分叉：复制当前消息（含）之前的历史到新会话 =====
+const conversationStore = useConversationStore();
+const toastStore = useToastStore();
+const forkLoading = ref(false);
+const forkFromHere = async () => {
+  const conv = chatStore.currentConversation;
+  if (!conv || forkLoading.value || chatStore.isLoading) return;
+  forkLoading.value = true;
+  try {
+    const res = await forkConversation(conv.id, props.message.id);
+    if (!res?.success || !res?.data?.id) throw new Error(res?.error || '分叉失败');
+    const newId = conversationStore.importForkedConversation(res.data);
+    if (newId && newId !== conversationStore.currentConversationId) {
+      await conversationStore.switchConversation(newId);
+    }
+    toastStore.success('已分叉出新会话，原会话保持不变');
+  } catch (error) {
+    toastStore.error(error.message || '分叉失败，请重试');
+  } finally {
+    forkLoading.value = false;
+  }
+};
+
+// ===== 用户消息编辑重发 =====
+const editing = ref(false);
+const editText = ref('');
+const editTextareaRef = ref(null);
+const startEdit = () => {
+  if (chatStore.isLoading) return;
+  editText.value = messageText.value;
+  editing.value = true;
+  nextTick(() => editTextareaRef.value?.focus());
+};
+const cancelEdit = () => {
+  editing.value = false;
+};
+const saveEdit = async () => {
+  const text = editText.value.trim();
+  if (!text || chatStore.isLoading) return;
+  editing.value = false;
+  await chatStore.editAndResendMessage(props.message.id, text);
+};
+
 const buildFeedbackSources = () => (props.message.sources || []).map((source) => ({
   id: source.id || source.parentId || source.docId || '',
   title: source.title || '',
@@ -341,7 +386,35 @@ const timeClasses = computed(() => {
 
         <!-- Message text -->
         <MarkdownRenderer v-if="isModel && !isError" :content="messageText" :sources="message.sources || []" @citation-click="showCitation" @copy-code="(code) => copyMessage(code)" />
-        <div v-if="isUser || isError" class="whitespace-pre-wrap leading-relaxed">{{ messageText }}</div>
+
+        <!-- 用户消息编辑态：修改后重发（复用 retry 通道，替换原回复） -->
+        <div v-if="isUser && editing" class="w-full min-w-[220px]">
+          <textarea
+            ref="editTextareaRef"
+            v-model="editText"
+            rows="3"
+            class="w-full rounded-lg border border-wut-200 dark:border-wut-700 bg-white dark:bg-gray-800 text-slate-800 dark:text-gray-100 text-sm p-2 outline-none focus:ring-2 focus:ring-wut-300 dark:focus:ring-wut-800 resize-y"
+            @keydown.enter.exact.prevent="saveEdit"
+            @keydown.esc.prevent="cancelEdit"
+          ></textarea>
+          <div class="mt-1.5 flex items-center justify-end gap-2">
+            <button
+              type="button"
+              class="px-2.5 py-1 rounded-lg text-xs text-slate-500 dark:text-gray-400 hover:bg-white/15 transition-colors"
+              @click="cancelEdit"
+            >取消</button>
+            <button
+              type="button"
+              :disabled="!editText.trim() || chatStore.isLoading"
+              class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-white text-wut-700 hover:bg-wut-50 disabled:opacity-50 transition-colors"
+              @click="saveEdit"
+            >
+              <Check :size="12" />
+              保存并重发
+            </button>
+          </div>
+        </div>
+        <div v-else-if="isUser || isError" class="whitespace-pre-wrap leading-relaxed">{{ messageText }}</div>
 
         <!-- 政策问答步骤卡片（后端解析的结构化 JSON） -->
         <ProcessCard v-if="isModel && !isError && message.processCard" :card="message.processCard" />
@@ -558,6 +631,25 @@ const timeClasses = computed(() => {
           >
             <Star :size="14" :class="{ 'fill-current': isFavorited }" />
             <span v-if="isFavorited">已收藏</span>
+          </button>
+          <button
+            v-if="isUser && !isStreaming && !editing"
+            class="flex items-center gap-1 hover:text-wut-500 transition-all duration-200 cursor-pointer px-1.5 py-0.5 rounded text-sm opacity-60 hover:opacity-100"
+            :class="timeClasses"
+            @click="startEdit"
+            title="编辑此消息并重新发送"
+          >
+            <Pencil :size="14" />
+          </button>
+          <button
+            v-if="messageText && !isStreaming"
+            :disabled="forkLoading || chatStore.isLoading"
+            class="flex items-center gap-1 hover:text-wut-500 transition-all duration-200 cursor-pointer px-1.5 py-0.5 rounded text-sm disabled:opacity-50"
+            :class="timeClasses"
+            @click="forkFromHere"
+            title="从此处分叉出新会话（原会话保持不变）"
+          >
+            <GitFork :size="14" />
           </button>
         </div>
       </div>

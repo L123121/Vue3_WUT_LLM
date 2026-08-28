@@ -82,6 +82,7 @@ export const useChatStore = defineStore('chat', () => {
   // 方法 - 代理到 messageStore
   const sendMessage = (text, retryMsgId, fileData) => messageStore.sendMessage(text, retryMsgId, fileData);
   const retryMessage = (msgId) => messageStore.retryMessage(msgId);
+  const editAndResendMessage = (msgId, newText) => messageStore.editAndResendMessage(msgId, newText);
   const clearMessages = () => messageStore.clearMessages();
   const getConversationHistory = () => messageStore.getConversationHistory();
   const deleteMessage = (id) => messageStore.deleteMessage(id);
@@ -118,6 +119,7 @@ export const useChatStore = defineStore('chat', () => {
     // 消息方法
     sendMessage,
     retryMessage,
+    editAndResendMessage,
     clearMessages,
     getConversationHistory,
     deleteMessage,

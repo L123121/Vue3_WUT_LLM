@@ -18,6 +18,7 @@ export const useMessageStore = defineStore('message', () => {
     // 流式操作
     sendMessage: streaming.sendMessage,
     retryMessage: streaming.retryMessage,
+    editAndResendMessage: streaming.editAndResendMessage,
     abortCurrentRequest: streaming.abortCurrentRequest,
 
     // 消息操作
