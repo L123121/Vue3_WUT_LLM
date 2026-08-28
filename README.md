@@ -31,6 +31,8 @@
 - 前端流式渲染用 requestAnimationFrame 合并高频增量更新，后台 Tab 暂停 RAF 时立即落盘待写内容；发版后旧页面的 chunk 加载失败可自动识别并恢复。
 - RAG 全链路可观测：traceId 贯穿 embedding、检索、重排、父段组装、生成、grounding 各阶段并记录耗时，trace 随 SSE 下发，前端面板可视化。
 - Embedding 与 Reranker 为本地 ONNX BGE 模型（离线加载，可选 int8 量化，向量内存约省 75%），除生成环节外 RAG 链路零模型 API 调用。
+- 语义缓存：精确缓存 miss 后按查询向量余弦相似度（默认 ≥0.95）复用近义问题的检索候选池，省一次向量库往返（`RAG_SEMANTIC_CACHE_ENABLED` 开启）。
+- 增量重索引：重索引时按 chunk 内容 hash 对齐，未变段落直接复用已有向量，只重算新增/变化部分。
 - Docker 多阶段构建、Docker Compose、GitHub Actions 和健康检查。
 
 ## 会话编排
@@ -289,6 +291,8 @@ RAG 与 Agent 评测脚本位于 `scripts/rag-eval/`，主要数据集位于 `sc
 | `QUOTA_ADMIN_LIMIT` | `1000` | 管理员额度 |
 
 完整模板见 `backend/.env.example` 与 `deploy/.env.production.example`。
+
+功能清单与各功能的设计要点（含代码落点）见 [docs/FEATURES.md](docs/FEATURES.md)。
 
 ## 数据与持久化
 
