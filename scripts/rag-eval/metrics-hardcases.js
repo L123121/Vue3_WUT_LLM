@@ -3,7 +3,7 @@
  * 指标：来源数、向量分/稀疏分/hybrid分、检索延迟、内容覆盖率
  * 用法: node metrics-hardcases.js
  */
-import { mkdirSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
@@ -13,7 +13,15 @@ const RESULTS_DIR = resolve(__dirname, 'results/hardcases');
 mkdirSync(RESULTS_DIR, { recursive: true });
 
 const BACKEND_URL = 'http://localhost:3000';
-const JWT_SECRET = 'wuli-elf-dev-jwt-secret-2026-change-in-prod';
+// JWT 密钥：环境变量优先，其次读 backend/.env（与后端服务同一密钥）
+const SECRET_ENV = resolve(__dirname, '../../backend/.env');
+const JWT_SECRET =
+  process.env.JWT_SECRET ||
+  (existsSync(SECRET_ENV) && readFileSync(SECRET_ENV, 'utf8').match(/^JWT_SECRET=(.+)$/m)?.[1].trim());
+if (!JWT_SECRET) {
+  console.error('未找到 JWT_SECRET：请设置环境变量 JWT_SECRET，或在 backend/.env 中配置');
+  process.exit(1);
+}
 
 function makeJwt(payload) {
   const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');

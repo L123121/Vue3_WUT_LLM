@@ -36,11 +36,11 @@ on:
   workflow_dispatch: # 支持手动触发
 
 env:
-  # ─── 镜像仓库（二选一） ───
-  # Option A: Docker Hub
-  IMAGE_NAME: your-dockerhub-username/wuli-elf-backend
-  # Option B: 阿里云 ACR（国内部署推荐）
-  # IMAGE_NAME: registry.cn-hangzhou.aliyuncs.com/your-namespace/wuli-elf-backend
+  # ─── 镜像仓库 ───
+  # 在 GitHub 仓库 Settings → Secrets and variables → Actions → Variables 中配置 DOCKER_IMAGE_NAME
+  # Option A: Docker Hub，例如 your-dockerhub-username/wuli-elf-backend
+  # Option B: 阿里云 ACR（国内部署推荐），例如 registry.cn-hangzhou.aliyuncs.com/your-namespace/wuli-elf-backend
+  IMAGE_NAME: ${{ vars.DOCKER_IMAGE_NAME }}
 
 jobs:
   # ========== 1. 代码检查和测试 ==========
@@ -92,6 +92,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Check image name configuration
+        run: |
+          if [ -z "$IMAGE_NAME" ]; then
+            echo "::error::未配置镜像仓库地址。请在仓库 Settings → Secrets and variables → Actions → Variables 中添加 DOCKER_IMAGE_NAME（例如: your-dockerhub-username/wuli-elf-backend）"
+            exit 1
+          fi
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
