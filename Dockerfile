@@ -52,11 +52,18 @@ LABEL description="武理小精灵 - 武理校园 AI 助手 / WUT Campus AI Assi
 
 WORKDIR /app
 
+# OS 层安全补丁：升级基础镜像内的已知漏洞包（Trivy 扫描门禁要求）
+RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+
 # ---- 拷贝前端构建产物 ----
 COPY --from=frontend-builder /app/dist ./dist
 
-# ---- 拷贝后端源码 ----
-COPY backend/ ./backend/
+# ---- 拷贝后端源码（选择性：不打包 lockfile/测试/本地数据，
+#      避免 Trivy 扫到未安装的 devDependencies；运行只需 src + node_modules） ----
+COPY backend/package.json ./backend/
+COPY backend/src ./backend/src
 COPY --from=backend-deps /app/backend/node_modules ./backend/node_modules
 
 # ---- 运行时目录 ----
