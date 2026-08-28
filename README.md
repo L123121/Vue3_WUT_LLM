@@ -35,17 +35,18 @@
 
 ## 会话编排
 
-```text
-用户消息
-   │
-   ▼
-ConversationOrchestrator
-   ├── IntentRouter ── 普通问候/闲聊 ───────────────► chat
-   ├── IntentRouter ── 校园或知识型问题/默认兜底 ─► rag
-   └── IntentRouter ── 数学计算/复合任务 ─────────► agent
-                                                   │
-                                                   ├── calculate
-                                                   └── search_knowledge_base
+```mermaid
+flowchart TD
+    MSG["用户消息"] --> ORCH["ConversationOrchestrator"]
+    ORCH --> ROUTER["IntentRouter"]
+    ROUTER -- "问候/闲聊" --> CHAT["chat（普通对话）"]
+    ROUTER -- "校园/知识型问题（默认兜底）" --> RAG["rag（知识库检索）"]
+    ROUTER -- "数学计算/复合任务" --> AGENT["agent（工具调用）"]
+    AGENT --> CALC["calculate"]
+    AGENT --> SEARCH["search_knowledge_base"]
+    CHAT --> SSE["SSE 流式返回 content / sources / trace"]
+    RAG --> SSE
+    AGENT --> SSE
 ```
 
 路由原则：
@@ -60,29 +61,18 @@ Agent 默认最多执行两轮工具调度，并包含无进展循环检测。�
 
 ## RAG 检索链路
 
-```text
-用户问题
-  │
-  ├── BGE-small-zh-v1.5：生成 dense embedding
-  └── n-gram：生成 sparse vector
-          │
-          ▼
-Qdrant 混合检索（默认 topK=50）
-          │
-          ▼
-子片段候选选择与父段归并
-          │
-          ▼
-BGE-reranker-base 重排
-          │
-          ▼
-自适应分数截断 + MMR 去重
-          │
-          ▼
-父段上下文组装（默认最多 6000 字符）
-          │
-          ▼
-StepFun LLM 生成回答并附带 sources
+```mermaid
+flowchart TD
+    Q["用户问题"] --> EMB["BGE-small-zh-v1.5<br/>dense + n-gram sparse"]
+    EMB --> HYB["Qdrant 混合检索（默认 topK=50）"]
+    HYB --> SEL["子片段候选选择"]
+    SEL --> AGG["父段归并"]
+    AGG --> RERANK["BGE-reranker-base 重排"]
+    RERANK --> TRUNC["自适应分数截断 + MMR 去重"]
+    TRUNC --> CTX["父段上下文组装（默认 ≤6000 字符）"]
+    CTX --> LLM["LLM 生成回答 + [N] 行内引用"]
+    LLM --> GROUND["grounding 溯源校验（旁路）"]
+    GROUND --> OUT["SSE：content / sources / grounding / usage / trace"]
 ```
 
 ### 关键服务
