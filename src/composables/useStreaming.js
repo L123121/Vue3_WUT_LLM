@@ -456,6 +456,22 @@ export function useStreaming() {
     await sendMessage(getMessageText(msg), msgId);
   };
 
+  /**
+   * 编辑用户消息并重发：更新消息文本后复用 retry 通道
+   * （sendMessage 会移除旧的用户消息+AI 回复再重新流式生成）
+   */
+  const editAndResendMessage = async (msgId, newText) => {
+    const convStore = useConversationStore();
+    const conv = convStore.currentConversation;
+    const trimmed = String(newText || '').trim();
+    if (!conv || !trimmed || isLoading.value) return;
+    const msg = conv.messages?.find((m) => m.id === msgId);
+    if (!msg || msg.role !== 'user') return;
+    msg.content = trimmed;
+    msg.text = trimmed; // 兼容旧渲染字段
+    await sendMessage(trimmed, msgId);
+  };
+
   const abortCurrentRequest = () => {
     cancelPendingRaf(true); // 刷新 RAF 缓冲区到消息后中止，避免内容丢失
     if (currentAbortController) {
@@ -476,6 +492,7 @@ export function useStreaming() {
     reconnectAttempt,
     sendMessage,
     retryMessage,
+    editAndResendMessage,
     abortCurrentRequest,
     cleanup,
   };
