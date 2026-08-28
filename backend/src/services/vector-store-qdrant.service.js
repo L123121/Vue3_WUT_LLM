@@ -338,6 +338,42 @@ class QdrantVectorStore {
     if (result?.status === 'completed') this._pointCount = 0; // 懒刷新，下次 count 修正
   }
 
+  /**
+   * 取回指定文档的全部向量点（含向量），供增量重索引按内容 hash 复用
+   * @returns {Promise<Array<{ id: string, text: string, dense: number[], sparse: Object }>>}
+   *          sparse 转回 {dim: weight} map 形式，与 embedBatch 输出一致
+   */
+  async getDocPoints(docId) {
+    await this._waitConnected();
+    if (!this._client) return [];
+    const points = [];
+    let offset = undefined;
+    do {
+      const page = await this._client.scroll(this.collectionName, {
+        filter: { must: [{ key: 'docId', match: { value: docId } }] },
+        with_vector: true,
+        with_payload: true,
+        limit: 256,
+        ...(offset !== undefined ? { offset } : {}),
+      });
+      for (const p of page.points || []) {
+        const vector = p.vector || {};
+        const rawSparse = vector.sparse || {};
+        const sparse = Array.isArray(rawSparse.indices)
+          ? Object.fromEntries(rawSparse.indices.map((dim, i) => [dim, rawSparse.values[i]]))
+          : (rawSparse || {});
+        points.push({
+          id: p.payload?.id || String(p.id),
+          text: p.payload?.text || '',
+          dense: vector.dense || null,
+          sparse,
+        });
+      }
+      offset = page.next_page_offset ?? undefined;
+    } while (offset !== undefined);
+    return points;
+  }
+
   async resetCollection() {
     if (!this._client) return;
     try {

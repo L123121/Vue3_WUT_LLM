@@ -1,5 +1,6 @@
 "use strict";
 
+const crypto = require('crypto');
 const { EmbeddingService } = require('./embedding.service');
 
 /**
@@ -10,6 +11,9 @@ const { EmbeddingService } = require('./embedding.service');
  *   子级 = 句子（按 。！？.!? 分割） → 向量化存入 Qdrant 用于检索
  *
  * 检索流程：匹配子级句子 → 取父级段落作为上下文注入 LLM
+ *
+ * 增量重索引：删除前按内容 hash 取回旧向量，文本未变的 chunk 直接复用 embedding
+ * （embedding 是全链路最贵的本地计算），只重算变化的段落。
  */
 class IndexingService {
   /**
@@ -25,6 +29,40 @@ class IndexingService {
   }
 
   get vectorStore() { return this._getVectorStore(); }
+
+  /** 最近一次 indexDocument 的复用统计 { reused, embedded, total }，供重索引接口展示 */
+  get lastReuseStats() { return this._lastReuseStats || { reused: 0, embedded: 0, total: 0 }; }
+
+  /** chunk 内容 hash：增量复用的对齐键（trim 归一化） */
+  _contentHash(text) {
+    return crypto.createHash('sha256').update(String(text || '').trim()).digest('hex');
+  }
+
+  /**
+   * 取回文档现有向量并按内容 hash 建复用表
+   * @returns {Promise<Map<string, {dense: number[], sparse: Object}> | null>}
+   *          向量库不支持 getDocPoints 或取回失败时返回 null（退化为全量重算）
+   */
+  async _buildReuseMap(docId) {
+    if (typeof this.vectorStore.getDocPoints !== 'function') return null;
+    try {
+      const oldPoints = await this.vectorStore.getDocPoints(docId);
+      const map = new Map();
+      for (const point of oldPoints) {
+        if (!point?.dense?.length) continue;
+        // Qdrant 线上 sparse 为 {indices, values}，归一化回 embedBatch 的 {dim: weight} map 形式
+        let sparse = point.sparse || {};
+        if (Array.isArray(sparse.indices)) {
+          sparse = Object.fromEntries(sparse.indices.map((dim, i) => [dim, sparse.values[i]]));
+        }
+        map.set(this._contentHash(point.text), { dense: point.dense, sparse });
+      }
+      return map;
+    } catch (err) {
+      console.warn(`[Indexing] 取回旧向量失败，退化为全量重算: ${err.message}`);
+      return null;
+    }
+  }
 
   /**
    * 将文本按段落分割（含碎片段落合并）
@@ -189,8 +227,14 @@ class IndexingService {
 
   /**
    * 索引单个文档（段落→句子双层切片 → 向量化子级 → 存储到 Qdrant）
+   * @param {string} docId
+   * @param {string} title
+   * @param {string} content
+   * @param {string} category
+   * @param {Object} [options]
+   * @param {Map|null} [options.oldVectors] - 内容 hash → 旧向量复用表（增量重索引用）
    */
-  async indexDocument(docId, title, content, category = 'general') {
+  async indexDocument(docId, title, content, category = 'general', { oldVectors = null } = {}) {
     // 1. 按段落分割（父级）
     const paragraphs = this._splitParagraphs(content);
     if (!paragraphs.length) {
@@ -227,17 +271,43 @@ class IndexingService {
 
     console.log(`[Indexing] 文档切片: ${paragraphs.length} 段落 → ${childChunks.length} 句子`);
 
-    // 3. 向量化子级（句子）
-    const embeddings = await this.embeddingService.embedBatch(childChunks);
-    if (!embeddings || embeddings.some(e => !e?.dense)) {
-      console.warn(`[Indexing] 文档 ${docId} 向量化失败，跳过索引`);
-      return 0;
+    // 3. 向量化子级：hash 命中旧向量直接复用，只对新增/变化的 chunk 调用模型
+    const reused = new Array(childChunks.length).fill(null);
+    const freshIdx = [];
+    const freshTexts = [];
+    if (oldVectors) {
+      childChunks.forEach((text, i) => {
+        const hit = oldVectors.get(this._contentHash(text));
+        if (hit) reused[i] = hit;
+        else freshIdx.push(i);
+      });
+    } else {
+      freshIdx.push(...childChunks.map((_, i) => i));
+    }
+
+    if (freshIdx.length > 0) {
+      freshIdx.forEach(i => freshTexts.push(childChunks[i]));
+      const freshEmbeddings = await this.embeddingService.embedBatch(freshTexts);
+      if (freshEmbeddings.some(e => !e?.dense)) {
+        console.warn(`[Indexing] 文档 ${docId} 向量化失败，跳过索引`);
+        return 0;
+      }
+      freshIdx.forEach((chunkIdx, j) => { reused[chunkIdx] = freshEmbeddings[j]; });
+    }
+
+    this._lastReuseStats = {
+      reused: childChunks.length - freshIdx.length,
+      embedded: freshIdx.length,
+      total: childChunks.length,
+    };
+    if (oldVectors) {
+      console.log(`[Indexing] 增量复用: ${childChunks.length - freshIdx.length}/${childChunks.length} 个向量免算，重算 ${freshIdx.length} 个`);
     }
 
     // 4. 构造 point ID（docId_sent_i，确定性可重放）并存储
     const ids = childChunks.map((_, i) => `${docId}_sent_${i}`);
 
-    await this.vectorStore.addChunks(ids, embeddings, childChunks, metadatas);
+    await this.vectorStore.addChunks(ids, reused, childChunks, metadatas);
     console.log(`[Indexing] 文档索引完成: ${docId}, ${childChunks.length} 个句子向量`);
     return childChunks.length;
   }
@@ -247,12 +317,34 @@ class IndexingService {
     console.log(`[Indexing] 文档索引已删除: ${docId}`);
   }
 
+  /**
+   * 增量重索引：删除前先取回旧向量，文本未变的 chunk 复用 embedding
+   */
   async reindexDocument(docId, title, content, category = 'general') {
+    const oldVectors = await this._buildReuseMap(docId);
     await this.removeDocument(docId);
-    return await this.indexDocument(docId, title, content, category);
+    return await this.indexDocument(docId, title, content, category, { oldVectors });
   }
 
-  async reindexAll(docs) {
+  /**
+   * 重建所有文档的索引
+   * @param {Array} docs - 文档列表
+   * @param {Object} [options]
+   * @param {string} [options.mode='rebuild'] - rebuild: reset collection 后全量重建（修复/策略变更用）
+   *                                            incremental: 逐文档 hash diff，未变 chunk 复用向量
+   */
+  async reindexAll(docs, { mode = 'rebuild' } = {}) {
+    if (mode === 'incremental') {
+      console.log(`[Indexing] 开始增量重索引，共 ${docs.length} 个文档`);
+      let totalChunks = 0;
+      for (const doc of docs) {
+        totalChunks += await this.reindexDocument(doc.id, doc.title, doc.content, doc.category);
+      }
+      const { reused, embedded } = this.lastReuseStats;
+      console.log(`[Indexing] 增量重索引完成，共 ${totalChunks} 个句子向量（复用 ${reused}，重算 ${embedded}）`);
+      return totalChunks;
+    }
+
     console.log(`[Indexing] 开始全量重建索引，共 ${docs.length} 个文档`);
     await this.vectorStore.resetCollection();
 

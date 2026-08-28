@@ -128,7 +128,7 @@ flowchart TD
 | `GET` | `/api/conversations` | 会话列表与持久化接口 |
 | `GET` | `/api/rag/documents` | 查看知识库文档 |
 | `POST` | `/api/rag/documents/upload` | 管理员上传知识库文档 |
-| `POST` | `/api/rag/documents/reindex` | 管理员重建索引 |
+| `POST` | `/api/rag/documents/reindex` | 管理员重建索引；`mode=incremental` 走内容 hash 增量 diff，未变段落复用向量 |
 | `POST` | `/api/share` | 创建分享快照 |
 | `GET` | `/api/share/:code` | 公开读取分享快照 |
 | `GET` | `/api/memory` | 用户记忆接口 |
