@@ -104,6 +104,21 @@ module.exports = {
     // 混合检索融合方式：weighted（默认，0.6/0.4 加权打分，官方评测优于 RRF）
     // | rrf（倒数排名融合，RAG_FUSION=rrf 可切换，2026-08-09 实测 Recall 74.5% vs 加权 80.7%）
     fusion: process.env.RAG_FUSION || 'weighted',
+    // payload 索引：docId/category 建关键词索引，元数据过滤从全量扫描变为索引查找
+    payloadIndexEnabled: process.env.QDRANT_PAYLOAD_INDEX !== 'false',
+    // 标量量化（QDRANT_QUANTIZATION=int8）：向量内存约省 75%，需重建 collection 后全量生效
+    quantization: process.env.QDRANT_QUANTIZATION || '',
+  },
+  // 文档入库清洗与质量闸门（Prompt injection 过滤 + 乱码占比检查）
+  docSanitize: {
+    enabled: process.env.DOC_SANITIZE_ENABLED !== 'false',
+    // [UNK]/乱码字符占比超过 warn 阈值记告警，超过 reject 阈值拒绝入库
+    warnUnkRatio: Number.parseFloat(process.env.DOC_SANITIZE_WARN_UNK_RATIO || '0.03'),
+    rejectUnkRatio: Number.parseFloat(process.env.DOC_SANITIZE_REJECT_UNK_RATIO || '0.15'),
+  },
+  // 文档内容去重（sha256 归一化哈希）：重复上传直接返回已有文档，不再产生重复向量
+  document: {
+    dedupEnabled: process.env.DOC_DEDUP_ENABLED !== 'false',
   },
   // RAG 检索链路配置
   rag: {
@@ -122,6 +137,12 @@ module.exports = {
     mmrMaxSim: Number.parseFloat(process.env.RAG_MMR_MAX_SIM || '0.85'),
     // 元数据过滤（Multi-faceted Filtering）：按问题关键词自动推断文档类别过滤候选
     autoCategoryFilter: process.env.RAG_AUTO_CATEGORY_FILTER !== 'false',
+    // 运行时引用校验（防幻觉兜底）：生成后逐句对照 RAG 上下文，低溯源回答标注 level=low
+    groundingEnabled: process.env.RAG_GROUNDING_ENABLED !== 'false',
+    groundingMinSupport: Number.parseFloat(process.env.RAG_GROUNDING_MIN_SUPPORT || '0.35'),
+    // 跨文档问题分解：对比/列举类问题拆实体级子查询扩大召回池（reranker 仍按原问题打分）
+    queryDecomposeEnabled: process.env.RAG_QUERY_DECOMPOSE_ENABLED !== 'false',
+    queryDecomposeMaxSubQueries: parseInt(process.env.RAG_DECOMPOSE_MAX_SUB_QUERIES, 10) || 3,
     // 意图识别自动路由（V2.0）：前端不再手动开关 RAG，后端自动路由
     // rag=知识库检索 / chat=纯对话 / agent=工具调度（INTENT_ROUTING_ENABLED=false 可整体关闭，退回原链路）
     intentRoutingEnabled: process.env.INTENT_ROUTING_ENABLED !== 'false',

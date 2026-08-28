@@ -171,7 +171,10 @@ export async function runRetrievalEval(options = {}) {
     const validRelevantIds = getValidRelevantIds(item.relevant_doc_ids);
 
     if (validRelevantIds.length === 0) {
-      if (verbose) console.log(`${progress} ⏭️  ${item.id}: ${item.question.substring(0, 30)}... (未填写文档ID，跳过)`);
+      const reason = item.status === 'pending_annotation'
+        ? '待标注(pending_annotation，标注后自动并入回归)'
+        : '未填写文档ID，跳过';
+      if (verbose) console.log(`${progress} ⏭️  ${item.id}: ${item.question.substring(0, 30)}... (${reason})`);
       skipped++;
       continue;
     }

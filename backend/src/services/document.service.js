@@ -1,8 +1,11 @@
 "use strict";
 
+const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 const { TextSplitter } = require('../utils/text-splitter');
 const { redis: store } = require('./memory-store');
+const config = require('../config');
+const { sanitizeDocument } = require('./doc-sanitizer.service');
 
 const VECTOR_STATUS = Object.freeze({
   LOCAL_ONLY: 'local_only',
@@ -54,13 +57,71 @@ class DocumentService {
   }
 
   /**
-   * 添加文档到知识库（自动切片 → 向量化 → ChromaDB 存储）
+   * 内容归一化 sha256：trim + 空白折叠后哈希（格式微调不产生重复向量）
    */
-  async addDocument(doc) {
-    const { title, content, category = 'general', metadata = {} } = doc;
+  _contentHash(content) {
+    const normalized = String(content || '').replace(/\s+/g, ' ').trim();
+    return crypto.createHash('sha256').update(normalized).digest('hex');
+  }
+
+  /** 哈希索引 key：set 成员为使用该内容的 docId */
+  _hashKey(contentHash) {
+    return `documents:hash:${contentHash}`;
+  }
+
+  /**
+   * 添加文档到知识库（清洗 → 去重检查 → 切片 → 向量化 → Qdrant 存储）
+   * @param {Object} doc
+   * @param {Object} [options]
+   * @param {boolean} [options.force=false] - 跳过内容去重强制入库
+   */
+  async addDocument(doc, options = {}) {
+    let { title, content, category = 'general', metadata = {} } = doc;
 
     if (!content || content.trim().length === 0) {
       throw new Error('文档内容不能为空');
+    }
+
+    // ===== 入库清洗与质量闸门（Prompt injection 过滤 + 乱码占比检查）=====
+    // 清洗只在这里做一遍，之后 embedding 与上下文使用的都是同一份文本
+    const { content: sanitizedContent, report } = sanitizeDocument(content);
+    if (report.enabled && report.qualityLevel === 'reject') {
+      const rejectRatio = config.docSanitize?.rejectUnkRatio ?? 0.15;
+      throw new Error(
+        `文档质量检查未通过：乱码/坏字符占比 ${(report.garbageRatio * 100).toFixed(1)}%` +
+        ` 超过阈值 ${(rejectRatio * 100).toFixed(0)}%，已拒绝入库`,
+      );
+    }
+    if (report.injectionLines > 0) {
+      console.warn(`[Document] 已过滤 ${report.injectionLines} 行疑似提示词注入: ${JSON.stringify(report.injectionHits.slice(0, 5))}`);
+    }
+    if (report.qualityLevel === 'warn') {
+      console.warn(`[Document] 文档乱码占比偏高: ${(report.garbageRatio * 100).toFixed(2)}%（已入库，建议人工复核）`);
+    }
+    if (report.injectionLines > 0 || report.garbageRatio > 0) {
+      metadata = { ...metadata, sanitizeReport: { injectionLines: report.injectionLines, garbageRatio: report.garbageRatio, qualityLevel: report.qualityLevel } };
+    }
+    content = sanitizedContent;
+
+    // ===== 内容去重：同内容文档直接返回已有记录，不再产生重复向量 =====
+    const dedupEnabled = config.document?.dedupEnabled !== false && !options.force;
+    const contentHash = this._contentHash(content);
+    if (dedupEnabled) {
+      const duplicate = await this._findDuplicate(contentHash);
+      if (duplicate) {
+        console.log(`[Document] 内容重复: 已存在 ${duplicate.id} (${duplicate.title})，跳过重复入库`);
+        return {
+          id: duplicate.id,
+          title: duplicate.title,
+          chunkCount: parseInt(duplicate.chunkCount) || 0,
+          indexedChunkCount: parseInt(duplicate.indexedChunkCount) || 0,
+          vectorStatus: duplicate.vectorStatus || VECTOR_STATUS.READY,
+          vectorMessage: duplicate.vectorMessage || '',
+          message: `检测到内容重复：知识库已有《${duplicate.title}》(${duplicate.id})，本次未重复入库`,
+          duplicate: true,
+          existingDocId: duplicate.id,
+        };
+      }
     }
 
     const docId = `doc_${uuidv4()}`;
@@ -77,6 +138,7 @@ class DocumentService {
       content,
       contentLength: content.length,
       chunkCount: chunks.length,
+      contentHash,
       createdAt: now,
       vectorStatus: VECTOR_STATUS.INDEXING,
       vectorMessage: '正在建立向量索引',
@@ -86,6 +148,9 @@ class DocumentService {
 
     await this.store.hset(`document:${docId}`, docMetadata);
     await this.store.sadd('documents:all', docId);
+    if (dedupEnabled) {
+      await this.store.sadd(this._hashKey(contentHash), docId);
+    }
 
     const indexPromise = this.indexingService.indexDocument(docId, title, content, category)
       .then(async indexedChunkCount => {
@@ -163,6 +228,22 @@ class DocumentService {
     return results;
   }
 
+  /**
+   * 按内容哈希查找仍存活（未删除）的重复文档
+   */
+  async _findDuplicate(contentHash) {
+    try {
+      const ids = await this.store.smembers(this._hashKey(contentHash));
+      for (const id of ids || []) {
+        const meta = await this.store.hgetall(`document:${id}`);
+        if (meta && meta.id) return meta;
+      }
+    } catch (err) {
+      console.warn(`[Document] 去重检查失败(忽略): ${err.message}`);
+    }
+    return null;
+  }
+
   async deleteDocument(docId) {
     const docMeta = await this.store.hgetall(`document:${docId}`);
     if (!docMeta || !docMeta.id) {
@@ -173,6 +254,11 @@ class DocumentService {
     this.indexingService.removeDocument(docId).catch(err => {
       console.warn(`[Document] 向量索引删除失败: ${docId}`, err.message);
     });
+
+    // 清理内容哈希索引，避免删除后同内容文档被误判为重复
+    if (docMeta.contentHash) {
+      await this.store.srem(this._hashKey(docMeta.contentHash), docId).catch(() => {});
+    }
 
     await this.store.del(`document:${docId}`);
     await this.store.srem('documents:all', docId);

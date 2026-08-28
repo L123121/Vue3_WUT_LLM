@@ -240,3 +240,53 @@ npm run docs
 - `results/doc-id-map.md`：按分类整理的文档 ID 对照表。
 
 把对应 `id` 填入 `campus-qa.json` 的 `relevant_doc_ids` 后，再运行 `npm run eval:retrieval`。
+
+---
+
+## 线上 Badcase 回归闭环（2026-08-24）
+
+静态测试集无法覆盖线上新出现的坏例。本闭环把 RagFeedback 的 dislike 反馈自动沉淀为回归样本：
+
+```text
+线上 dislike ──export──▶ badcases-from-feedback.json (pending_annotation)
+                              │
+                              ▼  badcase-review.cjs 标注 relevant_doc_ids / ground_truth
+                        status=ready
+                              │
+                              ▼  DATASET_PATH 并入 eval-retrieval.js 回归
+                       指标变化 > 阈值 → 告警 → 修复检索链路 → 重跑
+```
+
+### 1. 导出（需后端运行 + 管理员 Cookie）
+
+```bash
+cd scripts/rag-eval
+RAG_EVAL_COOKIE="auth_token=..." node export-badcases.cjs [--rating=dislike|like|all] [--limit=N]
+# 幂等：按 userId+feedbackId 去重，重复执行只增量写入 dataset/badcases-from-feedback.json
+```
+
+### 2. 查看待标注 & 一条命令标注
+
+```bash
+node badcase-review.cjs                    # 状态总览 + 待标注清单（每条附带现成的标注命令）
+node badcase-review.cjs annotate --id=FB-admin-conv1 --docs=<docId1,docId2> [--gt="标准答案"]
+node badcase-review.cjs validate           # 校验 ready 条目引用的 docId 是否仍存在于知识库
+```
+
+- `--id` 支持唯一前缀匹配；`candidate_doc_ids`（回答引用来源）可作标注起点；
+  文档 ID 对照表用 `npm run docs` 生成（results/doc-id-map.md）。
+- 检索回归只需 `relevant_doc_ids`；要并入 RAGAS 生成评测请补 `ground_truth`。
+
+### 3. 并入回归
+
+```bash
+DATASET_PATH=dataset/badcases-from-feedback.json RAG_EVAL_COOKIE="auth_token=..." node eval-retrieval.js
+```
+
+评测脚本自动跳过 `pending_annotation` 条目（日志显示"待标注"），只对 ready 条目计算指标，
+因此同一个文件可以长期同时容纳待标注与已标注样本。
+
+### 约定
+
+- 标注完成后**不要删除** feedback 字段——它是坏例的原始证据链（回答原文/traceId/时间）。
+- 文档删除或全量重索引后跑一次 `validate`，失效的 docId 引用需要重新标注。
