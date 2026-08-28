@@ -265,6 +265,21 @@ class VectorStoreService {
     if (this._docs.length !== before) this._scheduleSave();
   }
 
+  /**
+   * 取回指定文档的全部向量点（含向量），供增量重索引按内容 hash 复用
+   * @returns {Promise<Array<{ id: string, text: string, dense: number[], sparse: Object }>>}
+   */
+  async getDocPoints(docId) {
+    return this._docs
+      .filter(d => d.metadata?.docId === docId)
+      .map(d => ({
+        id: d.id,
+        text: d.document || '',
+        dense: d.dense || null,
+        sparse: d.sparse || {},
+      }));
+  }
+
   async resetCollection() {
     this._docs = [];
     this._saveSync();
