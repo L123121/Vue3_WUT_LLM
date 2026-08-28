@@ -47,7 +47,7 @@ export function useMessageActions() {
     }
 
     // 清空消息：保留欢迎消息
-    conv.messages = [{ id: 'welcome', role: 'model', content: '你好！我是武理小精灵 AI 助手 (Powered by Qwen)。有什么我可以帮你的吗？', timestamp: new Date() }];
+    conv.messages = [{ id: 'welcome', role: 'model', content: '你好！我是武理小精灵，你的校园 AI 助手。有什么我可以帮你的吗？', timestamp: new Date() }];
     convStore.scheduleSaveCache(true);
 
     if (!convStore.isLocalSession(conv.id) && convStore.isBackendAvailable()) {

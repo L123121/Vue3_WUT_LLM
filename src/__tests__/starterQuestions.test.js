@@ -10,14 +10,17 @@ describe('buildStarterQuestions 空会话快捷提问生成', () => {
     { id: '5', title: 'ab', category: '学校概况' }, // 过短标题过滤
   ];
 
-  it('按类别打散取多样文档，生成《title》讲了什么？格式', () => {
+  it('按类别打散取多样文档，句式按条数轮换', () => {
     const items = buildStarterQuestions(documents, 4);
     expect(items.length).toBe(4);
     // 第一轮每类取一篇：前 3 条来自 3 个不同类别，第二轮补齐第 4 条
     expect(items[0].text).toBe('《武汉理工大学交通出行指南》讲了什么？');
-    expect(items[1].text).toContain('操作系统');
-    expect(items[2].text).toContain('保研');
+    expect(items[1].text).toBe('《操作系统》期末复习笔记的重点有哪些？');
+    expect(items[2].text).toBe('帮我总结一下保研经验分享');
     expect(items[3].text).toContain('图书馆');
+    // 句式不重复
+    const styles = new Set(items.map((i) => i.text.slice(0, 2)));
+    expect(styles.size).toBeGreaterThan(1);
   });
 
   it('超长标题截断到 18 字符以内（含省略号）', () => {

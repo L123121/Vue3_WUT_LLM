@@ -7,10 +7,18 @@
 
 /**
  * 从知识库文档列表生成提问 chips
+ * 句式按条数轮换，避免四张卡片全是同一句式
  * @param {Array} documents - 知识库文档（{ id, title, category }）
  * @param {number} [max=4] - 最多返回条数
  * @returns {Array<{ text: string, category: string }>}
  */
+
+const QUESTION_TEMPLATES = [
+  (title) => `《${title}》讲了什么？`,
+  (title) => `${title}的重点有哪些？`,
+  (title) => `帮我总结一下${title}`,
+];
+
 export function buildStarterQuestions(documents = [], max = 4) {
   if (!Array.isArray(documents) || documents.length === 0) return [];
 
@@ -36,7 +44,8 @@ export function buildStarterQuestions(documents = [], max = 4) {
       // 同一标题不重复；标题过长截断（保留完整语义的类别名优先）
       if (picked.some((p) => p.text.includes(title))) continue;
       const shortTitle = title.length > 18 ? `${title.slice(0, 17)}…` : title;
-      picked.push({ text: `《${shortTitle}》讲了什么？`, category: '', sourceTitle: title });
+      const template = QUESTION_TEMPLATES[picked.length % QUESTION_TEMPLATES.length];
+      picked.push({ text: template(shortTitle), category: '', sourceTitle: title });
       addedThisRound = true;
     }
     if (!addedThisRound) break;

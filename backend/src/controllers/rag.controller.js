@@ -9,6 +9,7 @@ const { MemoryService } = require('../services/memory.service');
 const { successResponse, errorResponse } = require('../utils/response');
 const { upload, parseFile, cleanupFile } = require('../services/file-upload.service');
 const { recordAudit } = require('../services/quality-governance.service');
+const { vectorStore: vectorStoreSingleton } = require('../services/vector-store.service');
 
 const ragService = new RagService(aiService);
 const memoryService = new MemoryService();
@@ -514,16 +515,27 @@ const getDocument = async (req, res, next) => {
 const getStats = async (req, res, _next) => {
   try {
     const docCount = await store.scard('documents:all');
+    // 向量条数反映向量库实际状态（而非文档元数据），供前端诚实展示检索可用性
+    let vectorCount = 0;
+    try {
+      vectorCount = (await vectorStoreSingleton.count()) || 0;
+    } catch {
+      vectorCount = 0;
+    }
 
     successResponse(res, {
       documents: {
         count: docCount
+      },
+      vectors: {
+        count: vectorCount
       }
     }, '获取成功');
   } catch (error) {
     console.error('[RAG Stats] 获取失败:', error);
     successResponse(res, {
-      documents: { count: 0 }
+      documents: { count: 0 },
+      vectors: { count: 0 }
     }, '获取成功');
   }
 };

@@ -90,8 +90,8 @@ const removeFavorite = (fav, event) => {
         </div>
       </div>
 
-      <div v-if="favoritesStore.favorites.length === 0" class="text-center py-3 text-slate-300 dark:text-gray-600 text-[11px]">
-        暂无收藏，点击消息右下角 ★ 收藏
+      <div v-if="favoritesStore.favorites.length === 0" class="text-center py-3 text-slate-500 dark:text-gray-400 text-[11px]">
+        暂无收藏，在消息下方点 ☆ 即可收藏
       </div>
     </div>
   </div>
