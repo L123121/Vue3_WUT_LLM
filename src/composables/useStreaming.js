@@ -351,6 +351,10 @@ export function useStreaming() {
           // token 用量随收尾下发，MessageBubble 展示输入/输出 token
           updateMessage(convStore, conversationId, aiMsgId, (m) => ({ ...m, usage: usage || m.usage }));
         },
+        onFollowups: (items) => {
+          // 追问建议随收尾下发，MessageBubble 渲染为可点击 chips
+          updateMessage(convStore, conversationId, aiMsgId, (m) => ({ ...m, followups: items || m.followups }));
+        },
         onRetry: () => {
           isReconnecting.value = true;
           reconnectAttempt.value = reconnectAttempt.value + 1;

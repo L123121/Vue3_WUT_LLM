@@ -184,6 +184,9 @@ const ragChatStream = async (req, res, next) => {
       } else if (chunk.type === 'grounding') {
         // 运行时引用校验结果：随收尾下发，前端标注溯源覆盖
         res.write(`data: ${JSON.stringify({ traceId: req.traceId, grounding: chunk.grounding })}\n\n`);
+      } else if (chunk.type === 'followups') {
+        // 追问建议：零成本从引用文档/章节标题生成，前端渲染为可点击 chips
+        res.write(`data: ${JSON.stringify({ traceId: req.traceId, followups: chunk.items })}\n\n`);
       } else if (chunk.type === 'content') {
         if (chunk.done) {
           res.write(`data: [DONE]\n\n`);

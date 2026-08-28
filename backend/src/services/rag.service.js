@@ -26,6 +26,7 @@ const { checkGrounding } = require('./grounding.service');
 const queryRewrite = require('./rag-query-rewrite.service');
 const contextBuilder = require('./rag-context-builder.service');
 const ragRetrieval = require('./rag-retrieval.service');
+const { buildFollowups } = require('./rag-followups.service');
 
 class RagService {
   constructor(aiService = null) {
@@ -403,6 +404,11 @@ class RagService {
       retrieval: pipeline.retrieval,
       grounding: grounding || null,
       processCard: processCard || null,
+      followups: buildFollowups({
+        sources: pipeline.sources,
+        chunks: pipeline.topChunks,
+        question: message,
+      }),
       _metrics: {
         totalLatency,
         aiLatency,
@@ -615,6 +621,16 @@ class RagService {
             matchedDocs: pipeline.sources.length,
             retrievedChunks: pipeline.topChunks.length,
           });
+
+          // 追问建议：从引用文档/章节标题零成本生成（无模型调用）
+          const followups = buildFollowups({
+            sources: pipeline.sources,
+            chunks: pipeline.topChunks,
+            question: message,
+          });
+          if (followups.length > 0) {
+            yield { type: 'followups', items: followups };
+          }
           tracer.finish({
             usedRag: true,
             usedParentChild: true,

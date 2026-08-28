@@ -112,6 +112,13 @@ const usageLabel = computed(() => {
   return `${parts.join(' · ')} tokens`;
 });
 
+// 追问建议（followups SSE 事件写入）：点击直接发起提问
+const followups = computed(() => (Array.isArray(props.message.followups) ? props.message.followups : []));
+const sendFollowup = (text) => {
+  if (!text || chatStore.isLoading) return;
+  chatStore.sendMessage(text);
+};
+
 // L2 工具调度可视化：message.toolCalls/toolResults（useStreaming onToolCall/onToolResult 写入）
 const toolCalls = computed(() => props.message.toolCalls || []);
 const toolResults = computed(() => props.message.toolResults || []);
@@ -362,6 +369,22 @@ const timeClasses = computed(() => {
           title="本次回答的 token 消耗（模型服务返回口径）"
         >
           {{ usageLabel }}
+        </div>
+
+        <!-- 追问建议：从引用文档/章节标题零成本生成，点击直接提问 -->
+        <div v-if="isModel && !isError && !isStreaming && followups.length" class="mt-2 flex flex-wrap gap-1.5">
+          <button
+            v-for="item in followups"
+            :key="item.text"
+            type="button"
+            :disabled="chatStore.isLoading"
+            class="inline-flex items-center gap-1 rounded-full border border-wut-100 bg-wut-50/60 px-2.5 py-1 text-[11px] font-medium text-wut-600 transition hover:border-wut-300 hover:bg-wut-100 disabled:opacity-50 dark:border-wut-800/50 dark:bg-wut-900/20 dark:text-wut-300 dark:hover:border-wut-700 dark:hover:bg-wut-900/40"
+            :title="item.from === 'heading' ? '来自引用文档的章节' : '来自引用文档'"
+            @click="sendFollowup(item.text)"
+          >
+            <span class="text-wut-400 dark:text-wut-500">↳</span>
+            {{ item.text }}
+          </button>
         </div>
 
         <!-- L2 工具调度卡片：展示 tool_call / tool_result（Agent 路径透明化） -->
