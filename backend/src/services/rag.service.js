@@ -582,7 +582,13 @@ class RagService {
             model: config.ai.model || 'step-3.7-flash',
             stream: true,
             outputChars,
+            usage: chunk.usage || null,
           });
+
+          // token 用量随收尾下发（前端逐条消息展示成本）
+          if (chunk.usage) {
+            yield { type: 'usage', usage: chunk.usage };
+          }
 
           // 流程类问题：解析步骤卡片并下发给前端
           let processCard = null;
@@ -642,7 +648,11 @@ class RagService {
             model: config.ai.model || 'step-3.7-flash',
             stream: true,
             outputChars: fallbackOutputChars,
+            usage: chunk.usage || null,
           });
+          if (chunk.usage) {
+            yield { type: 'usage', usage: chunk.usage };
+          }
           metrics.recordLatency('total', Date.now() - totalStart);
           metrics.recordRagQuery({ usedRag: false, usedParentChild: false });
           this._recordTraceStage(tracer, 'total', totalStart, true, { usedRag: false });

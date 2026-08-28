@@ -456,7 +456,7 @@ class AiService {
         const d = t.slice(5).trim();
         if (d === '[DONE]') {
           recordUsage();
-          yield { content: '', done: true, tool_calls: this._assembleToolCalls(toolCallMap, hasToolCalls, needsTools) };
+          yield { content: '', done: true, usage: streamUsage || null, tool_calls: this._assembleToolCalls(toolCallMap, hasToolCalls, needsTools) };
           return;
         }
         try {
@@ -489,7 +489,7 @@ class AiService {
           if (content) yield { content, done: false };
           if (done) {
             recordUsage();
-            yield { content: '', done: true, tool_calls: this._assembleToolCalls(toolCallMap, hasToolCalls, needsTools) };
+            yield { content: '', done: true, usage: streamUsage || null, tool_calls: this._assembleToolCalls(toolCallMap, hasToolCalls, needsTools) };
             return;
           }
         } catch (err) {

@@ -265,6 +265,7 @@ export const sendMessageStream = async (message, history = [], callbacks, option
             if (json.rag || json.trace || json.retrieval) measuredCallbacks.onTrace?.(json);
             if (json.processCard) measuredCallbacks.onProcess?.(json.processCard);
             if (json.grounding) measuredCallbacks.onGrounding?.(json.grounding);
+            if (json.usage) measuredCallbacks.onUsage?.(json.usage);
             if (json.error) {
               clearInterval(stallCheck);
               measuredCallbacks.onError(new Error(json.error));

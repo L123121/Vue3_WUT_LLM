@@ -6,6 +6,7 @@ import DOMPurify from 'dompurify';
 import { useMarkdownWorker } from '../../composables/useMarkdownWorker.js';
 import { useCodeHighlighter } from '../../composables/useCodeHighlighter.js';
 import { ALLOWED_TAGS, ALLOWED_ATTR, completeMarkdown, normalizeBlockSyntax, escapeHtml, createLinkSecurityRule } from '../../utils/markdownConfig.js';
+import { applyCitationBadges } from '../../utils/citations.js';
 import CodeRunner from './CodeRunner.vue';
 import 'highlight.js/styles/atom-one-dark.css';
 
@@ -93,11 +94,8 @@ const renderMarkdownMain = (content) => {
     const completed = normalizeBlockSyntax(completeMarkdown(content));
     const raw = md.render(completed);
     const sanitized = DOMPurify.sanitize(raw, { ALLOWED_TAGS, ALLOWED_ATTR });
-    // 将 【文档N】 渲染为可点击的行内引用
-    return wrapHighlight(sanitized.replace(
-      /【文档\s*(\d+)】/g,
-      '<span class="citation" data-index="$1" style="display:inline-flex;align-items:center;justify-content:center;min-width:1.25rem;height:1.25rem;padding:0 0.25rem;margin:0 0.125rem;font-size:0.6875rem;font-weight:600;border-radius:9999px;background:#e0e7ff;color:#4338ca;cursor:pointer;border:1px solid #c7d2fe;vertical-align:super;transition:all 0.15s">$1</span>'
-    ));
+    // 将 【文档N】 / [N] 渲染为可点击、可悬停的行内引用
+    return wrapHighlight(applyCitationBadges(sanitized, props.sources));
   } catch (e) {
     console.error('[MarkdownRenderer] 渲染失败:', e);
     return content;
@@ -115,10 +113,7 @@ const isLoadingWorker = ref(false);
 renderedContent.value = renderMarkdownMain(props.content);
 lastRenderedAt.value = props.content;
 
-const renderCitations = (html) => html.replace(
-    /【文档\s*(\d+)】/g,
-    '<span class="citation" data-index="$1" style="display:inline-flex;align-items:center;justify-content:center;min-width:1.25rem;height:1.25rem;padding:0 0.25rem;margin:0 0.125rem;font-size:0.6875rem;font-weight:600;border-radius:9999px;background:#e0e7ff;color:#4338ca;cursor:pointer;border:1px solid #c7d2fe;vertical-align:super;transition:all 0.15s">$1</span>'
-  );
+const renderCitations = (html) => applyCitationBadges(html, props.sources);
 
   const updateRender = async () => {
     const content = props.content;

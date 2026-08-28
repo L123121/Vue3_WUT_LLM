@@ -347,6 +347,10 @@ export function useStreaming() {
           // 运行时引用校验：溯源覆盖率随收尾下发，MessageBubble 展示"已溯源 xx%"徽标
           updateMessage(convStore, conversationId, aiMsgId, (m) => ({ ...m, grounding: grounding || m.grounding }));
         },
+        onUsage: (usage) => {
+          // token 用量随收尾下发，MessageBubble 展示输入/输出 token
+          updateMessage(convStore, conversationId, aiMsgId, (m) => ({ ...m, usage: usage || m.usage }));
+        },
         onRetry: () => {
           isReconnecting.value = true;
           reconnectAttempt.value = reconnectAttempt.value + 1;
