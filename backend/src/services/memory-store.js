@@ -475,6 +475,25 @@ class ConversationStore {
     return !!(await this.saveConversation(userId, conversationId, { messages: [] }));
   }
 
+  /**
+   * 从指定消息处分叉出新会话（复制消息到该条为止，原会话不动）
+   * @returns {Promise<Object|null>} 新会话；会话或消息不存在时返回 null
+   */
+  async forkConversation(userId, conversationId, messageId) {
+    const conversation = await this.getConversation(userId, conversationId);
+    if (!conversation) return null;
+    const messages = Array.isArray(conversation.messages) ? conversation.messages : [];
+    const index = messageId
+      ? messages.findIndex((m) => m?.id === String(messageId))
+      : messages.length - 1;
+    if (index === -1) return null;
+
+    const sliced = messages.slice(0, index + 1).map((m) => ({ ...m }));
+    const forked = await this.createConversation(userId, `${conversation.title || '会话'}（分叉）`);
+    const saved = await this.saveConversation(userId, forked.id, { messages: sliced });
+    return saved || { ...forked, messages: sliced };
+  }
+
   async deleteConversation(userId, conversationId) {
     return (await store.hdel(this._getKey(userId), String(conversationId))) > 0;
   }

@@ -395,13 +395,26 @@ export const useConversationStore = defineStore('conversation', () => {
     }
   };
 
+  /**
+   * 将后端返回的分叉会话并入本地列表并切换（消息已在后端复制好）
+   * @returns {string|null} 新会话 id
+   */
+  const importForkedConversation = (conv) => {
+    if (!conv?.id) return null;
+    if (!conversations.value.some((c) => c.id === conv.id)) {
+      const messages = normalizeMessages(conv.messages || []);
+      conversations.value.push({ ...conv, messages });
+      _registerConversationMessages(conv.id, messages);
+    }
+    return conv.id;
+  };
+
   const renameConversation = async (id, title) => {
     const trimmedTitle = title.trim();
     if (!trimmedTitle) return;
 
     const conv = conversations.value.find((c) => c.id === id);
     if (conv) conv.title = trimmedTitle;
-
     if (!isLocalSession(id) && isBackendAvailable()) {
       try {
         await apiRenameConversation(id, trimmedTitle);
@@ -562,6 +575,7 @@ export const useConversationStore = defineStore('conversation', () => {
     loadConversationMessages,
     createConversation,
     switchConversation,
+    importForkedConversation,
     renameConversation,
     deleteConversation,
     getLastMessagePreview,
