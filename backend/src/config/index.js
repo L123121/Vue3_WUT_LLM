@@ -156,6 +156,11 @@ module.exports = {
     rewriteCacheMaxEntries: parseInt(process.env.RAG_REWRITE_CACHE_MAX, 10) || 500,
     compactCacheMaxEntries: parseInt(process.env.RAG_COMPACT_CACHE_MAX, 10) || 200,
     compactCacheTtlMs: parseInt(process.env.RAG_COMPACT_CACHE_TTL_MS, 10) || 1800000, // 30min
+    // 语义缓存：精确缓存 miss 后按查询向量余弦相似度复用近义问题的检索候选池
+    // （reranker 仍按原始问题打分，共享召回池不影响精度）。默认关闭
+    semanticCacheEnabled: process.env.RAG_SEMANTIC_CACHE_ENABLED === 'true',
+    semanticCacheThreshold: Number.parseFloat(process.env.RAG_SEMANTIC_CACHE_THRESHOLD || '0.95'),
+    semanticCacheMaxEntries: parseInt(process.env.RAG_SEMANTIC_CACHE_MAX_ENTRIES, 10) || 200,
   },
   // 轻量 Agent 工具调度（V2.0）：默认启用；AGENT_TOOL_ENABLED=false 可一键回退 RAG
   agent: {

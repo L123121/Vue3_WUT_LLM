@@ -5,12 +5,20 @@ const { metrics } = require('./metrics.service');
 const { logEvent } = require('./observability.service');
 const { decomposeQuery } = require('./query-decompose.service');
 const { QueryCache } = require('../utils/query-cache');
+const { SemanticCache } = require('./rag-semantic-cache.service');
 
 // 检索结果缓存（模块级单例）：tracer/noCache/category 存在时不缓存
 const retrievalCache = new QueryCache(
   config.rag.cacheMaxEntries || 500,
   config.rag.cacheTtlMs || 300000,
 );
+
+// 语义缓存（模块级单例）：按查询向量余弦相似度复用近义问题的检索候选池
+const semanticCache = new SemanticCache({
+  maxEntries: config.rag.semanticCacheMaxEntries || 200,
+  ttlMs: config.rag.cacheTtlMs || 300000,
+  threshold: config.rag.semanticCacheThreshold || 0.95,
+});
 
 /**
  * 检索管道：向量召回（Qdrant 混合检索）→ 父段聚合 → 多路检索合并。
@@ -65,12 +73,15 @@ async function retrieveCandidates(svc, query, options = {}) {
   let candidates = [];
   let currentStage = 'embedding';
   let currentStageStart = Date.now();
+  let queryEmbedding = null;
+  // 语义缓存开关按次读取（评测/测试可运行时切换）
+  const semanticCacheEnabled = config.rag.semanticCacheEnabled === true;
 
   try {
     const embeddingStart = Date.now();
     currentStage = 'embedding';
     currentStageStart = embeddingStart;
-    const queryEmbedding = await svc.embeddingService.embedHybrid(query);
+    queryEmbedding = await svc.embeddingService.embedHybrid(query);
     trace.embedding = {
       ok: !!queryEmbedding?.dense,
       dense: !!queryEmbedding?.dense,
@@ -85,6 +96,22 @@ async function retrieveCandidates(svc, query, options = {}) {
       dense: trace.embedding.dense,
       sparse: trace.embedding.sparse,
     });
+
+    // 语义缓存：精确缓存 miss 后按查询向量找近义问题，直接复用其检索候选池。
+    // 候选池只是 reranker 的召回池（reranker 仍按原问题打分），共享不影响精度
+    if (semanticCacheEnabled && canCache && queryEmbedding?.dense) {
+      const hit = semanticCache.lookup(queryEmbedding.dense);
+      if (hit) {
+        trace.semanticCache = { hit: true, matchedQuery: hit.query, similarity: hit.similarity };
+        trace.fused = {
+          count: hit.value.candidates.length,
+          topScore: hit.value.candidates[0]?.score || 0,
+          channels: [...new Set(hit.value.candidates.flatMap(item => item._retrievalChannels || []))],
+        };
+        console.log(`[SemanticCache] 命中 (sim=${hit.similarity}) "${hit.query}" → 复用 ${hit.value.candidates.length} 条候选`);
+        return { candidates: hit.value.candidates, trace, vectorResults: hit.value.candidates, keywordResults: [] };
+      }
+    }
 
     if (queryEmbedding?.dense) {
       const searchStart = Date.now();
@@ -163,6 +190,10 @@ async function retrieveCandidates(svc, query, options = {}) {
   if (canCache) {
     const cacheKey = String(query || '').trim().toLowerCase();
     retrievalCache.set(cacheKey, { candidates, trace, rewrittenQuery: trace?.rewrittenQuery || null });
+    // 语义缓存写入：同一份候选池供近义问题复用
+    if (semanticCacheEnabled && queryEmbedding?.dense && candidates.length > 0) {
+      semanticCache.store(query, queryEmbedding.dense, { candidates });
+    }
   }
 
   return { candidates, trace, vectorResults: candidates, keywordResults: [] };
@@ -427,4 +458,4 @@ async function dualRetrieve(svc, message, history, options = {}) {
   return { candidates: mergedCandidates, trace, rewrittenQuery };
 }
 
-module.exports = { retrieveCandidates, retrieveParentCandidates, aggregateParentCandidates, fuseRetrievalResults, dualRetrieve };
+module.exports = { retrieveCandidates, retrieveParentCandidates, aggregateParentCandidates, fuseRetrievalResults, dualRetrieve, semanticCache };
