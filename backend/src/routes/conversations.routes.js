@@ -48,6 +48,23 @@ router.get('/:id', async (req, res) => {
   }
 });
 
+router.post('/:id/fork', async (req, res) => {
+  try {
+    const forked = await conversationStore.forkConversation(
+      req.userId,
+      req.params.id,
+      req.body?.messageId
+    );
+    if (!forked) {
+      return res.status(404).json({ success: false, error: '会话或消息不存在' });
+    }
+    res.json({ success: true, data: forked });
+  } catch (error) {
+    console.error('分叉会话失败:', error.message);
+    res.status(500).json({ success: false, error: '分叉会话失败' });
+  }
+});
+
 router.put('/:id', async (req, res) => {
   try {
     const { title, messages } = req.body;

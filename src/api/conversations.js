@@ -69,3 +69,11 @@ export const clearConversationMessages = async (conversationId) => {
   if (!response.ok) return false;
   return true;
 };
+
+/**
+ * 从指定消息处分叉出新会话
+ */
+export const forkConversation = async (conversationId, messageId) => {
+  const response = await apiPost(`/conversations/${conversationId}/fork`, { messageId });
+  return response.json();
+};
