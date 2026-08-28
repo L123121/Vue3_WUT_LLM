@@ -189,41 +189,46 @@ docker image prune -f
 
 ### 备份数据
 
+推荐使用仓库自带脚本（SQLite 在线一致性备份 + 上传文件 + Qdrant 官方快照 API + 本地轮转）：
+
 ```bash
-mkdir -p backups
+# 在 docker-compose.yml 所在目录执行
+bash scripts/backup.sh
 
-# 备份 SQLite 数据库（文档原文 + 元数据 + 会话）
-docker run --rm \
-  -v wuli-elf_backend-data:/data \
-  -v "$PWD/backups":/backup \
-  alpine tar czf /backup/backend-data-$(date +%Y%m%d).tar.gz -C /data .
-
-# 备份 Milvus 向量数据
-docker run --rm \
-  -v wuli-elf_milvus-data:/data \
-  -v "$PWD/backups":/backup \
-  alpine tar czf /backup/milvus-data-$(date +%Y%m%d).tar.gz -C /data .
-
-# 备份上传文件
-docker run --rm \
-  -v wuli-elf_uploads-data:/data \
-  -v "$PWD/backups":/backup \
-  alpine tar czf /backup/uploads-data-$(date +%Y%m%d).tar.gz -C /data .
+# 自定义备份目录与保留份数（默认 ./backups、每类保留 14 份）
+BACKUP_DIR=/data/backups BACKUP_KEEP=30 bash scripts/backup.sh
 ```
 
-> SQLite 备份时建议先停掉 backend 容器，或使用 `.backup` 命令确保一致性。
+定时备份（crontab -e，每天 03:30）：
+
+```bash
+30 3 * * * cd /opt/wuli-elf && BACKUP_DIR=/data/backups bash scripts/backup.sh >> /var/log/wuli-elf-backup.log 2>&1
+```
+
+> SQLite 通过 backend 镜像内的 better-sqlite3 `.backup()` 做在线备份，WAL 进行中也能拿到一致快照，无需停服；Qdrant 使用官方 snapshot API（先在远端建快照、下载、随即删除远端），不要对运行中的 qdrant-storage 卷做 tar 冷拷贝。
 
 ### 恢复数据
 
 ```bash
-# 恢复 SQLite 数据库
+# 1. 恢复 SQLite（.db 文件为整库快照；.tar.gz 为冷拷贝归档）
+docker compose -p wuli-elf stop backend
 docker run --rm \
   -v wuli-elf_backend-data:/data \
   -v "$PWD/backups":/backup \
-  alpine tar xzf /backup/backend-data-20250718.tar.gz -C /data
+  alpine sh -c "cp /backup/store-YYYYMMDD-HHMMSS.db /data/store.db && rm -f /data/store.db-wal /data/store.db-shm"
 
-# 恢复后重启后端
-docker compose -p wuli-elf restart backend
+# 2. 恢复 Qdrant（上传快照，priority=snapshot 表示以快照为准重建集合）
+curl -X POST "http://127.0.0.1:6333/collections/wuli_elf_chunks/snapshots/upload?priority=snapshot" \
+  -F "snapshot=@backups/qdrant-YYYYMMDD-HHMMSS.snapshot"
+
+# 3. 恢复上传文件
+docker run --rm \
+  -v wuli-elf_uploads-data:/data \
+  -v "$PWD/backups":/backup \
+  alpine tar xzf /backup/uploads-YYYYMMDD-HHMMSS.tar.gz -C /data
+
+# 4. 重启服务
+docker compose -p wuli-elf up -d
 ```
 
 ---
