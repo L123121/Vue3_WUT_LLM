@@ -129,10 +129,26 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  # ========== 2.5 镜像漏洞扫描（供应链安全门禁） ==========
+  security-scan:
+    name: Trivy Image Scan
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Scan pushed image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+
   # ========== 3. 部署到 ECS ==========
   deploy:
     name: Deploy to Alibaba Cloud ECS
-    needs: build
+    needs: [build, security-scan]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
