@@ -91,12 +91,25 @@ StepFun LLM 生成回答并附带 sources
 | Agent | `backend/src/services/agent.service.js` | 多轮工具决策、执行、收尾和轨迹输出 |
 | 工具注册 | `backend/src/services/tool-registry.service.js` | Schema 校验、超时、取消和结构化结果 |
 | 内置工具 | `backend/src/services/agent-tools.js` | 知识库检索与安全数学计算 |
-| RAG 管道 | `backend/src/services/rag.service.js` | 检索、重排、父子上下文和生成 |
+| RAG 管道 | `backend/src/services/rag.service.js` | 管道编排、生成、trace 与降级 |
+| 检索管道 | `backend/src/services/rag-retrieval.service.js` | 向量召回、父段聚合、多路检索合并 |
+| Query 改写 | `backend/src/services/rag-query-rewrite.service.js` | 多轮指代/省略检测与 LLM 改写缓存 |
+| 上下文组装 | `backend/src/services/rag-context-builder.service.js` | 子片段父段归并与上下文构建 |
 | 排序策略 | `backend/src/services/rag-ranking.service.js` | 问题分类、自适应截断和 MMR 去重 |
 | Embedding | `backend/src/services/embedding.service.js` | 本地 BGE dense 与 n-gram sparse |
 | Reranker | `backend/src/services/reranker.service.js` | BGE cross-encoder 语义重排 |
 | 向量存储 | `backend/src/services/vector-store-qdrant.service.js` | Qdrant collection 与混合检索 |
 | 向量适配 | `backend/src/services/vector-store.service.js` | Qdrant / file 后端选择 |
+
+### 评测结果
+
+检索与生成质量由 `scripts/rag-eval/` 的评测体系持续度量（数据集、脚本与历史结果均在仓库内）：
+
+- **检索质量**（官方评测，full-coverage 32 题，加权融合 + MMR）：Recall **97.4%**、MRR **0.977**、nDCG@5 **0.970**、HitRate **100%**。
+- **融合策略消融**：RRF(k=10) 与加权融合打平（Recall 同为 97.4%，MRR/nDCG@5 微弱领先 0.007/0.004，属噪声级差异）；RRF(k=60) 因排名差异被过度压扁明显劣化（Recall 74.5%），最终默认保留加权融合。
+- **MMR 消融**：修复前默认 MMR 使 Recall 降至 80.7%（相关父段被多样性排序挤出截断窗口），修复后 MMR 与关闭 MMR 均达 97.4%。
+- **生成质量**（RAGAS，campus-qa 32 题，judge 模型 step-3.7-flash）：Faithfulness **91.7%**、Context Recall **81.5%**。
+- **零成本防线**：grounding 句级 bigram 覆盖率校验、正则 query 分解、入库 prompt-injection 清洗均不消耗模型调用。
 
 ## 页面路由
 
@@ -348,7 +361,10 @@ GitHub Actions 工作流包含：
 3. 构建并推送提交 SHA 与 `latest` 镜像。
 4. ECS 健康检查，失败时回滚上一镜像。
 
-使用工作流前必须修改 `.github/workflows/deploy.yml` 中的占位 `IMAGE_NAME`，并配置 Docker Registry 与 ECS Secrets。
+使用工作流前需在仓库 Settings → Secrets and variables → Actions 中配置：
+
+1. **Variables**：`DOCKER_IMAGE_NAME`（镜像仓库地址，例如 `your-dockerhub-username/wuli-elf-backend` 或阿里云 ACR 地址），未配置时构建阶段会直接报错。
+2. **Secrets**：Docker Registry 凭证（`DOCKER_USERNAME` / `DOCKER_PASSWORD`）与 ECS 连接信息（`ECS_HOST` / `ECS_USER` / `ECS_SSH_KEY`）。
 
 ## 生产部署
 

@@ -15,7 +15,11 @@ config({ path: resolve(__dirname, '../../../backend/.env') });
 config({ path: resolve(__dirname, '../../../.env') });
 config({ path: resolve(__dirname, '../.env') });
 
-const JWT_SECRET = process.env.JWT_SECRET || 'wuli-elf-dev-jwt-secret-2026-change-in-prod';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  console.error('未找到 JWT_SECRET：请设置环境变量 JWT_SECRET，或在 backend/.env 中配置');
+  process.exit(1);
+}
 function makeJwt(p, s) {
   const b = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
   const h = b({ alg: 'HS256', typ: 'JWT' });

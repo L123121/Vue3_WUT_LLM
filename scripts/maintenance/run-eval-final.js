@@ -1,7 +1,15 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const JWT_SECRET = 'wuli-elf-dev-jwt-secret-2026-change-in-prod';
+// JWT 密钥：环境变量优先，其次读 backend/.env（与后端服务同一密钥）
+const SECRET_ENV = path.resolve(__dirname, '../../backend/.env');
+const JWT_SECRET =
+  process.env.JWT_SECRET ||
+  (fs.existsSync(SECRET_ENV) && fs.readFileSync(SECRET_ENV, 'utf8').match(/^JWT_SECRET=(.+)$/m)?.[1].trim());
+if (!JWT_SECRET) {
+  console.error('未找到 JWT_SECRET：请设置环境变量 JWT_SECRET，或在 backend/.env 中配置');
+  process.exit(1);
+}
 
 function makeJWT(p,s) {
   const h=Buffer.from(JSON.stringify({alg:'HS256',type:'JWT'})).toString('base64url');

@@ -4,7 +4,7 @@
  * 绕过登录：直接用 JWT_SECRET 生成 auth_token cookie
  * 用法: node run-hardcases.js [--filter H1,H2] [--sample N]
  */
-import { existsSync, mkdirSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
@@ -15,7 +15,15 @@ mkdirSync(RESULTS_DIR, { recursive: true });
 
 // ── 配置 ──
 const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:3000';
-const JWT_SECRET = process.env.JWT_SECRET || 'wuli-elf-dev-jwt-secret-2026-change-in-prod';
+// JWT 密钥：环境变量优先，其次读 backend/.env（与后端服务同一密钥）
+const SECRET_ENV = resolve(__dirname, '../../backend/.env');
+const JWT_SECRET =
+  process.env.JWT_SECRET ||
+  (existsSync(SECRET_ENV) && readFileSync(SECRET_ENV, 'utf8').match(/^JWT_SECRET=(.+)$/m)?.[1].trim());
+if (!JWT_SECRET) {
+  console.error('未找到 JWT_SECRET：请设置环境变量 JWT_SECRET，或在 backend/.env 中配置');
+  process.exit(1);
+}
 
 // 手动生成 JWT（无需 jsonwebtoken 依赖）
 function makeJwt(payload, secret) {

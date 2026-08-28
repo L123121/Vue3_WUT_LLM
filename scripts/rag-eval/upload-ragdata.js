@@ -2,7 +2,7 @@
  * 上传 ragdata 目录中所有文档到知识库（统一用文件上传接口）
  * 用法: node upload-ragdata.js
  */
-import { readFileSync, readdirSync, statSync } from 'fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import { resolve, dirname, extname, basename } from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
@@ -10,7 +10,15 @@ import crypto from 'crypto';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const RAGDATA_DIR = resolve(__dirname, '../../ragdata');
 const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:3000';
-const JWT_SECRET = process.env.JWT_SECRET || 'wuli-elf-dev-jwt-secret-2026-change-in-prod';
+// JWT 密钥：环境变量优先，其次读 backend/.env（与后端服务同一密钥）
+const SECRET_ENV = resolve(__dirname, '../../backend/.env');
+const JWT_SECRET =
+  process.env.JWT_SECRET ||
+  (existsSync(SECRET_ENV) && readFileSync(SECRET_ENV, 'utf8').match(/^JWT_SECRET=(.+)$/m)?.[1].trim());
+if (!JWT_SECRET) {
+  console.error('未找到 JWT_SECRET：请设置环境变量 JWT_SECRET，或在 backend/.env 中配置');
+  process.exit(1);
+}
 
 function makeJwt(payload, secret) {
   const b64 = (obj) => Buffer.from(JSON.stringify(obj)).toString('base64url');
@@ -20,7 +28,7 @@ function makeJwt(payload, secret) {
   return `${headerB64}.${payloadB64}.${sig}`;
 }
 
-const AUTH_TOKEN = makeJwt({ userId: 'test_eval', username: 'test' }, JWT_SECRET);
+const AUTH_TOKEN = makeJwt({ userId: 'admin', username: 'admin', role: 'admin' }, JWT_SECRET);
 const COOKIE = `auth_token=${AUTH_TOKEN}`;
 
 const CATEGORY_MAP = [
@@ -32,6 +40,14 @@ const CATEGORY_MAP = [
   ['离散结构', '专业课程'],
   ['离散数学', '专业课程'],
   ['软件工程', '专业课程'],
+  // 2026-08-24 新增知识库文件的分类映射
+  ['武汉理工大学', '学校概况'],      // 体育场馆/医疗/交通等生活指南
+  ['操作系统', '专业课程'],
+  ['数据库', '专业课程'],
+  ['面试', '面试刷题'],              // OS/数据库/前端高频面试题
+  ['Python', '面试刷题'],
+  ['RAG系统', 'AI学习'],
+  ['Prompt工程', 'AI学习'],
 ];
 
 function guessCategory(name) {
