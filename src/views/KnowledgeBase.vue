@@ -1,6 +1,7 @@
 <script setup>
-import { ref, watch } from 'vue';
+import { ref, computed, watch } from 'vue';
 import { useKnowledgeBase } from '../composables/useKnowledgeBase.js';
+import { useAuthStore } from '../stores/auth.store.js';
 import { useToastStore } from '../stores/toast.store.js';
 import { getOperationsDashboard, createKnowledgeTask } from '../api/operations.js';
 import MarkdownRenderer from '../components/chat/MarkdownRenderer.vue';
@@ -69,11 +70,14 @@ const {
   supportedFileTypes,
 } = useKnowledgeBase();
 
-// ===== 知识库缺口看板（管理员模式）：复用线上质量审计，回答"该补什么资料" =====
+// ===== 知识库缺口看板（管理员可见）：复用线上质量审计，回答"该补什么资料" =====
+const authStore = useAuthStore();
 const toast = useToastStore();
 const gapSummary = ref(null);
 const gapLoading = ref(false);
 const gapTaskBusy = ref('');
+// 管理员登录即可见（缺口看板只读 + 建任务）；"管理"模式才解锁增删改
+const gapVisible = computed(() => showAdmin.value || authStore.isAdmin === true);
 
 const loadGapSummary = async () => {
   gapLoading.value = true;
@@ -87,9 +91,14 @@ const loadGapSummary = async () => {
   }
 };
 
-watch(showAdmin, (visible) => {
+watch(gapVisible, (visible) => {
   if (visible && !gapSummary.value) loadGapSummary();
-});
+}, { immediate: true });
+
+// 知识总量（客户端聚合，仅展示用）
+const kbTotalChars = computed(() =>
+  documents.value.reduce((sum, d) => sum + (Number(d.contentLength) || 0), 0)
+);
 
 const createGapTask = async (audit) => {
   if (gapTaskBusy.value) return;
@@ -176,9 +185,9 @@ const createGapTask = async (audit) => {
       >退出管理</button>
     </div>
 
-    <!-- 知识库缺口看板（管理员模式）：线上提问主题分布与资料缺口 -->
+    <!-- 知识库缺口看板（管理员可见）：线上提问主题分布与资料缺口 -->
     <div
-      v-if="showAdmin"
+      v-if="gapVisible"
       class="mb-5 rounded-2xl border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4"
     >
       <div class="flex items-center justify-between mb-3">
@@ -254,7 +263,7 @@ const createGapTask = async (audit) => {
     </div>
 
     <!-- 统计卡片 -->
-    <div v-if="stats" class="grid grid-cols-2 gap-3 mb-5">
+    <div v-if="stats" class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
       <div class="rounded-xl border border-slate-200 dark:border-gray-700 bg-wut-50/60 dark:bg-wut-900/20 p-3">
         <div class="flex items-center gap-2">
           <div class="w-8 h-8 rounded-lg bg-wut-100 dark:bg-wut-900/40 flex items-center justify-center text-wut-600 dark:text-wut-400">
@@ -277,6 +286,36 @@ const createGapTask = async (audit) => {
           </div>
         </div>
       </div>
+      <div class="rounded-xl border border-slate-200 dark:border-gray-700 bg-wut-50/60 dark:bg-wut-900/20 p-3">
+        <div class="flex items-center gap-2">
+          <div class="w-8 h-8 rounded-lg bg-cyan-100 dark:bg-cyan-900/40 flex items-center justify-center text-cyan-600 dark:text-cyan-400">
+            <Database :size="16" />
+          </div>
+          <div>
+            <p class="text-xl font-bold text-slate-800 dark:text-white">{{ stats.vectors?.count ?? '—' }}</p>
+            <p class="text-[10px] text-slate-500 dark:text-gray-400">向量条数</p>
+          </div>
+        </div>
+      </div>
+      <div class="rounded-xl border border-slate-200 dark:border-gray-700 bg-wut-50/60 dark:bg-wut-900/20 p-3">
+        <div class="flex items-center gap-2">
+          <div class="w-8 h-8 rounded-lg bg-amber-100 dark:bg-amber-900/40 flex items-center justify-center text-amber-600 dark:text-amber-400">
+            <FileText :size="16" />
+          </div>
+          <div>
+            <p class="text-xl font-bold text-slate-800 dark:text-white">{{ formatSize(kbTotalChars) }}</p>
+            <p class="text-[10px] text-slate-500 dark:text-gray-400">知识总量</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 向量库状态诚实提示：文档存在但向量为空时，检索实际不可用 -->
+    <div
+      v-if="stats && (stats.vectors?.count ?? 0) === 0 && (stats.documents?.count || 0) > 0"
+      class="mb-4 px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 flex items-center justify-between"
+    >
+      <span class="text-xs text-amber-700 dark:text-amber-300">向量库当前为空，检索暂时不可用（文档元数据仍在）。可在管理模式下重索引重建。</span>
     </div>
 
     <!-- 搜索和过滤 -->
@@ -342,7 +381,10 @@ const createGapTask = async (audit) => {
               <div class="min-w-0 flex-1">
                 <h3 class="text-sm font-medium text-slate-800 dark:text-gray-100 truncate" v-html="highlightText(doc.title)"></h3>
                 <div class="flex items-center gap-2 mt-1 flex-wrap">
-                  <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 dark:bg-gray-700 text-slate-600 dark:text-gray-300">
+                  <span
+                    v-if="getGroupLabel(doc.category) !== getCategoryLabel(doc.category)"
+                    class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 dark:bg-gray-700 text-slate-600 dark:text-gray-300"
+                  >
                     <span v-html="highlightText(getGroupLabel(doc.category))"></span>
                   </span>
                   <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-wut-100 dark:bg-wut-900/30 text-wut-700 dark:text-wut-300">
@@ -396,7 +438,7 @@ const createGapTask = async (audit) => {
             </div>
             <div>
               <h3 class="text-sm font-bold text-slate-800 dark:text-white">{{ previewDoc?.title }}</h3>
-              <p class="text-[10px] text-slate-500 dark:text-gray-400">{{ getGroupLabel(previewDoc?.category) }} / {{ getCategoryLabel(previewDoc?.category) }} · {{ formatSize(previewDoc?.contentLength) }}</p>
+              <p class="text-[10px] text-slate-500 dark:text-gray-400">{{ getGroupLabel(previewDoc?.category) === getCategoryLabel(previewDoc?.category) ? getCategoryLabel(previewDoc?.category) : `${getGroupLabel(previewDoc?.category)} / ${getCategoryLabel(previewDoc?.category)}` }} · {{ formatSize(previewDoc?.contentLength) }}</p>
             </div>
           </div>
           <button

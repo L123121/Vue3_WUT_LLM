@@ -3,10 +3,11 @@ import { computed, ref, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import wutLogoImg from '../../assets/wuhan-university-logo.png';
 import ConversationList from '../chat/ConversationList.vue';
-import { Activity, Database, MessageSquare, BarChart3, LogOut, MessagesSquare, ChevronUp } from 'lucide-vue-next';
+import { Activity, Database, MessageSquare, BarChart3, LogOut, MessagesSquare, ChevronUp, Moon, Sun } from 'lucide-vue-next';
 import { useAuthStore } from '../../stores/auth.store.js';
 import { useChatStore } from '../../stores/chat.store.js';
 import { useToastStore } from '../../stores/toast.store.js';
+import { useThemeStore } from '../../stores/theme.store.js';
 import { prefetchRoute } from '../../utils/prefetch.js';
 import ProfilePanel from '../common/ProfilePanel.vue';
 import FavoritesPanel from './FavoritesPanel.vue';
@@ -17,6 +18,7 @@ const route = useRoute();
 const authStore = useAuthStore();
 const chatStore = useChatStore();
 const toast = useToastStore();
+const themeStore = useThemeStore();
 const currentPath = computed(() => route.path);
 
 const showDevEval = import.meta.env.VITE_SHOW_DEV_EVAL === 'true';
@@ -128,7 +130,6 @@ watch(showProfilePanel, (val) => {
           <Activity :size="15" />
           运营驾驶舱
         </span>
-        <span class="rounded-full bg-white/20 px-2 py-0.5 text-[10px] uppercase tracking-wide" :class="currentPath === '/dashboard' ? 'text-cyan-200 dark:text-slate-950' : 'text-cyan-600 dark:text-cyan-300'">LIVE</span>
       </button>
     </div>
 
@@ -147,7 +148,6 @@ watch(showProfilePanel, (val) => {
           <MessagesSquare :size="15" />
           反馈收集
         </span>
-        <span class="rounded-full bg-white/20 px-2 py-0.5 text-[10px] uppercase tracking-wide" :class="currentPath === '/feedback' ? 'text-white' : 'text-wut-500 dark:text-wut-300'">RAG</span>
       </button>
     </div>
 
@@ -171,6 +171,14 @@ watch(showProfilePanel, (val) => {
             </div>
           </div>
           <ChevronUp :size="14" class="text-slate-400 dark:text-gray-500 shrink-0 transition-transform" :class="showProfilePanel ? 'rotate-0' : 'rotate-180'" />
+        </button>
+        <button
+          @click="themeStore.toggleDarkMode()"
+          class="p-1.5 rounded-lg text-slate-400 dark:text-gray-500 hover:text-wut-600 dark:hover:text-wut-300 hover:bg-wut-50 dark:hover:bg-wut-900/20 transition-colors"
+          :title="themeStore.darkMode ? '切换到浅色模式' : '切换到深色模式'"
+        >
+          <Sun v-if="themeStore.darkMode" :size="16" />
+          <Moon v-else :size="16" />
         </button>
         <button
           @click="handleLogout"
