@@ -1,15 +1,16 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue';
 import { Download, Frown, MessageCircle, RefreshCw, Search, ThumbsDown, ThumbsUp } from 'lucide-vue-next';
-import { getRagFeedback } from '../api/rag.js';
+import { getRagFeedback, updateRagFeedbackEvalStatus } from '../api/rag.js';
 import { useToastStore } from '../stores/toast.store.js';
 import MobileMenuButton from '../components/layout/MobileMenuButton.vue';
 
 const toast = useToastStore();
 const feedbackItems = ref([]);
-const summary = ref({ total: 0, like: 0, dislike: 0 });
+const summary = ref({ total: 0, like: 0, dislike: 0, evalQueued: 0, evalExported: 0 });
 const pagination = ref({ page: 1, limit: 20, total: 0, totalPages: 1 });
 const isLoading = ref(false);
+const evalUpdatingId = ref('');
 const ratingFilter = ref('');
 const keyword = ref('');
 const expandedId = ref('');
@@ -59,6 +60,23 @@ const resetFilters = () => {
   ratingFilter.value = '';
   keyword.value = '';
   fetchFeedback(1);
+};
+
+// 数据飞轮：把点踩反馈加入评测集候选队列，供 export-badcases.cjs 导出回流回归评测
+const markForEval = async (item) => {
+  if (evalUpdatingId.value) return;
+  evalUpdatingId.value = item.id;
+  try {
+    const res = await updateRagFeedbackEvalStatus({ userId: item.userId, feedbackId: item.id, status: 'queued' });
+    if (!res?.success) throw new Error(res?.error || '操作失败');
+    item.evalStatus = 'queued';
+    summary.value.evalQueued = (summary.value.evalQueued || 0) + 1;
+    toast.success('已加入评测集候选，运行 export-badcases.cjs 可导出回流');
+  } catch (error) {
+    toast.error(error.message || '加入评测集失败，请重试');
+  } finally {
+    evalUpdatingId.value = '';
+  }
 };
 
 const escapeCsv = (value) => {
@@ -212,6 +230,14 @@ onMounted(() => fetchFeedback());
                     <ThumbsDown v-else :size="13" />
                     {{ item.rating === 'like' ? '点赞' : '点踩' }}
                   </span>
+                  <span
+                    v-if="item.evalStatus === 'queued'"
+                    class="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-black text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
+                  >已入评测集</span>
+                  <span
+                    v-else-if="item.evalStatus === 'exported'"
+                    class="rounded-full bg-cyan-100 px-2.5 py-1 text-xs font-black text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300"
+                  >已导出回归</span>
                   <span class="text-xs font-bold text-slate-400 dark:text-gray-500">{{ formatTime(item.createdAt) }}</span>
                   <span class="rounded-full bg-slate-100 px-2 py-1 text-xs font-bold text-slate-500 dark:bg-gray-800 dark:text-gray-400">用户 {{ item.userId || '-' }}</span>
                 </div>
@@ -222,12 +248,22 @@ onMounted(() => fetchFeedback());
                   <span v-if="item.traceId" class="rounded-lg bg-slate-100 px-2 py-1 dark:bg-gray-800">Trace：{{ item.traceId }}</span>
                 </div>
               </div>
-              <button
-                @click="expandedId = expandedId === item.id ? '' : item.id"
-                class="shrink-0 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-500 transition hover:border-wut-200 hover:bg-wut-50 hover:text-wut-700 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-wut-900/20"
-              >
-                {{ expandedId === item.id ? '收起详情' : '查看详情' }}
-              </button>
+              <div class="flex shrink-0 gap-2">
+                <button
+                  v-if="item.rating === 'dislike' && !item.evalStatus"
+                  @click="markForEval(item)"
+                  :disabled="evalUpdatingId === item.id"
+                  class="rounded-xl border border-wut-200 bg-wut-50 px-3 py-2 text-xs font-bold text-wut-700 transition hover:bg-wut-100 disabled:opacity-60 dark:border-wut-800 dark:bg-wut-900/20 dark:text-cyan-300 dark:hover:bg-wut-900/40"
+                >
+                  {{ evalUpdatingId === item.id ? '提交中...' : '加入评测集' }}
+                </button>
+                <button
+                  @click="expandedId = expandedId === item.id ? '' : item.id"
+                  class="rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-500 transition hover:border-wut-200 hover:bg-wut-50 hover:text-wut-700 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-wut-900/20"
+                >
+                  {{ expandedId === item.id ? '收起详情' : '查看详情' }}
+                </button>
+              </div>
             </div>
             <div v-if="expandedId === item.id" class="mt-4 grid gap-3 lg:grid-cols-2">
               <div class="rounded-xl bg-slate-50 p-4 dark:bg-gray-950/60">

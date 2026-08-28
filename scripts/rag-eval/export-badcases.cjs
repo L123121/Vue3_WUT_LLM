@@ -101,6 +101,26 @@ function toDatasetEntry(feedback) {
   };
 }
 
+// ---------- 回写评测状态 ----------
+// 导出成功后把反馈标记为 exported，服务端/UI 即可区分"已回流"与"待处理"（--no-mark 可跳过）
+async function markExported(feedbackItems) {
+  let marked = 0;
+  for (const feedback of feedbackItems) {
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/rag/feedback/eval-status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: COOKIE },
+        body: JSON.stringify({ userId: feedback.userId, feedbackId: feedback.id, status: 'exported' }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (response.ok) marked++;
+    } catch {
+      // 单条回写失败不阻断导出
+    }
+  }
+  console.log(`已回写 ${marked}/${feedbackItems.length} 条反馈的评测状态（exported）`);
+}
+
 // ---------- 主流程 ----------
 (async () => {
   if (!COOKIE) {
@@ -123,9 +143,8 @@ function toDatasetEntry(feedback) {
     ? JSON.parse(readFileSync(OUT_PATH, 'utf-8'))
     : [];
   const knownIds = new Set(existing.map(e => e.id));
-  const newEntries = feedbackList
-    .map(toDatasetEntry)
-    .filter(e => !knownIds.has(e.id));
+  const newFeedback = feedbackList.filter(f => !knownIds.has(`FB-${f.userId}-${f.id}`));
+  const newEntries = newFeedback.map(toDatasetEntry);
 
   if (newEntries.length === 0) {
     console.log(`已有数据集 ${existing.length} 条，本次无新增。`);
@@ -138,6 +157,13 @@ function toDatasetEntry(feedback) {
     OUT_PATH,
     '[\n' + merged.map(e => JSON.stringify(e)).join(',\n') + '\n]',
   );
+
+  // 回写评测状态（--no-mark 跳过），形成 反馈 → 评测集 → 回归 的闭环
+  if (args['no-mark']) {
+    console.log('（--no-mark：跳过回写评测状态）');
+  } else {
+    await markExported(newFeedback);
+  }
 
   const pending = merged.filter(e => e.status === 'pending_annotation').length;
   console.log('\n========================================');

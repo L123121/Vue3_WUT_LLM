@@ -18,6 +18,9 @@ const FEEDBACK_TEXT_LIMIT = 4000;
 const FEEDBACK_EVENT_LIMIT = 500;
 const FEEDBACK_ALL_KEY = 'rag_feedback:all';
 const FEEDBACK_ALL_EVENTS_KEY = 'rag_feedback_events:all';
+// 反馈 → 评测集数据飞轮状态：queued = 已加入待导出队列（UI 一键操作）；
+// exported = export-badcases.cjs 已写入评测数据集
+const FEEDBACK_EVAL_STATUSES = new Set(['queued', 'exported']);
 
 function saveChatMemory(userId, message, reply) {
   Promise.resolve(memoryService.saveChatMemory(userId, message, reply)).catch((error) => {
@@ -320,8 +323,10 @@ const listFeedback = async (req, res, next) => {
       acc.total += 1;
       if (item.rating === 'like') acc.like += 1;
       if (item.rating === 'dislike') acc.dislike += 1;
+      if (item.evalStatus === 'queued') acc.evalQueued += 1;
+      if (item.evalStatus === 'exported') acc.evalExported += 1;
       return acc;
-    }, { total: 0, like: 0, dislike: 0 });
+    }, { total: 0, like: 0, dislike: 0, evalQueued: 0, evalExported: 0 });
 
     successResponse(res, {
       items,
@@ -335,6 +340,45 @@ const listFeedback = async (req, res, next) => {
     }, '获取反馈成功');
   } catch (error) {
     console.error('[RAG Feedback] 查询失败:', error);
+    next(error);
+  }
+};
+
+/**
+ * 管理员更新反馈的评测集状态（反馈 → 评测集数据飞轮）：
+ * 点踩反馈一键入队，导出脚本回写 exported，线上坏例形成回归覆盖闭环
+ */
+const updateFeedbackEvalStatus = async (req, res, next) => {
+  try {
+    if (!isAdminRequest(req)) {
+      return errorResponse(res, '仅管理员可更新评测状态', 403);
+    }
+
+    const { userId, feedbackId, status } = req.body || {};
+    if (!userId || !feedbackId) {
+      return errorResponse(res, '缺少用户或反馈标识', 400);
+    }
+    if (!FEEDBACK_EVAL_STATUSES.has(status)) {
+      return errorResponse(res, '评测状态无效', 400);
+    }
+
+    const userFeedback = await store.hgetall(`rag_feedback:${userId}`);
+    const existing = userFeedback ? userFeedback[feedbackId] : null;
+    if (!existing) {
+      return errorResponse(res, '反馈不存在', 404);
+    }
+
+    const updated = {
+      ...existing,
+      evalStatus: status,
+      evalStatusAt: new Date().toISOString(),
+    };
+    await store.hset(`rag_feedback:${userId}`, feedbackId, updated);
+    await store.hset(FEEDBACK_ALL_KEY, `${userId}:${feedbackId}`, updated);
+
+    successResponse(res, { feedbackId, evalStatus: status }, status === 'queued' ? '已加入评测集候选' : '已标记为已导出');
+  } catch (error) {
+    console.error('[RAG Feedback] 更新评测状态失败:', error);
     next(error);
   }
 };
@@ -581,6 +625,7 @@ module.exports = {
   ragChatStream,
   submitFeedback,
   listFeedback,
+  updateFeedbackEvalStatus,
   getFeedbackSummary,
   retrieveParentCandidates,
   addDocument,
