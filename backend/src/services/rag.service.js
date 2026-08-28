@@ -8,7 +8,6 @@ const { RerankerService } = require('./reranker.service');
 const config = require('../config');
 const { metrics } = require('./metrics.service');
 const { RagTracer } = require('./rag-tracer.service');
-const { logEvent } = require('./observability.service');
 const {
   QUESTION_TYPE,
   TYPE_CONFIG,
@@ -23,17 +22,10 @@ const {
 } = require('./rag-ranking.service');
 const ragPrompt = require('./rag-prompt.service');
 const resultMapper = require('./rag-result-mapper.service');
-const { QueryCache } = require('../utils/query-cache');
-
-// 检索结果缓存 + query rewrite 缓存（模块级单例）
-const retrievalCache = new QueryCache(
-  config.rag.cacheMaxEntries || 500,
-  config.rag.cacheTtlMs || 300000,
-);
-const rewriteCache = new QueryCache(
-  config.rag.rewriteCacheMaxEntries || 500,
-  config.rag.cacheTtlMs || 300000,
-);
+const { checkGrounding } = require('./grounding.service');
+const queryRewrite = require('./rag-query-rewrite.service');
+const contextBuilder = require('./rag-context-builder.service');
+const ragRetrieval = require('./rag-retrieval.service');
 
 class RagService {
   constructor(aiService = null) {
@@ -57,6 +49,12 @@ class RagService {
     this.mmrLambda = ragConfig.mmrLambda ?? 0.7;
     this.mmrMaxSim = ragConfig.mmrMaxSim ?? 0.85;
     this.autoCategoryFilter = ragConfig.autoCategoryFilter !== false;
+    // 运行时引用校验（防幻觉兜底）：生成后逐句对照上下文，低溯源标注 level=low
+    this.groundingEnabled = ragConfig.groundingEnabled !== false;
+    this.groundingMinSupport = Number.isFinite(ragConfig.groundingMinSupport) ? ragConfig.groundingMinSupport : 0.35;
+    // 跨文档问题分解：对比/列举类问题拆子查询扩大召回池（reranker 仍按原问题打分，精度不受影响）
+    this.queryDecomposeEnabled = ragConfig.queryDecomposeEnabled !== false;
+    this.queryDecomposeMax = Math.min(Math.max(parseInt(ragConfig.queryDecomposeMaxSubQueries, 10) || 3, 1), 5);
     this.rerankerService = new RerankerService();
   }
 
@@ -137,7 +135,7 @@ class RagService {
     }
 
     // 检索
-    const { candidates, trace, rewrittenQuery } = await this._dualRetrieve(message, history, options);
+    const { candidates, trace, rewrittenQuery } = await ragRetrieval.dualRetrieve(this, message, history, options);
 
     if (!this._hasReliableCandidates(candidates)) {
       const retrievalSummary = this._summarizeRetrievalTrace(trace);
@@ -190,7 +188,7 @@ class RagService {
         const pcStart = Date.now();
 
         // 1. 子句按父段落聚合
-        const paraMap = this._groupChunksByParent(topChunks);
+        const paraMap = contextBuilder.groupChunksByParent(topChunks);
         let parentCandidates = [...paraMap.values()];
 
         // 2. cross-encoder rerank 父段落
@@ -238,7 +236,10 @@ class RagService {
         });
 
         // 5. 组装上下文（由 maxContextLength 控制长度）
-        const { context, sources } = await this._buildContextFromParents(parentCandidates, truncateOverrides);
+        const { context, sources } = await contextBuilder.buildContextFromParents(parentCandidates, {
+          maxContextLength: truncateOverrides.maxContextLength ?? this.maxContextLength,
+          getDocument: (docId) => this.documentService.getDocument(docId),
+        });
         enhancedContext = context;
         parentSources = sources;
 
@@ -354,6 +355,18 @@ class RagService {
 
     const totalLatency = Date.now() - totalStart;
     metrics.recordLatency('total', totalLatency);
+
+    // 运行时引用校验：生成完成后对照上下文逐句检查（旁路，不阻断）
+    const groundingStart = Date.now();
+    const grounding = this._groundingCheck(reply, pipeline.context);
+    if (grounding) {
+      this._recordTraceStage(tracer, 'grounding', groundingStart, true, {
+        coverage: grounding.coverage,
+        level: grounding.level,
+        unsupportedCount: grounding.unsupportedCount,
+      });
+    }
+
     metrics.recordRagQuery({
       usedRag: true,
       usedParentChild: !!pipeline.context,
@@ -388,6 +401,7 @@ class RagService {
       questionType: pipeline.questionType,
       rewrittenQuery: pipeline.rewrittenQuery,
       retrieval: pipeline.retrieval,
+      grounding: grounding || null,
       processCard: processCard || null,
       _metrics: {
         totalLatency,
@@ -403,277 +417,19 @@ class RagService {
   }
 
   async retrieveCandidates(query, options = {}) {
-    const searchTopK = parseInt(options.topK || options.childTopK || this.searchTopK, 10) || this.searchTopK;
-    const tracer = options.tracer || null;
-    const queryVariant = options.queryVariant || 'primary';
-
-    // 缓存拦截：tracer/noCache/category 存在时不缓存
-    const canCache = config.rag.cacheEnabled && !tracer && !options.noCache && !options.category;
-    if (canCache) {
-      const cacheKey = String(query || '').trim().toLowerCase();
-      const cached = retrievalCache.get(cacheKey);
-      if (cached) {
-        cached.trace = cached.trace || {};
-        cached.trace.cacheHit = true;
-        cached.trace.queryVariant = queryVariant;
-        return cached;
-      }
-    }
-
-    // 元数据过滤（Multi-faceted Filtering）：显式 category 优先；
-    // 未指定时按问题关键词自动推断（低置信返回 null → 不设过滤，保持全库召回）
-    const explicitCategory = options.category || null;
-    const autoCategory = !explicitCategory ? this._inferDocCategory(query) : null;
-    const effectiveCategory = explicitCategory || autoCategory || null;
-
-    const trace = {
-      mode: 'bge-small-zh-qdrant-hybrid',
-      category: effectiveCategory,
-      autoCategory,
-      topK: {
-        hybrid: searchTopK,
-        final: searchTopK,
-      },
-      embedding: { ok: false, dense: false, sparse: false, latency: 0, model: null },
-      vector: { count: 0, latency: 0, error: null, backend: 'qdrant_hybrid' },
-      keyword: { enabled: false, count: 0, latency: 0, error: null },
-      fused: { count: 0, topScore: 0, channels: [] },
-    };
-
-    const filter = effectiveCategory ? { category: effectiveCategory } : null;
-    let candidates = [];
-    let currentStage = 'embedding';
-    let currentStageStart = Date.now();
-
-    try {
-      const embeddingStart = Date.now();
-      currentStage = 'embedding';
-      currentStageStart = embeddingStart;
-      const queryEmbedding = await this.embeddingService.embedHybrid(query);
-      trace.embedding = {
-        ok: !!queryEmbedding?.dense,
-        dense: !!queryEmbedding?.dense,
-        sparse: !!queryEmbedding?.sparse && Object.keys(queryEmbedding.sparse).length > 0,
-        latency: Date.now() - embeddingStart,
-        model: queryEmbedding?.model || null,
-      };
-      metrics.recordLatency('embedding', trace.embedding.latency);
-      this._recordTraceStage(tracer, 'embedding', embeddingStart, true, {
-        queryVariant,
-        model: trace.embedding.model,
-        dense: trace.embedding.dense,
-        sparse: trace.embedding.sparse,
-      });
-
-      if (queryEmbedding?.dense) {
-        const searchStart = Date.now();
-        currentStage = 'vector_search';
-        currentStageStart = searchStart;
-        // RRF 融合在 vector-store 内完成（稠密/稀疏独立排名，无需动态权重路由）
-        candidates = await this.vectorStore.search(queryEmbedding, searchTopK, filter);
-
-        // 空结果回退：自动推断的类别过滤无命中 → 回退全库检索，避免跨文档问题被误过滤
-        // （显式 category 是调用方意图，不做回退）
-        if (autoCategory && candidates.length === 0) {
-          const fallbackStart = Date.now();
-          candidates = await this.vectorStore.search(queryEmbedding, searchTopK, null);
-          trace.filterFallback = {
-            inferredCategory: autoCategory,
-            recovered: candidates.length,
-            latency: Date.now() - fallbackStart,
-          };
-          this._recordTraceStage(tracer, 'category_filter_fallback', fallbackStart, true, {
-            inferredCategory: autoCategory,
-            recovered: candidates.length,
-          });
-        }
-
-        trace.vector = {
-          count: candidates.length,
-          latency: Date.now() - searchStart,
-          error: null,
-          backend: 'qdrant_hybrid',
-        };
-        metrics.recordLatency('vectorSearch', trace.vector.latency);
-        this._recordTraceStage(tracer, 'vector_search', searchStart, true, {
-          queryVariant,
-          topK: searchTopK,
-          count: candidates.length,
-          category: effectiveCategory || null,
-          autoCategory,
-          backend: trace.vector.backend,
-        });
-      } else {
-        this._recordTraceStage(tracer, 'vector_search', Date.now(), false, {
-          queryVariant,
-          reason: 'missing_dense_embedding',
-        });
-      }
-    } catch (err) {
-      if (currentStage === 'embedding') {
-        trace.embedding.ok = false;
-      } else {
-        trace.vector.error = err.message;
-      }
-      this._recordTraceStage(tracer, currentStage, currentStageStart, false, { queryVariant }, err);
-      logEvent('warn', 'rag_vector_search_failed', { error: err.message });
-    }
-
-    this._recordTraceStage(tracer, 'keyword_search', Date.now(), true, {
-      queryVariant,
-      enabled: false,
-      count: 0,
-    });
-
-    trace.fused = {
-      count: candidates.length,
-      topScore: candidates[0]?.score || 0,
-      channels: [...new Set(candidates.flatMap(item => item._retrievalChannels || []))],
-    };
-
-    this._recordTraceStage(tracer, 'fusion', Date.now(), true, {
-      queryVariant,
-      count: trace.fused.count,
-      topScore: trace.fused.topScore,
-      channels: trace.fused.channels,
-    });
-
-    // 缓存写入
-    if (canCache) {
-      const cacheKey = String(query || '').trim().toLowerCase();
-      retrievalCache.set(cacheKey, { candidates, trace, rewrittenQuery: trace?.rewrittenQuery || null });
-    }
-
-    return { candidates, trace, vectorResults: candidates, keywordResults: [] };
+    return ragRetrieval.retrieveCandidates(this, query, options);
   }
 
   async retrieveParentCandidates(query, options = {}) {
-    const tracer = this._createTracer(query, options);
-    const ownsTracer = !options.tracer;
-    const childTopK = parseInt(options.childTopK || options.topK || 25, 10) || 25;
-    const parentTopK = parseInt(options.parentTopK || 0, 10) || 0;
-    const includeChildren = options.includeChildren !== false;
-    const { candidates, trace, vectorResults, keywordResults } = await this.retrieveCandidates(query, {
-      ...options,
-      tracer,
-      topK: childTopK,
-    });
-    const parentAggregateStart = Date.now();
-    const parents = await this.aggregateParentCandidates(candidates, {
-      limit: parentTopK,
-      includeChildren,
-    });
-    this._recordTraceStage(tracer, 'parent_aggregate', parentAggregateStart, true, {
-      childCount: candidates.length,
-      parentCount: parents.length,
-    });
-
-    const retrievalSummary = this._summarizeRetrievalTrace(trace);
-    tracer.setRetrieval(retrievalSummary);
-    const result = {
-      query,
-      category: options.category || null,
-      childTopK,
-      parentTopK: parentTopK || parents.length,
-      children: candidates.map((chunk, index) => this._chunkToCandidate(chunk, index + 1)),
-      parents,
-      retrieval: retrievalSummary,
-      trace,
-      vectorResults,
-      keywordResults,
-    };
-
-    return ownsTracer
-      ? this._finishTrace(tracer, result, { usedRag: true, retrievedChunks: candidates.length, matchedDocs: parents.length })
-      : { ...result, traceId: tracer.traceId, trace: tracer.toSummary() };
+    return ragRetrieval.retrieveParentCandidates(this, query, options);
   }
 
   async aggregateParentCandidates(chunks, options = {}) {
-    if (!chunks || chunks.length === 0) return [];
-
-    const limit = parseInt(options.limit || 0, 10) || 0;
-    const includeChildren = options.includeChildren !== false;
-    const paraMap = new Map();
-
-    chunks.forEach((chunk, index) => {
-      const childRank = index + 1;
-      const parentId = chunk.parentId || (chunk.docId + '_para_' + (chunk.parentIdx ?? 0));
-      if (!parentId) return;
-
-      const current = paraMap.get(parentId) || {
-        parentId,
-        bestChunk: chunk,
-        chunks: [],
-        parentText: chunk.parentText || '',
-        docId: chunk.docId,
-        parentIdx: chunk.parentIdx,
-        firstChildRank: childRank,
-      };
-
-      current.chunks.push({ ...chunk, _childRank: childRank });
-      current.firstChildRank = Math.min(current.firstChildRank, childRank);
-      if ((chunk.score || 0) > (current.bestChunk.score || 0)) current.bestChunk = chunk;
-      if ((chunk.parentText || '').length > current.parentText.length) {
-        current.parentText = chunk.parentText;
-      }
-      paraMap.set(parentId, current);
-    });
-
-    const docCache = new Map();
-    const sortedMatches = [...paraMap.values()]
-      .sort((a, b) => {
-        const scoreDiff = (b.bestChunk.score || 0) - (a.bestChunk.score || 0);
-        return scoreDiff || a.firstChildRank - b.firstChildRank;
-      });
-    const limitedMatches = limit > 0 ? sortedMatches.slice(0, limit) : sortedMatches;
-    const parents = [];
-
-    for (const match of limitedMatches) {
-      let doc = docCache.has(match.docId) ? docCache.get(match.docId) : null;
-      if (!docCache.has(match.docId) && match.docId) {
-        doc = await this.documentService.getDocument(match.docId);
-        docCache.set(match.docId, doc || null);
-      }
-
-      parents.push(this._parentMatchToCandidate(match, doc, parents.length + 1, { includeChildren }));
-    }
-
-    return parents;
+    return ragRetrieval.aggregateParentCandidates(this, chunks, options);
   }
+
   fuseRetrievalResults(vectorResults = [], keywordResults = [], limit = this.searchTopK, _query = null) {
-    // RRF 融合：score = Σ 1/(k + rank)，只看通道内排名，免去跨通道权重校准
-    const merged = new Map();
-    const addResult = (item, channel, rank) => {
-      const key = item.id || `${item.docId}:${item.chunkIndex}`;
-      const existing = merged.get(key) || {
-        ...item,
-        score: 0,
-        _vectorScore: 0,
-        _keywordScore: 0,
-        _rrfScore: 0,
-        _retrievalChannels: [],
-      };
-
-      if (channel === 'vector') {
-        existing._vectorScore = Math.max(existing._vectorScore || 0, this._normalizeScore(item.score));
-        existing._vectorRank = rank;
-      } else if (channel === 'keyword') {
-        existing._keywordScore = Math.max(existing._keywordScore || 0, this._normalizeScore(item._keywordScore ?? item.score));
-        existing._keywordRank = rank;
-      }
-
-      existing._rrfScore += 1 / (this.rrfK + rank);
-      if (!existing._retrievalChannels.includes(channel)) existing._retrievalChannels.push(channel);
-      merged.set(key, { ...existing, ...this._preferFilledFields(existing, item) });
-    };
-
-    vectorResults.forEach((item, index) => addResult(item, 'vector', index + 1));
-    keywordResults.forEach((item, index) => addResult(item, 'keyword', index + 1));
-
-    return [...merged.values()]
-      .map(item => ({ ...item, score: item._rrfScore || 0 }))
-      .sort((a, b) => b.score - a.score)
-      .slice(0, limit);
+    return ragRetrieval.fuseRetrievalResults(this, vectorResults, keywordResults, limit, _query);
   }
 
   async selectTopChunks(query, candidates) {
@@ -707,30 +463,6 @@ class RagService {
    */
   parseProcessCard(reply) {
     return ragPrompt.parseProcessCard(reply);
-  }
-
-  _extractQueryTerms(query) {
-    const normalized = String(query || '').toLowerCase();
-    const terms = new Set();
-
-    const englishWords = normalized.match(/[a-z0-9]{2,}/g) || [];
-    englishWords.forEach(word => terms.add(word));
-
-    const chineseRuns = normalized.match(/[\u4e00-\u9fff]+/g) || [];
-    for (const run of chineseRuns) {
-      for (let size = 2; size <= 4; size++) {
-        if (run.length < size) continue;
-        for (let index = 0; index <= run.length - size; index++) {
-          terms.add(run.slice(index, index + size));
-        }
-      }
-      if (run.length <= 4) terms.add(run);
-    }
-
-    const numbers = normalized.match(/\d+/g) || [];
-    numbers.forEach(number => terms.add(number));
-
-    return [...terms];
   }
 
   async chat(message, history = [], options = {}) {
@@ -857,6 +589,18 @@ class RagService {
           if (isProcess) processCard = this.parseProcessCard(fullReply);
           if (processCard) {
             yield { type: 'process', processCard };
+          }
+
+          // 运行时引用校验：流式收尾时对照上下文逐句检查（旁路，不阻断）
+          const groundingStart = Date.now();
+          const grounding = this._groundingCheck(fullReply, pipeline.context);
+          if (grounding) {
+            this._recordTraceStage(tracer, 'grounding', groundingStart, true, {
+              coverage: grounding.coverage,
+              level: grounding.level,
+              unsupportedCount: grounding.unsupportedCount,
+            });
+            yield { type: 'grounding', grounding };
           }
 
           metrics.recordLatency('total', Date.now() - totalStart);
@@ -999,161 +743,15 @@ class RagService {
 
   /** 检测是否需要改写：有历史 + 含代词/省略 */
   shouldRewriteQuery(query, history) {
-    if (!history || history.length === 0) return false;
-    const lastUserMsg = history.filter(h => h.role === 'user').slice(-1)[0];
-    if (!lastUserMsg) return false;
-
-    const q = String(query || '').trim();
-    // 短 query（< 5 字）大概率是省略
-    if (q.length < 5) return true;
-    // 含代词/指代
-    if (/^(这个|那个|它|它们|他|她|他们|她们|那|那些|这些|这|那|其|该|此)/.test(q)) return true;
-    if (/\b(这个|那个|它|它们|他|她|他们|她们|那|那些|这些)\b/.test(q)) return true;
-    // 省略式（"那费用呢？""条件呢？"）
-    if (/^(那|那.*呢|然后|还有|那.*吗|费用|条件|流程|要求|时间|地点|原因|结果|影响|区别|结果)$/.test(q)) return true;
-    if (/^.+呢$/.test(q) && q.length < 8) return true;
-    return false;
+    return queryRewrite.shouldRewriteQuery(query, history);
   }
 
   /**
-   * 用 LLM 改写 query
-   * 将带指代/省略的问题补全为独立的自包含问题
-   * 处理三个核心难点：
-   *   1. 实体消歧：多个候选实体时正确选择
-   *   2. 跨轮指代：支持 3 轮内的长跨度指代
-   *   3. 语义指代："这个"可能指整句话的意思而非单个名词
-   * @returns {string|null} 改写后的 query，失败返回 null
+   * 用 LLM 改写 query：将带指代/省略的问题补全为独立的自包含问题
+   * @returns {Promise<string|null>} 改写后的 query，失败返回 null
    */
   async rewriteQuery(query, history) {
-    if (!history || history.length === 0) return null;
-
-    // 缓存拦截：同 query + 最近 6 条历史窗口时直接返回
-    if (config.rag.cacheEnabled) {
-      const historyHash = this._hashHistory(history.slice(-6));
-      const cacheKey = `${String(query || '').trim().toLowerCase()}|${historyHash}`;
-      const cached = rewriteCache.get(cacheKey);
-      if (cached !== undefined) return cached;
-    }
-
-    // 取最近 3 轮（6 条消息），在 token 成本和跨度覆盖之间折中
-    // 3 轮覆盖绝大多数指代场景，超过 3 轮的指代即使人工也难判断
-    const recentHistory = history.slice(-6);
-    const historyText = recentHistory
-      .map(h => `${h.role === 'user' ? '用户' : '助手'}: ${h.content}`)
-      .join('\n');
-
-    const prompt = `根据对话历史，将用户最新问题补全为独立的自包含问题。
-
-注意：
-1. 如果"这个""那个""它"可能指代多个事物，根据上下文选出最可能的一个
-2. 如果"这个"指代前文一整句话的意思，把整句话的要义概括进问题
-3. 只输出补全后的问题，不要多余文字
-4. 不要添加历史中没有的信息
-
-对话历史：
-${historyText}
-
-用户最新问题：${query}
-
-补全后的问题：`;
-
-    try {
-      const result = await this.aiService.getCompletion(prompt, [], { timeout: 5000, retries: 1 });
-      const rewritten = (result.content || '').trim().replace(/^["「『]|["」』]$/g, '');
-      if (!rewritten || rewritten.length < 2) return null;
-      // 防止改写后和原文一模一样（LLM 偷懒）
-      if (rewritten === query.trim()) return null;
-
-      // 缓存写入
-      if (config.rag.cacheEnabled) {
-        const historyHash = this._hashHistory(recentHistory);
-        const cacheKey = `${String(query || '').trim().toLowerCase()}|${historyHash}`;
-        rewriteCache.set(cacheKey, rewritten);
-      }
-
-      console.log(`[QueryRewrite] "${query}" → "${rewritten}"`);
-      return rewritten;
-    } catch (err) {
-      console.warn(`[QueryRewrite] 改写失败: ${err.message}`);
-      return null;
-    }
-  }
-
-  /** 将消息列表 hash 为短字符串，用于 rewrite 缓存 key */
-  _hashHistory(messages) {
-    if (!messages || !messages.length) return 'empty';
-    return messages.map(m => `${m.role}:${(m.content || '').slice(0, 100)}`).join('|');
-  }
-
-  /**
-   * 双路检索：改写 query + 原文 query 分别检索，合并去重
-   * 改写失败时降级为单路
-   * @returns {{ candidates: Array, trace: object, rewrittenQuery: string|null }}
-   */
-  async _dualRetrieve(message, history, options = {}) {
-    const tracer = options.tracer || null;
-    let rewrittenQuery = null;
-    if (this.shouldRewriteQuery(message, history)) {
-      const rewriteStart = Date.now();
-      try {
-        rewrittenQuery = await this.rewriteQuery(message, history);
-        this._recordTraceStage(tracer, 'query_rewrite', rewriteStart, true, {
-          changed: !!rewrittenQuery,
-        });
-      } catch (err) {
-        this._recordTraceStage(tracer, 'query_rewrite', rewriteStart, false, {}, err);
-      }
-    }
-
-    // 单路：不需要改写或改写失败
-    if (!rewrittenQuery) {
-      const { candidates, trace } = await this.retrieveCandidates(message, { ...options, queryVariant: 'original' });
-      return { candidates, trace, rewrittenQuery: null };
-    }
-
-    // 双路：改写 + 原文分别检索，合并去重
-    const [originalResult, rewrittenResult] = await Promise.all([
-      this.retrieveCandidates(message, { ...options, queryVariant: 'original' }),
-      this.retrieveCandidates(rewrittenQuery, { ...options, queryVariant: 'rewritten' }),
-    ]);
-
-    // 改写结果异常检测：如果改写后的检索结果显著少于原文（比例 < 0.3），
-    // 说明改写可能偏了，此时以原文结果为主，仅补充改写结果中不重叠的高分项
-    const rewriteRatio = rewrittenResult.candidates.length / Math.max(originalResult.candidates.length, 1);
-    if (rewriteRatio < 0.3 && originalResult.candidates.length > 3) {
-      console.log(`[QueryRewrite] 改写结果异常（改写${rewrittenResult.candidates.length}条 vs 原文${originalResult.candidates.length}条），降级为原文为主`);
-    }
-
-    // 合并去重：按 chunk id 去重，保留高分
-    const merged = new Map();
-    for (const c of originalResult.candidates) {
-      const key = c.id || `${c.docId}:${c.chunkIndex}`;
-      merged.set(key, c);
-    }
-    for (const c of rewrittenResult.candidates) {
-      const key = c.id || `${c.docId}:${c.chunkIndex}`;
-      const existing = merged.get(key);
-      if (!existing || (c.score || 0) > (existing.score || 0)) {
-        merged.set(key, c);
-      }
-    }
-
-    const mergedCandidates = [...merged.values()]
-      .sort((a, b) => (b.score || 0) - (a.score || 0))
-      .slice(0, this.searchTopK);
-
-    // 合并 trace（取原始 query 的 trace，增加改写标记）
-    const trace = originalResult.trace;
-    trace.queryRewrite = {
-      original: message,
-      rewritten: rewrittenQuery,
-      originalCount: originalResult.candidates.length,
-      rewrittenCount: rewrittenResult.candidates.length,
-      mergedCount: mergedCandidates.length,
-    };
-
-    console.log(`[QueryRewrite] 双路检索: 原文${originalResult.candidates.length}条 + 改写${rewrittenResult.candidates.length}条 → 合并${mergedCandidates.length}条`);
-    return { candidates: mergedCandidates, trace, rewrittenQuery };
+    return queryRewrite.rewriteQuery(query, history, this.aiService);
   }
 
   /**
@@ -1226,93 +824,17 @@ ${historyText}
   }
 
   _groupChunksByParent(chunks) {
-    const paraMap = new Map();
-    for (const chunk of chunks) {
-      const key = chunk.parentId || (chunk.docId + '_para_' + (chunk.parentIdx ?? 0));
-      if (!key) continue;
-      const current = paraMap.get(key) || {
-        parentId: key,
-        bestChunk: chunk,
-        chunks: [],
-        parentText: chunk.parentText || '',
-        docId: chunk.docId,
-        parentIdx: chunk.parentIdx,
-        firstChildRank: 0,
-      };
-      current.chunks.push(chunk);
-      current.firstChildRank = current.firstChildRank || chunks.indexOf(chunk) + 1;
-      if ((chunk.score || 0) > (current.bestChunk.score || 0)) current.bestChunk = chunk;
-      if ((chunk.parentText || '').length > current.parentText.length) {
-        current.parentText = chunk.parentText;
-      }
-      paraMap.set(key, current);
-    }
-    return paraMap;
+    return contextBuilder.groupChunksByParent(chunks);
   }
 
   /**
    * 从已 rerank 的父段落聚合结果构建上下文
    */
   async _buildContextFromParents(parentCandidates, overrides = {}) {
-    if (!parentCandidates || parentCandidates.length === 0) {
-      return { sources: [], context: '' };
-    }
-    // 按 rerank 分数排序（rerank 已对所有父段打分，取高分优先）
-    parentCandidates.sort((a, b) => (b._rerankScore || b.bestChunk?.score || 0) - (a._rerankScore || a.bestChunk?.score || 0));
-    const selected = parentCandidates;
-
-    // 上下文长度支持请求级覆盖（A/B 评测验证"少而精"）
-    const maxContextLength = overrides.maxContextLength ?? this.maxContextLength;
-
-    const contextParts = [];
-    const sources = [];
-    let totalLength = 0;
-    let docIndex = 0;
-    const docCache = new Map();
-
-    for (const match of selected) {
-      const docId = match.docId;
-      if (!docId) continue;
-
-      let doc = docCache.get(docId);
-      if (!doc) {
-        doc = await this.documentService.getDocument(docId);
-        if (!doc) continue;
-        docCache.set(docId, doc);
-      }
-
-      const paraText = match.parentText || match.bestChunk?.text || match.bestChunk?.parentText || '';
-      if (!paraText) continue;
-      docIndex++;
-
-      const header = `【文档 ${docIndex}】${doc.title}（段落 ${(match.parentIdx ?? 0) + 1}）`;
-      const entry = `${header}\n${paraText}`;
-      const rerankScore = match._rerankScore || match.bestChunk?.score || 0;
-
-      if (totalLength + entry.length > maxContextLength) {
-        const remaining = maxContextLength - totalLength;
-        if (remaining > 200) {
-          contextParts.push(entry.substring(0, remaining) + '\n...(截断)');
-          sources.push({
-            id: doc.id, title: doc.title, category: doc.category,
-            matchedScore: rerankScore, rerankScore, rerankModel: match._rerankModel || '',
-            snippet: paraText.substring(0, 1500),
-          });
-        }
-        break;
-      }
-
-      contextParts.push(entry);
-      totalLength += entry.length;
-      sources.push({
-        id: doc.id, title: doc.title, category: doc.category,
-        matchedScore: rerankScore, rerankScore, rerankModel: match._rerankModel || '',
-        snippet: paraText.substring(0, 1500),
-      });
-    }
-
-    const context = contextParts.join('\n\n' + '='.repeat(40) + '\n\n');
-    return { sources, context };
+    return contextBuilder.buildContextFromParents(parentCandidates, {
+      maxContextLength: overrides.maxContextLength ?? this.maxContextLength,
+      getDocument: (docId) => this.documentService.getDocument(docId),
+    });
   }
 
   _preferFilledFields(existing, incoming) {
@@ -1325,6 +847,24 @@ ${historyText}
 
   _buildNoReliableSourcesReply() {
     return ragPrompt.buildNoReliableSourcesReply();
+  }
+
+  /**
+   * 运行时引用校验（防幻觉兜底）
+   * 对照 LLM 实际看到的上下文逐句检查溯源覆盖率；关闭/无上下文/无有效句子时返回 null
+   */
+  _groundingCheck(reply, context, options = {}) {
+    if (!this.groundingEnabled) return null;
+    try {
+      return checkGrounding(reply, context, {
+        enabled: true,
+        minSupport: options.minSupport ?? this.groundingMinSupport,
+      });
+    } catch (err) {
+      // 校验是旁路观测，任何异常都不影响回答返回
+      console.warn(`[Grounding] 校验失败(忽略): ${err.message}`);
+      return null;
+    }
   }
 }
 
