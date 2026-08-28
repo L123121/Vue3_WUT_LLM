@@ -43,6 +43,9 @@ RUN cd backend && npm ci --omit=dev --ignore-scripts
 # better-sqlite3 是运行期硬依赖（auth.service / memory-store 直接 require），
 # 编译或下载失败必须报错中止，不能静默跳过，否则容器启动即崩。
 RUN cd backend && npm_config_build_from_source=true npm rebuild better-sqlite3 --omit=dev || (echo "[Docker] better-sqlite3 编译失败，构建中止" >&2 && exit 1)
+# @qdrant/js-client-rest 会传递安装 typescript@7（Go 原生 tsc 二进制，约 40MB），
+# 运行期永远不会 require 它——移除以缩小镜像并通过漏洞扫描门禁
+RUN cd backend && rm -rf node_modules/typescript node_modules/@typescript
 
 # ---- Stage 3: 后端运行环境 ----
 FROM node:20-slim
