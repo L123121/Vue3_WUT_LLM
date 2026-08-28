@@ -10,7 +10,7 @@
 
 ### 用户功能
 
-- **流式 AI 对话**：基于 Fetch、ReadableStream 和 SSE 增量渲染回答。
+- **流式 AI 对话**：基于 Fetch、ReadableStream 和 SSE 增量渲染回答；生产实测 SSE 首包（retrieval 事件）约 130ms。
 - **自动意图路由**：后端自动决定进入 `chat`、`rag` 或 `agent`，前端无需手动切换 RAG。
 - **RAG 知识库**：支持文档上传、批量录入、两级分类、统计、重索引、来源引用和反馈。
 - **Agent 工具调用**：内置知识库检索 `search_knowledge_base` 与数学计算 `calculate`。
@@ -28,6 +28,9 @@
 - Qdrant 默认向量后端，本地文件向量存储可作为离线降级方案。
 - Helmet、CORS 白名单、接口限流、用户配额和上传文件 MIME 校验。
 - 工具参数 Schema 校验、超时取消、客户端断开传播、循环检测与失败降级。
+- 前端流式渲染用 requestAnimationFrame 合并高频增量更新，后台 Tab 暂停 RAF 时立即落盘待写内容；发版后旧页面的 chunk 加载失败可自动识别并恢复。
+- RAG 全链路可观测：traceId 贯穿 embedding、检索、重排、父段组装、生成、grounding 各阶段并记录耗时，trace 随 SSE 下发，前端面板可视化。
+- Embedding 与 Reranker 为本地 ONNX BGE 模型（离线加载，可选 int8 量化，向量内存约省 75%），除生成环节外 RAG 链路零模型 API 调用。
 - Docker 多阶段构建、Docker Compose、GitHub Actions 和健康检查。
 
 ## 会话编排
