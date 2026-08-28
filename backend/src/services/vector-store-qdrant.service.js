@@ -30,6 +30,10 @@ class QdrantVectorStore {
     this.url = vectorConfig.qdrantUrl || 'http://localhost:6333';
     this.apiKey = vectorConfig.qdrantApiKey || '';
     this.collectionName = vectorConfig.collectionName || DEFAULT_COLLECTION;
+    // payload 关键词索引（docId/category）：元数据过滤由全量扫描变为索引查找
+    this.payloadIndexEnabled = vectorConfig.payloadIndexEnabled !== false;
+    // 标量量化（'int8'）：向量内存约省 75%；对已存在 collection 需重建后才全量生效
+    this.quantization = vectorConfig.quantization || '';
 
     this._client = null;
     this._ready = false;
@@ -69,6 +73,7 @@ class QdrantVectorStore {
       this._client = this._createClient();
       const { exists } = await this._client.collectionExists(this.collectionName);
       if (!exists) {
+        const quantization = this._quantizationConfig();
         await this._client.createCollection(this.collectionName, {
           vectors: {
             dense: { size: DENSE_DIM, distance: 'Cosine', on_disk: false },
@@ -76,11 +81,25 @@ class QdrantVectorStore {
           sparse_vectors: {
             sparse: { modifier: 'idf' },
           },
+          ...(quantization ? { quantization_config: quantization } : {}),
         });
-        console.log(`[QdrantStore] 已创建 collection: ${this.collectionName} (dense ${DENSE_DIM}d + sparse)`);
+        console.log(
+          `[QdrantStore] 已创建 collection: ${this.collectionName} (dense ${DENSE_DIM}d + sparse)` +
+          (quantization ? ` [量化: ${this.quantization}]` : ''),
+        );
       } else {
         console.log(`[QdrantStore] 已连接 collection: ${this.collectionName}`);
+        // 已存在的 collection 补配量化：新写入的点开始量化，存量点需重建后全量生效
+        if (this.quantization === 'int8') {
+          try {
+            await this._client.updateCollection(this.collectionName, { quantization_config: this._quantizationConfig() });
+            console.log('[QdrantStore] 已为现有 collection 开启 int8 量化（存量向量需重建后全量生效）');
+          } catch (err) {
+            console.warn(`[QdrantStore] 开启量化失败(忽略): ${err.message}`);
+          }
+        }
       }
+      await this._ensurePayloadIndexes();
       const count = await this._client.count(this.collectionName, { exact: true });
       this._pointCount = count.count || 0;
       this._ready = true;
@@ -90,6 +109,34 @@ class QdrantVectorStore {
       console.warn(`[QdrantStore] 连接失败（后续 search 将返回空，可重试）: ${err.message}`);
       this._ready = true;
       if (this._readyResolve) this._readyResolve();
+    }
+  }
+
+  /** 标量量化配置：仅显式配置 QDRANT_QUANTIZATION=int8 时返回 */
+  _quantizationConfig() {
+    if (this.quantization !== 'int8') return null;
+    return { scalar: { type: 'int8', quantile: 0.99, always_ram: true } };
+  }
+
+  /**
+   * 为 docId/category 创建关键词 payload 索引（幂等，已存在时跳过）
+   * 元数据过滤（category 自动推断 / deleteByDocId）走索引，避免全量扫描
+   */
+  async _ensurePayloadIndexes() {
+    if (!this._client || !this.payloadIndexEnabled) return;
+    for (const field of ['docId', 'category']) {
+      try {
+        await this._client.createPayloadIndex(this.collectionName, {
+          field_name: field,
+          field_schema: 'keyword',
+          wait: true,
+        });
+        console.log(`[QdrantStore] 已创建 payload 索引: ${field}`);
+      } catch (err) {
+        const msg = String(err?.message || err || '');
+        if (/already exists/i.test(msg)) continue;
+        console.warn(`[QdrantStore] 创建 payload 索引失败(${field}): ${msg}`);
+      }
     }
   }
 

@@ -74,6 +74,29 @@ const intentLabel = computed(() => {
 });
 const showIntentBadge = computed(() => isModel.value && !isError.value && !!intentLabel.value);
 
+// 运行时引用校验徽标：后端逐句对照 RAG 上下文得出溯源覆盖率（grounding SSE 事件写入）
+const grounding = computed(() => props.message.grounding || null);
+const showGroundingBadge = computed(() => (
+  isModel.value && !isError.value && !isStreaming.value && !!grounding.value
+));
+const groundingLabel = computed(() => {
+  const g = grounding.value;
+  if (!g) return '';
+  const pct = Math.round(g.coverage * 100);
+  const levelMap = { high: '溯源良好', medium: '部分溯源', low: '低溯源' };
+  return `已溯源 ${pct}% · ${levelMap[g.level] || g.level}`;
+});
+const groundingBadgeClass = computed(() => {
+  const level = grounding.value?.level;
+  if (level === 'high') {
+    return 'bg-emerald-50/80 dark:bg-emerald-900/20 border-emerald-100 dark:border-emerald-800/40 text-emerald-600 dark:text-emerald-300';
+  }
+  if (level === 'medium') {
+    return 'bg-amber-50/80 dark:bg-amber-900/20 border-amber-100 dark:border-amber-800/40 text-amber-600 dark:text-amber-300';
+  }
+  return 'bg-red-50/80 dark:bg-red-900/20 border-red-100 dark:border-red-800/40 text-red-600 dark:text-red-300';
+});
+
 // L2 工具调度可视化：message.toolCalls/toolResults（useStreaming onToolCall/onToolResult 写入）
 const toolCalls = computed(() => props.message.toolCalls || []);
 const toolResults = computed(() => props.message.toolResults || []);
@@ -305,6 +328,16 @@ const timeClasses = computed(() => {
         <div v-if="showIntentBadge" class="mt-2 inline-flex items-center gap-1 rounded-full bg-wut-50/80 dark:bg-wut-900/20 border border-wut-100 dark:border-wut-800/40 px-2 py-0.5">
           <span class="w-1.5 h-1.5 rounded-full bg-wut-500"></span>
           <span class="text-[10px] font-medium text-wut-600 dark:text-wut-300">{{ intentLabel }}</span>
+        </div>
+
+        <!-- 运行时引用校验：溯源覆盖率标注（低溯源提示用户谨慎采信） -->
+        <div
+          v-if="showGroundingBadge"
+          :title="`共 ${grounding.totalSentences} 句，其中 ${grounding.unsupportedCount} 句未在引用资料中找到依据`"
+          class="mt-2 inline-flex items-center gap-1 rounded-full border px-2 py-0.5"
+          :class="groundingBadgeClass"
+        >
+          <span class="text-[10px] font-medium">{{ groundingLabel }}</span>
         </div>
 
         <!-- L2 工具调度卡片：展示 tool_call / tool_result（Agent 路径透明化） -->

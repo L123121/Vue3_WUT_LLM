@@ -343,6 +343,10 @@ export function useStreaming() {
         onProcess: (processCard) => {
           updateMessage(convStore, conversationId, aiMsgId, (m) => ({ ...m, processCard: processCard || m.processCard }));
         },
+        onGrounding: (grounding) => {
+          // 运行时引用校验：溯源覆盖率随收尾下发，MessageBubble 展示"已溯源 xx%"徽标
+          updateMessage(convStore, conversationId, aiMsgId, (m) => ({ ...m, grounding: grounding || m.grounding }));
+        },
         onRetry: () => {
           isReconnecting.value = true;
           reconnectAttempt.value = reconnectAttempt.value + 1;

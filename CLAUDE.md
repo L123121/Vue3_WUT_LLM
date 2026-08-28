@@ -339,6 +339,34 @@ chat.store（聚合层）→ 页面统一接口
 - 持久记忆：每次回答前读取并注入 system history；长期 embedding 在写入前完成，访问统计与并发更新采用合并写入
 - 测试：`agent-tools.test.js` 新增 7 用例（executeToolDetailed 契约/retrieveOnly/stableStringify/chat drain/error 降级/sources 透传/prompt 不含 schema）
 
+**18. 运行时引用校验（防幻觉兜底，2026-08-24）**
+- 问题：LLM-as-judge 只在离线评测跑，线上每次回答没有溯源检查——编造内容直接到达用户
+- 方案：`grounding.service.js`（零模型调用）——回答切句 → 逐句算与 RAG 上下文（pipeline.context，即 LLM 实际看到的文本）的字符 bigram 覆盖率 → `coverage`/`level(high|medium|low)` + 未溯源句列表
+  - 客套话/元话语（"希望以上内容对你有帮助"）过滤不误杀；代码块剥离；minSupport 阈值可调（默认 0.35）
+- 接入：非流式结果带 `grounding` 字段；流式在收尾时 yield `grounding` SSE 事件（旁路，不阻断回答）；trace 新增 `grounding` stage
+- 前端：MessageBubble 按覆盖率显示徽标（≥85% 绿"溯源良好"/≥60% 黄"部分溯源"/其余 红"低溯源"，hover 显示未溯源句数）
+- ⚠️ 口径：bigram 覆盖率衡量的是"措辞是否来自资料"，改写幅度大的正确答案可能被判 medium——只做标注不做阻断，避免误杀
+- 开关：`RAG_GROUNDING_ENABLED=false` 关闭、`RAG_GROUNDING_MIN_SUPPORT` 调阈值
+
+**19. 线上 badcase 自动沉淀评测集（2026-08-24）**
+- 问题：RagFeedback 的 dislike 只做统计展示，回归测试集是静态的，线上新坏例无法被回归覆盖
+- 方案：`scripts/rag-eval/export-badcases.cjs`——管理员 Cookie 拉取 `/api/rag/feedback` → 按 userId+feedbackId 幂等去重合并到 `dataset/badcases-from-feedback.json`
+- 条目结构与 eval 数据集对齐（question/relevant_doc_ids/status=pending_annotation），附带 candidate_doc_ids（回答引用来源，作人工标注起点）；标注完把 status 改 ready 即可用 DATASET_PATH 并入回归
+- 用法：`RAG_EVAL_COOKIE="auth_token=..." node export-badcases.cjs [--rating=dislike|like|all] [--out=path] [--limit=N]`
+
+**20. 入库清洗闸门 + 内容去重（2026-08-24）**
+- Prompt injection 过滤（`doc-sanitizer.service.js`）：上传文档原样进 RAG 上下文，无任何注入防护。行级高特异性正则命中"忽略以上指令/角色劫持/伪造 system 标记/密钥探测/script payload"→ 整行替换为 `[已过滤：疑似提示词注入]` 占位并计数；讨论 AI 安全的正常学术内容不误伤
+- 乱码质量闸门：□/\uFFFD/[UNK]/连续????占比 → warn(3%) 告警 / reject(15%) 拒绝入库（OCR 质量差在源头拦截）
+- 内容 hash 去重：sha256(空白归一化) 入库前查重，重复内容直接返回已有文档（duplicate=true），不再产生重复向量挤占上下文；删除文档同步清理哈希索引；`DOC_DEDUP_ENABLED=false` 或 force 参数可跳过
+- 接入点收敛在 `document.service.addDocument` 单一入口（API 添加/批量/文件上传全覆盖），清洗只做一遍，embedding 与上下文文本一致
+- 测试：`doc-sanitizer.test.js`(8) + `document.service.test.js` 扩至 9 用例（重复/force/删后重建/注入清洗/乱码拒绝）
+
+**21. 跨文档问题分解 + Qdrant 调优 + Embedding A/B（2026-08-24）**
+- 跨文档问题分解（`query-decompose.service.js`，零 LLM 成本）：官方评测 XD 类跨文档题只能命中部分相关文档——"A和B的区别"的 embedding 混合两实体语义。对比类（和/与/vs…的区别|差异）、二选一（还是…哪个更好）、列举类（A、B、C 分别…）拆实体级子查询，与原问题并行检索扩召回池；**reranker 仍按原问题打分，子查询语义偏移不影响精度**；实体清洗截断问句限定语（"华中科技大学的校训有什么"→"华中科技大学"）、纯指代词过滤、上限 3 条。`_dualRetrieve` 升级为多变体检索（原文+改写+子查询），trace 记录 `queryDecompose`。开关 `RAG_QUERY_DECOMPOSE_ENABLED=false`
+- Qdrant payload 索引：连接后为 docId/category 建关键词索引（幂等），元数据过滤从全量扫描变索引查找，`QDRANT_PAYLOAD_INDEX=false` 可关
+- Qdrant int8 标量量化：`QDRANT_QUANTIZATION=int8` 时新建 collection 带 quantization_config（内存约省 75%）；存量 collection 走 updateCollection 补配，需重建后才全量生效（默认关）
+- Embedding A/B 脚本（`offline-embedding-ab.cjs`）：读 ragdata/*.md 构建段落语料，ground_truth 文本反查所属文件得出相关集，离线对比不同 embedding 模型的文件级 Recall@5/MRR/nDCG@5（同语料同查询横向对比公平）；首次跑 bge-base 需联网下载 ~100MB。切换生产模型 = 设 `EMBEDDING_MODEL` + 管理端全量重索引
+
 ### ❌ 尝试但退回
 
 **BM25 Function（2025-07-14）**
@@ -448,6 +476,24 @@ MILVUS_SPARSE_WEIGHT=0.4
 RAG_VECTOR_TOP_K=50
 RAG_RERANK_TOP_K=10
 RAG_MAX_CONTEXT_LENGTH=6000
+
+# 运行时引用校验（防幻觉兜底，2026-08-24）
+RAG_GROUNDING_ENABLED=true
+RAG_GROUNDING_MIN_SUPPORT=0.35   # 句子判定"已溯源"的 bigram 覆盖率阈值
+
+# 跨文档问题分解（对比/列举类拆实体级子查询扩召回）
+RAG_QUERY_DECOMPOSE_ENABLED=true
+RAG_DECOMPOSE_MAX_SUB_QUERIES=3
+
+# 入库清洗与去重（Prompt injection 过滤 + 乱码闸门 + 内容 hash 去重）
+DOC_SANITIZE_ENABLED=true
+DOC_SANITIZE_WARN_UNK_RATIO=0.03
+DOC_SANITIZE_REJECT_UNK_RATIO=0.15
+DOC_DEDUP_ENABLED=true
+
+# Qdrant 调优
+QDRANT_PAYLOAD_INDEX=true        # docId/category 关键词索引（幂等）
+QDRANT_QUANTIZATION=             # 置 int8 开启标量量化（存量 collection 需重建后全量生效）
 
 # OCR / 视觉识别（扫描件 PDF 与图片表格，走 step-1o-turbo-vision，复用 AI_API_KEY）
 OCR_ENABLED=true

@@ -178,6 +178,9 @@ const ragChatStream = async (req, res, next) => {
         res.write(`data: ${JSON.stringify({ traceId: chunk.trace?.traceId || req.traceId, trace: chunk.trace })}\n\n`);
       } else if (chunk.type === 'process') {
         res.write(`data: ${JSON.stringify({ traceId: req.traceId, processCard: chunk.processCard })}\n\n`);
+      } else if (chunk.type === 'grounding') {
+        // 运行时引用校验结果：随收尾下发，前端标注溯源覆盖
+        res.write(`data: ${JSON.stringify({ traceId: req.traceId, grounding: chunk.grounding })}\n\n`);
       } else if (chunk.type === 'content') {
         if (chunk.done) {
           res.write(`data: [DONE]\n\n`);

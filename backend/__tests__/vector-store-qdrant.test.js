@@ -11,6 +11,8 @@ function makeFakeClient() {
   return {
     collectionExists: vi.fn().mockResolvedValue({ exists: true }),
     createCollection: vi.fn().mockResolvedValue({}),
+    createPayloadIndex: vi.fn().mockResolvedValue({}),
+    updateCollection: vi.fn().mockResolvedValue({}),
     upsert: vi.fn().mockImplementation((name, { points }) => {
       pointCount += points.length;
       return { status: 'completed' };
@@ -187,5 +189,65 @@ describe('QdrantVectorStore', () => {
     store._pointCount = 5;
     expect(store._docs.length).toBe(5);
     expect(typeof store._saveSync).toBe('function'); // no-op 兼容
+  });
+
+  // ==================== payload 索引 + 量化 ====================
+
+  it('连接后为 docId/category 创建 payload 索引', async () => {
+    const fields = fakeClient.createPayloadIndex.mock.calls.map(([_, opts]) => opts.field_name);
+    expect(fields).toEqual(expect.arrayContaining(['docId', 'category']));
+    expect(fakeClient.createPayloadIndex).toHaveBeenCalledTimes(2);
+  });
+
+  it('QDRANT_PAYLOAD_INDEX=false 时不创建 payload 索引', async () => {
+    process.env.QDRANT_PAYLOAD_INDEX = 'false';
+    try {
+      const Cls = getQdrantStore();
+      const client = makeFakeClient();
+      vi.spyOn(Cls.prototype, '_createClient').mockReturnValue(client);
+      const s = new Cls();
+      await waitReady(s);
+      expect(client.createPayloadIndex).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.QDRANT_PAYLOAD_INDEX;
+    }
+  });
+
+  it('新建 collection 时 QDRANT_QUANTIZATION=int8 写入量化配置', async () => {
+    process.env.QDRANT_QUANTIZATION = 'int8';
+    try {
+      const Cls = getQdrantStore();
+      const client = makeFakeClient();
+      client.collectionExists.mockResolvedValue({ exists: false });
+      vi.spyOn(Cls.prototype, '_createClient').mockReturnValue(client);
+      const s = new Cls();
+      await waitReady(s);
+      const [name, schema] = client.createCollection.mock.calls[0];
+      expect(name).toBe('wuli_elf_chunks');
+      expect(schema.quantization_config).toEqual({
+        scalar: { type: 'int8', quantile: 0.99, always_ram: true },
+      });
+      // 新建路径不需要 updateCollection
+      expect(client.updateCollection).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.QDRANT_QUANTIZATION;
+    }
+  });
+
+  it('已存在的 collection 配置 int8 时走 updateCollection 补配', async () => {
+    process.env.QDRANT_QUANTIZATION = 'int8';
+    try {
+      const Cls = getQdrantStore();
+      const client = makeFakeClient(); // exists=true
+      vi.spyOn(Cls.prototype, '_createClient').mockReturnValue(client);
+      const s = new Cls();
+      await waitReady(s);
+      expect(client.createCollection).not.toHaveBeenCalled();
+      expect(client.updateCollection).toHaveBeenCalledWith('wuli_elf_chunks', {
+        quantization_config: { scalar: { type: 'int8', quantile: 0.99, always_ram: true } },
+      });
+    } finally {
+      delete process.env.QDRANT_QUANTIZATION;
+    }
   });
 });
