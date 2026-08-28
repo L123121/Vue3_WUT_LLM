@@ -57,6 +57,12 @@ RUN apt-get update \
     && apt-get upgrade -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
+# 运行时不需要包管理器（CMD 为裸 node），移除 npm/npx/corepack——
+# 它们的捆绑依赖（minimatch/tar/glob 等）是基础镜像漏洞扫描的主要来源
+RUN rm -rf /usr/local/lib/node_modules/npm \
+            /usr/local/lib/node_modules/corepack \
+            /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
+
 # ---- 拷贝前端构建产物 ----
 COPY --from=frontend-builder /app/dist ./dist
 
