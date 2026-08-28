@@ -97,6 +97,21 @@ const groundingBadgeClass = computed(() => {
   return 'bg-red-50/80 dark:bg-red-900/20 border-red-100 dark:border-red-800/40 text-red-600 dark:text-red-300';
 });
 
+// token 用量（usage SSE 事件 / 非流式结果写入）：OpenAI 兼容口径 prompt_tokens / completion_tokens
+const usageLabel = computed(() => {
+  const usage = props.message.usage;
+  if (!usage) return '';
+  const prompt = usage.prompt_tokens ?? usage.input_tokens ?? usage.promptTokens;
+  const completion = usage.completion_tokens ?? usage.output_tokens ?? usage.completionTokens;
+  if (!Number.isFinite(Number(prompt)) && !Number.isFinite(Number(completion))) return '';
+  const total = usage.total_tokens ?? (Number(prompt || 0) + Number(completion || 0));
+  const parts = [];
+  if (Number.isFinite(Number(prompt))) parts.push(`输入 ${prompt}`);
+  if (Number.isFinite(Number(completion))) parts.push(`输出 ${completion}`);
+  if (Number.isFinite(Number(total))) parts.push(`共 ${total}`);
+  return `${parts.join(' · ')} tokens`;
+});
+
 // L2 工具调度可视化：message.toolCalls/toolResults（useStreaming onToolCall/onToolResult 写入）
 const toolCalls = computed(() => props.message.toolCalls || []);
 const toolResults = computed(() => props.message.toolResults || []);
@@ -338,6 +353,15 @@ const timeClasses = computed(() => {
           :class="groundingBadgeClass"
         >
           <span class="text-[10px] font-medium">{{ groundingLabel }}</span>
+        </div>
+
+        <!-- token 用量：仅后端返回 usage 时展示（流式收尾 / Agent 非流式路径） -->
+        <div
+          v-if="isModel && !isError && !isStreaming && usageLabel"
+          class="mt-1 text-[10px] text-slate-400 dark:text-gray-500"
+          title="本次回答的 token 消耗（模型服务返回口径）"
+        >
+          {{ usageLabel }}
         </div>
 
         <!-- L2 工具调度卡片：展示 tool_call / tool_result（Agent 路径透明化） -->
