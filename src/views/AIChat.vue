@@ -12,6 +12,8 @@ import MobileMenuButton from '../components/layout/MobileMenuButton.vue';
 import { useSpeechPlayer } from '../composables/useSpeechPlayer.js';
 import { useConversationExport } from '../composables/useConversationExport.js';
 import { useChatScroll } from '../composables/useChatScroll.js';
+import { buildStarterQuestions } from '../utils/starterQuestions.js';
+import { getDocuments } from '../api/rag.js';
 
 const chatStore = useChatStore();
 const toast = useToastStore();
@@ -23,13 +25,26 @@ const text = computed(() => languageStore.tm('aiChat'));
 const { messageListRef, chatBoxRef, focusChatInput, scrollToBottom, scrollToFavoritedMessage } = useChatScroll(favoritesStore);
 const { showExportMenu, copyConversationAsText, exportConversation, exportConversationAsHtml, shareConversation } = useConversationExport(chatStore, toast);
 
-// 空状态示例问题（武理校园场景，点击直接提问）
-const exampleQuestions = [
+// 空状态示例问题：优先从知识库文档动态生成（按类别打散取多样主题），拉取失败退回静态兜底
+const exampleQuestions = ref([
   { icon: Landmark, text: '校园卡丢了怎么补办？' },
   { icon: Library, text: '图书馆期末周几点闭馆？' },
   { icon: GraduationCap, text: '推免保研需要准备哪些材料？' },
   { icon: BookOpen, text: '大二专业课复习怎么规划？' },
-];
+]);
+
+onMounted(async () => {
+  try {
+    const res = await getDocuments();
+    const documents = res?.data?.documents || res?.data || [];
+    const dynamic = buildStarterQuestions(documents, 4);
+    if (dynamic.length >= 3) {
+      exampleQuestions.value = dynamic.map((item) => ({ icon: BookOpen, text: item.text }));
+    }
+  } catch {
+    // 知识库不可用时保持静态兜底，不打扰用户
+  }
+});
 
 watch(() => favoritesStore.pendingScrollMessageId, (id) => {
   scrollToFavoritedMessage(id);
