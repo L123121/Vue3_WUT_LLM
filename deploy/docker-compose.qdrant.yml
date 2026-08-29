@@ -44,7 +44,7 @@ services:
     depends_on:
       - qdrant
     volumes:
-      - backend-data:/app/data              # SQLite 数据库持久化
+      - backend-data:/app/backend/data      # SQLite 数据库持久化（应用数据目录为 /app/backend/data，挂错会导致容器重建后读到空库）
       - uploads-data:/app/backend/uploads   # 上传文件临时目录
       # 热补丁：源码挂载（git pull 后重启容器即生效）
       - ./patches/app.js:/app/backend/src/app.js:ro

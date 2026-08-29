@@ -1,6 +1,6 @@
 # 武理小精灵部署指南
 
-本文档说明如何把当前项目部署到云服务器。当前生产方案基于 **Docker Compose + nginx + Express + Milvus**，文档存储使用 **SQLite**（持久化 volume），无需额外数据库服务。
+本文档说明如何把当前项目部署到云服务器。当前生产方案基于 **Docker Compose + nginx + Express + Qdrant**，文档存储使用 **SQLite**（持久化 volume）。向量检索使用 Qdrant 独立服务（dense 512d + n-gram 稀疏向量，版本固定 v1.12.5）。
 
 ---
 
@@ -18,7 +18,7 @@ backend:3000
    │
    ├── SQLite (/app/data/store.db)  ← 文档原文 + 元数据 + 会话
    │
-   └── Milvus:19530                 ← 512d 稠密 + 稀疏向量
+   └── Qdrant:6333                  ← 512d 稠密 + n-gram 稀疏向量（混合检索）
 ```
 
 相关文件：
@@ -26,7 +26,8 @@ backend:3000
 | 文件 | 作用 |
 | --- | --- |
 | `Dockerfile` | 多阶段构建：先构建 Vue 前端，再打包 Express 运行环境 |
-| `docker-compose.yml` | 编排 nginx、backend、milvus 和持久化 volume |
+| `docker-compose.yml` | CI/CD 标准部署编排：backend + qdrant + 持久化 volume（nginx 默认停用，由宿主机 nginx 服务） |
+| `deploy/docker-compose.qdrant.yml` | 历史手工部署版（含 `patches/` 热补丁挂载与 `qdrant-deps` 依赖目录）。仅在需要热补丁旧镜像时使用，常规部署勿用 |
 | `deploy/.env.production.example` | 生产环境变量模板 |
 | `deploy/nginx.conf` | HTTPS 域名部署配置 |
 | `deploy/nginx.http.conf` | 纯 HTTP / IP 测试配置 |
@@ -38,7 +39,7 @@ backend:3000
 
 ## 前置条件
 
-- Linux 云服务器，推荐 **2C4G** 及以上（Milvus 建议 4G 内存）。
+- Linux 云服务器，推荐 **2C4G** 及以上（需容纳 BGE embedding + reranker 两个本地 ONNX 模型，约 1.5G 内存峰值）。
 - 已安装 Docker 和 Docker Compose V2。
 - 已开放安全组端口：`22`、`80`、`443`。
 - 可选：已备案域名和 SSL 证书。
@@ -79,8 +80,8 @@ vim deploy/.env.production
 | --- | --- |
 | `AI_BASE_URL` / `AI_MODEL` | 模型服务地址和模型名 |
 | `JUDGE_API_KEY` / `JUDGE_MODEL` | LLM-as-judge 独立 Key（可选，默认同 AI_API_KEY） |
-| `MILVUS_ADDRESS` | Milvus 连接地址，默认 `milvus:19530` |
-| `MILVUS_COLLECTION` | 向量集合名，默认 `wuli_elf_chunks` |
+| `QDRANT_URL` | Qdrant 连接地址，默认 `http://qdrant:6333`（compose 内已注入，无需手填） |
+| `EMBEDDING_CACHE_DIR` | 本地模型缓存目录，默认 `/app/.model-cache`（需挂载完整模型文件） |
 
 > `deploy/.env.production` 包含敏感信息，不要提交到 Git。SQLite 无需额外配置，数据自动持久化到 `backend-data` volume。
 
@@ -134,7 +135,8 @@ docker compose -p wuli-elf ps
 docker compose -p wuli-elf logs -f
 ```
 
-首次启动 Milvus 需要拉取镜像和初始化，`start_period` 为 120s，请耐心等待。
+首次启动需拉取 Qdrant v1.12.5 镜像。⚠️ 版本必须固定 v1.12.5：1.13+ 镜像不认旧版 on_disk 存储格式，启动即 panic（2026-08-15 服务器事故）。
+⚠️ `.model-cache` 必须包含完整的 `Xenova/bge-small-zh-v1.5`（embedding）与 `Xenova/bge-reranker-base`（rerank，含 tokenizer.json）模型文件，缺失时 embedding/rerank 会静默降级。
 
 健康检查：
 
@@ -157,7 +159,7 @@ curl http://localhost:3000/api/health
 docker compose -p wuli-elf ps
 docker compose -p wuli-elf logs -f backend
 docker compose -p wuli-elf logs --tail=100 nginx
-docker compose -p wuli-elf logs --tail=50 milvus
+docker compose -p wuli-elf logs --tail=50 qdrant
 ```
 
 ### 重启服务
@@ -264,7 +266,7 @@ docker compose -p wuli-elf up -d
 | `80` | HTTP | 开放，用于访问或证书签发 |
 | `443` | HTTPS | 开放，生产访问入口 |
 | `3000` | Backend | 不对公网开放 |
-| `19530` | Milvus gRPC | 不对公网开放（仅 `127.0.0.1` 监听） |
+| `6333/6334` | Qdrant REST/gRPC | 不对公网开放（仅 `127.0.0.1` 监听） |
 
 ---
 
@@ -315,8 +317,9 @@ aliyun cdn RefreshObjectCaches --ObjectPath https://static.your-domain.com/asset
 - **后端启动失败**：检查 `AI_API_KEY`、`JWT_SECRET` 是否存在。
 - **生产环境 CORS 报错**：检查 `CORS_ORIGIN` 是否包含当前访问域名。
 - **nginx 证书错误**：检查证书文件路径是否与 `deploy/nginx.conf` 一致。
-- **Milvus 连接失败**：检查 `MILVUS_ADDRESS` 是否指向 `milvus:19530`，及 milvus 容器是否完成初始化（`start_period=120s`）。
-- **Milvus 集合未加载**：首次启动后需在 RAG 接口中触发一次检索，自动加载集合。
+- **Qdrant 连接失败**：检查 `QDRANT_URL` 是否指向 `http://qdrant:6333`，及 qdrant 容器是否 Up（`docker compose -p wuli-elf ps`）；后端启动日志应出现「[QdrantStore] 已连接 collection」。
+- **检索排序异常 / rerank 显示 fallback**：reranker 模型文件缺失，检查 `/app/.model-cache/Xenova/bge-reranker-base/` 是否完整（需含 tokenizer.json 与 onnx/ 目录），补齐后重启 backend。
+- **容器重建后知识库/账号「清空」**：确认 backend 的 SQLite 挂载路径是 `/app/backend/data`（应用数据目录），而非 `/app/data`——挂错路径时应用会在镜像层新建空库，数据仍在 `backend-data` volume 中，改回路径重启即可恢复。
 - **上传文件丢失**：确认 `uploads-data` volume 未被删除。
 - **文档数据丢失**：确认 `backend-data` volume 未被删除；SQLite 数据文件位于 `/app/data/store.db`。
 
@@ -326,7 +329,7 @@ aliyun cdn RefreshObjectCaches --ObjectPath https://static.your-domain.com/asset
 
 1. `deploy/.env.production`、SSL 私钥不要提交到仓库。
 2. 生产环境必须配置 `CORS_ORIGIN`，否则后端会拒绝启动。
-3. `backend-data`、`milvus-data`、`uploads-data` 是关键持久化 volume，删除前务必备份。
+3. `backend-data`、`qdrant-storage`、`uploads-data` 是关键持久化 volume，删除前务必备份。
 4. nginx 日志和容器日志已配置轮转上限，但仍建议定期清理旧镜像和备份文件。
-6. Milvus Standalone 包含嵌入式 etcd，单机部署无需额外安装 etcd / minio。
+6. Qdrant 单机模式无需额外的 etcd / minio；SQLite 为单写者模型，仅适合单后端实例。
 7. SQLite 是单写者模型，仅适合单后端实例部署。如需水平扩展，需改用 PostgreSQL / Redis 等网络数据库。
