@@ -10,6 +10,7 @@ export const useMessageStore = defineStore('message', () => {
     // 流式状态（由 useStreaming 管理）
     isLoading: streaming.isLoading,
     currentStreamingId: streaming.currentStreamingId,
+    decisionDraft: streaming.decisionDraft,
     activeStreamingConversationId: streaming.activeStreamingConversationId,
     isConnected: streaming.isConnected,
     isReconnecting: streaming.isReconnecting,

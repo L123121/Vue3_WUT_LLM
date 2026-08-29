@@ -279,6 +279,7 @@ onBeforeUnmount(() => speechPlayer.stop());
       :messages="chatStore.messages"
       :is-loading="chatStore.isLoading"
       :current-streaming-id="chatStore.currentStreamingId"
+      :decision-draft="chatStore.decisionDraft"
       @copy="handleCopy"
       @focus-input="focusChatInput"
     />

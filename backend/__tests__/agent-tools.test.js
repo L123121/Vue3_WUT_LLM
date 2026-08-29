@@ -320,7 +320,7 @@ describe('AgentService（单轮工具调度，原生 function calling）', () =>
     expect(done).toBeTruthy();
   });
 
-  it('chatStream：LLM 未调工具（直接回答）时透传流式内容', async () => {
+  it('chatStream：LLM 未调工具（直接回答）时实时透传 decision 内容', async () => {
     const fakeAi = {
       async *getCompletionStream(message, history, opts) {
         yield { content: '直接回答，不需要工具', done: false };
@@ -334,8 +334,39 @@ describe('AgentService（单轮工具调度，原生 function calling）', () =>
     }
     const contents = events.filter(e => e.type === 'content').map(e => e.content).join('');
     expect(contents).toContain('直接回答，不需要工具');
+    // 决策阶段内容实时透传且带 decision 标记（前端据此渲染到思考草稿区）
+    const decisionChunks = events.filter(e => e.type === 'content' && e.decision === true);
+    expect(decisionChunks.length).toBeGreaterThan(0);
+    expect(decisionChunks.map(c => c.content).join('')).toContain('直接回答，不需要工具');
+    // 直答内容只透传一次：不再有"整段重发"的重复 content 事件
+    expect(events.filter(e => e.type === 'content' && e.content === '直接回答，不需要工具')).toHaveLength(1);
     // 未调工具 → 无 tool_call/tool_result 事件
     expect(events.some(e => e.type === 'tool_call' && e.tool_call.name !== 'direct')).toBe(false);
+  });
+
+  it('chatStream：决策文本 + tool_calls 时草稿被工具调用取代（不重复下发）', async () => {
+    const fakeAi = {
+      async *getCompletionStream(message, history, opts) {
+        if (opts.tools && opts.tools.length > 0) {
+          // 决策阶段先输出文本（草稿），再发起工具调用
+          yield { content: '让我先搜索一下', done: false };
+          yield { content: '', done: true, tool_calls: [{ id: 's1', function: { name: 'search_knowledge_base', arguments: '{"query":"图书馆"}' } }] };
+          return;
+        }
+        yield { content: '最终回答', done: false };
+        yield { content: '', done: true };
+      },
+    };
+    const svc = new agentMod.AgentService(fakeAi);
+    const events = [];
+    for await (const ev of svc.chatStream('图书馆几点开门', [])) {
+      events.push(ev);
+    }
+    // 草稿文本以 decision 标记透传过（前端先渲染到草稿区）
+    expect(events.some(e => e.type === 'content' && e.decision === true && e.content === '让我先搜索一下')).toBe(true);
+    // 非流式 drain（chat()）的 reply 不应包含被废弃的草稿
+    const reply = await svc.chat('图书馆几点开门', []);
+    expect(reply.reply).toBe('最终回答');
   });
 
   it('chatStream：两轮工具调用（第 1 轮工具 → 第 2 轮再决策）', async () => {

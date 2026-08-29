@@ -175,17 +175,24 @@ class ConversationOrchestrator {
 
     if (prepared.route === "agent" && this.agentService.enabled) {
       let agentFailed = false;
+      // 决策草稿（decision 标记）被 tool_call 取代时不计入记忆存储的最终回答
+      let agentReply = "";
+      let agentDecisionDraft = "";
       for await (const event of this.agentService.chatStream(message, prepared.history, context)) {
         if (event.type === "error") {
           agentFailed = true;
           logEvent("warn", "conversation_agent_stream_fallback", { error: event.error?.message });
           break;
         }
-        if (event.type === "content" && !event.done) fullReply += event.content || "";
+        if (event.type === "content" && !event.done) {
+          if (event.decision) agentDecisionDraft += event.content || "";
+          else { agentReply += event.content || ""; agentDecisionDraft = ""; }
+        }
+        if (event.type === "tool_call") agentDecisionDraft = "";
         yield event.type === "trace" ? { ...event, channel: "agent" } : event;
       }
       if (!agentFailed) {
-        this._saveMemory(context.userId, message, fullReply);
+        this._saveMemory(context.userId, message, agentReply + agentDecisionDraft);
         return;
       }
       fullReply = "";
