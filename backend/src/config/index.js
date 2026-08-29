@@ -129,6 +129,9 @@ module.exports = {
     searchTopK: parseInt(process.env.RAG_VECTOR_TOP_K, 10) || 50,
     keywordTopK: parseInt(process.env.RAG_KEYWORD_TOP_K, 10) || 20,
     rerankTopK: parseInt(process.env.RAG_RERANK_TOP_K, 10) || 10,
+    // cross-encoder 精排开关：小内存机器（2G）可关——融合归一化修复后排序
+    // 不再依赖 reranker，关闭可省约 300MB 内存与单次 ~2s 延迟，排序精度略降
+    rerankEnabled: process.env.RAG_RERANK_ENABLED !== 'false',
     maxContextLength: parseInt(process.env.RAG_MAX_CONTEXT_LENGTH, 10) || 6000,
     minSourceScore: Number.parseFloat(process.env.RAG_MIN_SOURCE_SCORE || '0.03'),
     vectorWeight: Number.parseFloat(process.env.RAG_VECTOR_WEIGHT || '0.6'),
