@@ -51,9 +51,9 @@ export const handleAuthError = async () => {
     // 登出请求失败不影响本地清理
   }
   localStorage.removeItem('user');
-  localStorage.removeItem('chat_cache');
+  // ⚠️ 不清除会话缓存（chat_cache:<userId>）：401 时无法完成同步，
+  // 缓存里可能留着未上传消息的唯一副本，保留到下次该用户登录后再迁移。
   localStorage.removeItem('chat_current_conversation_id');
-  localStorage.removeItem('chat_cleared_conversations');
   await authErrorHandler?.();
 };
 

@@ -37,6 +37,8 @@ const handleLogout = async () => {
     return;
   }
   chatStore.resetConversationState();
+  // 同步已确认成功，此时才能清缓存；清的是当前用户命名空间（chat_cache:<userId>）
+  chatStore.clearPersistedCache();
   await authStore.logout();
   await router.replace('/login');
 };
