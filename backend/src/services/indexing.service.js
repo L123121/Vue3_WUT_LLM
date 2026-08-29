@@ -77,8 +77,25 @@ class IndexingService {
    */
   _splitParagraphs(text) {
     if (!text) return [];
-    const rawParas = text.split(/\n\n+/).map(p => p.trim()).filter(p => p.length > 0);
+    const rawParas = this._stripFrontmatter(String(text)).split(/\n\n+/).map(p => p.trim()).filter(p => p.length > 0);
     return this._mergeBySection(rawParas);
+  }
+
+  /**
+   * 剥离 Markdown YAML frontmatter（文件头的 --- 元数据块）。
+   * 该块会被切成独立的"元数据父段落"（created/source/category/tags），
+   * 检索时凭查询词的稀有字匹配拿到高稀疏分，挤占真实内容的上下文位置
+   * （实测表现为模型只拿到"标题 + 元数据"就作答）。
+   */
+  _stripFrontmatter(text) {
+    const lines = String(text).split('\n');
+    if ((lines[0] || '').trim() !== '---') return text;
+    for (let i = 1; i < Math.min(lines.length, 40); i++) {
+      if ((lines[i] || '').trim() === '---') {
+        return lines.slice(i + 1).join('\n').trim();
+      }
+    }
+    return text;
   }
 
   /**
@@ -87,11 +104,17 @@ class IndexingService {
   _mergeBySection(paragraphs) {
     if (!paragraphs.length) return [];
 
-    const sectionHeadingRe = /^[一二三四五六七八九十]+[、.．]/;
-    const hasSectionHeadings = paragraphs.some(p => sectionHeadingRe.test(p));
+    // 章节边界同时接受：中文序号标题（"一、"/"2."，DOCX 转文本常见）
+    // 与 Markdown 标题（"## 一、xxx"/"### xxx"）。
+    // 不认 Markdown 标题时，md 文档会退化成逐行父段落：纯标题行单独成段，
+    // 检索时凭标题与查询词的字面重叠抢占上下文，正文反而进不来。
+    const sectionHeadingRe = /^(?:#{1,6}\s+)?[一二三四五六七八九十]+[、.．]/;
+    const mdHeadingRe = /^#{1,6}\s+\S/;
+    const isHeading = (p) => sectionHeadingRe.test(p) || mdHeadingRe.test(p);
+    const hasSectionHeadings = paragraphs.some(isHeading);
 
     if (hasSectionHeadings) {
-      return this._mergeBySectionHeadings(paragraphs, sectionHeadingRe);
+      return this._mergeBySectionHeadings(paragraphs, isHeading);
     }
 
     // 无章节标题 → 合并相邻短段落
@@ -102,7 +125,7 @@ class IndexingService {
    * 按章节标题合并：两个标题之间的所有段落合并为一个语义块
    * 封面/目录等标题前的内容单独成块
    */
-  _mergeBySectionHeadings(paragraphs, headingRe) {
+  _mergeBySectionHeadings(paragraphs, isHeading) {
     const merged = [];
     let buffer = [];
 
@@ -114,7 +137,7 @@ class IndexingService {
     };
 
     for (const p of paragraphs) {
-      if (headingRe.test(p)) {
+      if (isHeading(p)) {
         flushBuffer();      // 上一个章节结束
         buffer.push(p);     // 标题开始新章节
       } else {

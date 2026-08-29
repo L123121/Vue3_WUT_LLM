@@ -118,7 +118,7 @@ class RerankerService {
       model = await this._loadModel();
     } catch (err) {
       console.warn('[Reranker] 模型加载失败，退回原始排序:', err.message);
-      return candidates.slice(0, topK).map(c => ({ ...c, _rerankScore: c.score || 0, _rerankModel: 'fallback' }));
+      return this._fallbackRank(candidates, topK);
     }
 
     const { tokenizer, model: rerankerModel } = model;
@@ -168,8 +168,25 @@ class RerankerService {
       return allResults.slice(0, topK);
     } catch (err) {
       console.warn('[Reranker] 推理失败，退回原始排序:', err.message);
-      return candidates.slice(0, topK).map(c => ({ ...c, _rerankScore: c.score || 0, _rerankModel: 'fallback' }));
+      return this._fallbackRank(candidates, topK);
     }
+  }
+
+  /**
+   * fallback 排序（模型缺失/推理失败时）
+   *
+   * 不能只按原始分数截断：纯 Markdown 标题行（如 "# 推免保研准备与材料清单"）
+   * 与查询词字面重叠度极高，会压过真正含内容的段落，导致 LLM 只拿到标题作答。
+   * 对"仅标题行"或不足 12 字的候选降权后再排序。
+   */
+  _fallbackRank(candidates, topK) {
+    const demoted = candidates.map(c => {
+      const text = String(c.text || '').trim();
+      const isHeadingOnly = /^#{1,6}\s*\S{0,30}$/.test(text) || text.length < 12;
+      return { ...c, _rerankScore: (c.score || 0) * (isHeadingOnly ? 0.3 : 1), _rerankModel: 'fallback' };
+    });
+    demoted.sort((a, b) => (b._rerankScore || 0) - (a._rerankScore || 0));
+    return demoted.slice(0, topK);
   }
 }
 

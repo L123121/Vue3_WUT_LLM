@@ -21,12 +21,16 @@ const UPSERT_MAX_RETRY = 3;
  *   - point id：原始字符串 id（docId_sent_i）确定性哈希为 uint32，冲突时线性探测
  *   - search：dense + sparse 两次查询，客户端按 weights 加权融合（与文件版评分语义一致）
  *   - 评分：score = vectorWeight·denseCosine + sparseWeight·sparseDot，附带 _vectorScore/_sparseScore/_hybridScore
+ *   - ⚠️ 两类分数原始量纲差约两个数量级（dense 余弦 ≤1，sparse IDF 点积可达数十），
+ *     加权前必须各自除以本通道最大分归一化，否则 0.6/0.4 权重形同虚设、稠密通道被淹没
  */
 class QdrantVectorStore {
   constructor(documentProvider = null) {
     const vectorConfig = config.vectorStore || {};
     this.vectorWeight = vectorConfig.vectorWeight ?? 0.6;
     this.sparseWeight = vectorConfig.sparseWeight ?? 0.4;
+    // 通道内归一化开关（RAG_FUSION_NORM=false 回退原始加权行为，供 A/B 对比）
+    this.fusionNorm = vectorConfig.fusionNorm ?? true;
     this.url = vectorConfig.qdrantUrl || 'http://localhost:6333';
     this.apiKey = vectorConfig.qdrantApiKey || '';
     this.collectionName = vectorConfig.collectionName || DEFAULT_COLLECTION;
@@ -321,12 +325,32 @@ class QdrantVectorStore {
     for (const p of sparseRes.points || []) add(p, 0, p.score || 0);
 
     const scored = [...merged.values()].map(item => {
-      const score = vectorWeight * item._vectorScore + sparseWeight * item._sparseScore;
-      return { ...item, score, _hybridScore: score, _retrievalChannels: item._retrievalChannels.length ? item._retrievalChannels : ['vector', 'sparse'] };
+      const rawScore = vectorWeight * item._vectorScore + sparseWeight * item._sparseScore;
+      return {
+        ...item,
+        score: rawScore,
+        _hybridScore: rawScore,
+        _retrievalChannels: item._retrievalChannels.length ? item._retrievalChannels : ['vector', 'sparse'],
+      };
     });
 
-    scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, topK);
+    // 通道内归一化后再加权：dense 余弦 ≤1，sparse IDF 点积可达数十，
+    // 直接加权和会被稀疏通道独占（"0.6/0.4 权重"名存实亡）。
+    // 各自除以本通道最大分（归一到 [0,1]）后，权重才真正表达两通道的相对重要性。
+    let fused = scored;
+    if (this.fusionNorm) {
+      const maxDense = Math.max(0, ...scored.map(item => item._vectorScore));
+      const maxSparse = Math.max(0, ...scored.map(item => item._sparseScore));
+      fused = scored.map(item => {
+        const denseNorm = maxDense > 0 ? item._vectorScore / maxDense : 0;
+        const sparseNorm = maxSparse > 0 ? item._sparseScore / maxSparse : 0;
+        const score = vectorWeight * denseNorm + sparseWeight * sparseNorm;
+        return { ...item, score, _hybridScore: score };
+      });
+    }
+
+    fused.sort((a, b) => b.score - a.score);
+    return fused.slice(0, topK);
   }
 
   async deleteByDocId(docId) {

@@ -110,7 +110,7 @@ describe('QdrantVectorStore', () => {
     expect(await store.count()).toBe(2);
   });
 
-  it('search 融合 dense+sparse：score = 0.6·dense + 0.4·sparse', async () => {
+  it('search 融合 dense+sparse：通道内归一化后 0.6·dense + 0.4·sparse', async () => {
     // dense 路返回 c1（0.9）+ c2（0.6）
     fakeClient.query
       .mockResolvedValueOnce({
@@ -128,15 +128,68 @@ describe('QdrantVectorStore', () => {
 
     const result = await store.search({ dense: [1, 0, 0], sparse: { 100: 1 } }, 10);
 
-    // c1: 0.6·0.9 = 0.54；c2: 0.6·0.6 + 0.4·0.8 = 0.68 → c2 排第一
+    // 归一化：maxDense=0.9、maxSparse=0.8
+    // c1: 0.6·(0.9/0.9) = 0.6；c2: 0.6·(0.6/0.9) + 0.4·(0.8/0.8) = 0.8 → c2 排第一
     expect(result).toHaveLength(2);
     expect(result[0].id).toBe('c2');
     expect(result[0]._vectorScore).toBeCloseTo(0.6);
     expect(result[0]._sparseScore).toBeCloseTo(0.8);
-    expect(result[0].score).toBeCloseTo(0.68);
+    expect(result[0].score).toBeCloseTo(0.8);
     expect(result[1].id).toBe('c1');
-    expect(result[1].score).toBeCloseTo(0.54);
+    expect(result[1].score).toBeCloseTo(0.6);
     expect(result[0]._retrievalChannels).toEqual(['vector', 'sparse']);
+  });
+
+  it('search 归一化使稀疏大分数量纲不再淹没稠密通道', async () => {
+    // c1：dense 强命中（0.9）无 sparse；c2：稀疏 rare-token 大分（40）
+    // 旧原始加权和下 c2 = 0.4·40 = 16 碾压 c1 = 0.54（稠密通道形同虚设）
+    fakeClient.query
+      .mockResolvedValueOnce({
+        points: [
+          { id: 111, score: 0.9, payload: { id: 'c1', docId: 'doc-a', parentId: 'doc-a_para_0', parentText: '材料清单正文', title: 'A', category: '教务', chunkIndex: 0, text: '成绩单、在读证明、中英文简历、个人陈述' } },
+          { id: 222, score: 0.2, payload: { id: 'c2', docId: 'doc-b', parentId: 'doc-b_para_0', parentText: '标题', title: 'B', category: '教务', chunkIndex: 0, text: '推免保研准备与材料清单' } },
+        ],
+      })
+      .mockResolvedValueOnce({
+        points: [
+          { id: 222, score: 40, payload: { id: 'c2', docId: 'doc-b', parentId: 'doc-b_para_0', parentText: '标题', title: 'B', category: '教务', chunkIndex: 0, text: '推免保研准备与材料清单' } },
+        ],
+      });
+
+    const result = await store.search({ dense: [1, 0, 0], sparse: { 100: 1 } }, 10);
+
+    // 归一化后：c1 = 0.6·(0.9/0.9) = 0.6 > c2 = 0.6·(0.2/0.9) + 0.4·1 = 0.533
+    expect(result[0].id).toBe('c1');
+    expect(result[0].score).toBeCloseTo(0.6);
+    expect(result[1].score).toBeCloseTo(0.6 * (0.2 / 0.9) + 0.4, 3);
+  });
+
+  it('search 在 RAG_FUSION_NORM=false 时回退原始加权和', async () => {
+    process.env.RAG_FUSION_NORM = 'false';
+    QdrantVectorStore = getQdrantStore();
+    vi.spyOn(QdrantVectorStore.prototype, '_createClient').mockReturnValue(fakeClient);
+    const rawStore = new QdrantVectorStore();
+    await waitReady(rawStore);
+    delete process.env.RAG_FUSION_NORM;
+
+    fakeClient.query
+      .mockResolvedValueOnce({
+        points: [
+          { id: 111, score: 0.9, payload: { id: 'c1', docId: 'doc-a', parentId: 'doc-a_para_0', parentText: '段落', title: 'A', category: '教务', chunkIndex: 0, text: '内容' } },
+        ],
+      })
+      .mockResolvedValueOnce({
+        points: [
+          { id: 222, score: 40, payload: { id: 'c2', docId: 'doc-b', parentId: 'doc-b_para_0', parentText: '段落', title: 'B', category: '教务', chunkIndex: 0, text: '内容' } },
+        ],
+      });
+
+    const result = await rawStore.search({ dense: [1, 0, 0], sparse: { 100: 1 } }, 10);
+
+    // 旧行为：c2 = 0.4·40 = 16 碾压 c1 = 0.6·0.9 = 0.54
+    expect(result[0].id).toBe('c2');
+    expect(result[0].score).toBeCloseTo(16);
+    expect(result[1].score).toBeCloseTo(0.54);
   });
 
   it('search 支持 metadata 过滤（category）', async () => {
