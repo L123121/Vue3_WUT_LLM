@@ -304,7 +304,8 @@ const listFeedback = async (req, res, next) => {
     const pageSize = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 200);
     const keyword = String(q || '').trim().toLowerCase();
 
-    const feedbackList = await getAllFeedback()
+    // 注意括号位置：必须先 await 取到数组再链式 filter（此前误将 .filter 链在 Promise 上导致 500）
+    const feedbackList = (await getAllFeedback())
       .filter((item) => !rating || item.rating === rating)
       .filter((item) => {
         if (!keyword) return true;
