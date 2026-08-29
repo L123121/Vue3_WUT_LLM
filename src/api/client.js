@@ -100,23 +100,4 @@ export const apiDelete = async (path, options = {}) => {
   return handleResponse(response);
 };
 
-// 无 JSON 序列化的 POST（用于流式请求等自定义场景）
-export const apiPostRaw = async (path, body, options = {}) => {
-  const { timeout, signal, ...rest } = options;
-  delete rest.headers;
-  const requestOptions = {
-    ...fetchOpts,
-    method: 'POST',
-    headers: {
-      ...fetchOpts.headers,
-      ...(options.headers || {}),
-    },
-    signal: signal || AbortSignal.timeout(timeout || DEFAULT_TIMEOUT),
-    ...rest,
-  };
-  if (body !== undefined) requestOptions.body = JSON.stringify(body);
-  const response = await fetch(`${API_URL}${path}`, requestOptions);
-  return handleResponse(response);
-};
-
 export { API_BASE, API_URL, fetchOpts, DEFAULT_TIMEOUT };
