@@ -367,6 +367,13 @@ chat.store（聚合层）→ 页面统一接口
 - Qdrant int8 标量量化：`QDRANT_QUANTIZATION=int8` 时新建 collection 带 quantization_config（内存约省 75%）；存量 collection 走 updateCollection 补配，需重建后才全量生效（默认关）
 - Embedding A/B 脚本（`offline-embedding-ab.cjs`）：读 ragdata/*.md 构建段落语料，ground_truth 文本反查所属文件得出相关集，离线对比不同 embedding 模型的文件级 Recall@5/MRR/nDCG@5（同语料同查询横向对比公平）；首次跑 bge-base 需联网下载 ~100MB。切换生产模型 = 设 `EMBEDDING_MODEL` + 管理端全量重索引
 
+**22. 生产检索失效三连修：模型静默降级 + 融合量纲错配 + md 切片碎片化（2026-08-29）**
+- 问题：生产（阿里云 ECS）问"推免保研需要准备哪些材料？"返回空材料卡片。排查链：① 服务器 `.model-cache` 为空 → embedding/reranker **双双静默降级**（embedding 退 n-gram 哈希向量但 model 标签仍谎报 "BGE-small-zh:local-onnx"；rerank 退原始排序），入库与查询向量全是 n-gram，稠密通道形同虚设；② qdrant 版 weighted 融合用**原始分直接加权**（`0.6·dense + 0.4·sparse`），sparse IDF 点积原始分（可达数十）量级碾压 dense 余弦（≤1），权重名存实亡——文档标题行凭稀有词稀疏分（17.08）霸榜，最终上下文仅 2 父段/228 字符（标题+frontmatter）；③ md 文件 YAML frontmatter 被切成元数据父段落、Markdown 标题行退化为独立父段落，加剧霸榜
+- 修复：上传 `bge-small-zh-v1.5` + `bge-reranker-base` 模型文件到服务器并全量重索引（2446 向量）；qdrant 融合加**通道内归一化**（各除以本通道最大分，`RAG_FUSION_NORM=false` 可回退）；indexing 剥离 YAML frontmatter + Markdown 标题纳入章节合并；reranker fallback 对纯标题/超短候选降权 0.3
+- 效果：同问复测上下文 228 → **6099** 字符、父段 2 → 6，回答从空卡片变为完整官方材料清单（申请表/承诺书/CET-4 成绩/教授推荐书等 11 项）
+- ⚠️ 教训：模型文件缺失是**静默降级**（console.warn + 伪造的模型标签），健康检查全绿——生产部署后应巡检 "[Embedding] 本地模型加载失败" 日志；文件后端 weighted 融合为历史评测复现保留原样（其默认 RRF 免疫量纲问题）
+- 测试：vector-store-qdrant.test.js 融合归一化用例（含开关回退）、indexing.chunking.test.js 新增 6 用例；后端全量 357 用例通过
+
 ### ❌ 尝试但退回
 
 **BM25 Function（2025-07-14）**

@@ -104,6 +104,9 @@ module.exports = {
     // 混合检索融合方式：weighted（默认，0.6/0.4 加权打分，官方评测优于 RRF）
     // | rrf（倒数排名融合，RAG_FUSION=rrf 可切换，2026-08-09 实测 Recall 74.5% vs 加权 80.7%）
     fusion: process.env.RAG_FUSION || 'weighted',
+    // 融合前通道内归一化：sparse IDF 点积原始分（可达数十）量级远大于 dense 余弦（≤1），
+    // 不归一化时 0.6/0.4 权重形同虚设（稠密通道被淹没）。RAG_FUSION_NORM=false 回退原始行为
+    fusionNorm: process.env.RAG_FUSION_NORM !== 'false',
     // payload 索引：docId/category 建关键词索引，元数据过滤从全量扫描变为索引查找
     payloadIndexEnabled: process.env.QDRANT_PAYLOAD_INDEX !== 'false',
     // 标量量化（QDRANT_QUANTIZATION=int8）：向量内存约省 75%，需重建 collection 后全量生效
