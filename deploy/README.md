@@ -82,6 +82,7 @@ vim deploy/.env.production
 | `JUDGE_API_KEY` / `JUDGE_MODEL` | LLM-as-judge 独立 Key（可选，默认同 AI_API_KEY） |
 | `QDRANT_URL` | Qdrant 连接地址，默认 `http://qdrant:6333`（compose 内已注入，无需手填） |
 | `EMBEDDING_CACHE_DIR` | 本地模型缓存目录，默认 `/app/.model-cache`（需挂载完整模型文件） |
+| `RAG_RERANK_ENABLED` | cross-encoder 精排开关，默认 `true`；2G 内存机器可设 `false` 关闭（省约 300MB 内存与单次 ~2s 延迟，排序精度略降） |
 
 > `deploy/.env.production` 包含敏感信息，不要提交到 Git。SQLite 无需额外配置，数据自动持久化到 `backend-data` volume。
 
