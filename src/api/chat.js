@@ -7,7 +7,7 @@ const HEARTBEAT_INTERVAL = 30000;
 const HEARTBEAT_TIMEOUT = 10000;
 const STREAM_STALL_TIMEOUT = 60000; // 60s without data = stalled
 
-import { apiGet, apiPost, fetchOpts } from './client.js';
+import { apiPost, fetchOpts } from './client.js';
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -117,33 +117,6 @@ const startHeartbeat = () => {
 
 connectionManager.loadPendingMessages();
 startHeartbeat();
-
-// Non-streaming message
-export const sendMessageToBackend = async (message, history = [], retries = MAX_RETRIES) => {
-  try {
-    const response = await fetch(API_URL, {
-      ...fetchOpts,
-      method: 'POST',
-      body: JSON.stringify({ message, history }),
-    });
-
-    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-
-    const data = await response.json();
-    connectionManager.setConnected(true);
-    return data.data.reply || '抱歉，我没有收到回复。';
-  } catch (error) {
-    console.error('Chat API Error:', error);
-    connectionManager.setConnected(false);
-
-    if (retries > 0) {
-      const retryDelay = getExponentialDelay(MAX_RETRIES - retries);
-      await delay(retryDelay);
-      return sendMessageToBackend(message, history, retries - 1);
-    }
-    throw error;
-  }
-};
 
 // Streaming message with stall detection
 export const sendMessageStream = async (message, history = [], callbacks, options = {}) => {
@@ -310,16 +283,7 @@ export const sendMessageStream = async (message, history = [], callbacks, option
   }
 };
 
-export const fetchUsageStats = async (hours = 24) => {
-  const response = await apiGet(`/usage?hours=${hours}`);
-  if (!response.ok) throw new Error(`Usage API error: ${response.status}`);
-
-  const payload = await response.json();
-  if (!payload?.success) throw new Error(payload?.error || 'Failed to fetch usage data');
-
-  return payload.data;
-};
-
+// Streaming message with stall detection
 export const uploadChatFile = async (file) => {
   const formData = new FormData();
   formData.append('file', file);

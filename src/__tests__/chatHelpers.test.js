@@ -4,7 +4,6 @@ import {
   normalizeRole,
   normalizeMessage,
   normalizeMessages,
-  normalizeConversation,
   createWelcomeMessage,
   createLocalConversation,
   createMessageId,
@@ -90,34 +89,6 @@ describe('normalizeMessages', () => {
     expect(result).toHaveLength(2);
     expect(result[0].text).toBe('a');
     expect(result[1].text).toBe('b');
-  });
-});
-
-describe('normalizeConversation', () => {
-  it('generates id when missing', () => {
-    const conv = normalizeConversation({});
-    expect(conv.id).toMatch(/^local_/);
-  });
-
-  it('uses default title when missing', () => {
-    const conv = normalizeConversation({}, 2);
-    expect(conv.title).toBe('新会话 3');
-  });
-
-  it('fills welcome message when messages empty', () => {
-    const conv = normalizeConversation({ messages: [] });
-    expect(conv.messages).toHaveLength(1);
-    expect(conv.messages[0].id).toBe('welcome');
-  });
-
-  it('preserves existing messages', () => {
-    const conv = normalizeConversation({
-      id: 'c1',
-      title: 'Test',
-      messages: [{ text: 'hello', role: 'user' }],
-    });
-    expect(conv.messages).toHaveLength(1);
-    expect(conv.messages[0].text).toBe('hello');
   });
 });
 

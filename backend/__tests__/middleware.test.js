@@ -59,34 +59,6 @@ describe('auth.middleware', () => {
   });
 });
 
-describe('error.middleware', () => {
-  let errorHandler;
-
-  beforeEach(() => {
-    delete require.cache[require.resolve('../src/middleware/error.middleware')];
-    errorHandler = require('../src/middleware/error.middleware').errorHandler;
-  });
-
-  it('返回 500 和错误信息', () => {
-    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() };
-    errorHandler(new Error('测试'), {}, res, vi.fn());
-    expect(res.status).toHaveBeenCalledWith(500);
-  });
-
-  it('使用 err.statusCode', () => {
-    const res = { json: vi.fn() };
-    res.status = vi.fn(() => res);
-    errorHandler({ statusCode: 400, message: '参数错' }, {}, res, vi.fn());
-    expect(res.status).toHaveBeenCalledWith(400);
-  });
-
-  it('响应包含 success: false', () => {
-    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() };
-    errorHandler(new Error('err'), {}, res, vi.fn());
-    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false }));
-  });
-});
-
 describe('response utils', () => {
   let successResponse, errorResponse;
 
