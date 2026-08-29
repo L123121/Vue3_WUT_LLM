@@ -66,6 +66,10 @@ export function useStreaming() {
   const isConnected = ref(true);
   const isReconnecting = ref(false);
   const reconnectAttempt = ref(0);
+  // agent 决策阶段的"思考草稿"：实时透传的内容先落在这里渲染；
+  // 出现 tool_call 则丢弃（前端收起草稿显示过程卡片），直接回答则在
+  // done 时转正为消息正文。详见 agent.service chatStream。
+  const decisionDraft = ref('');
 
   let currentAbortController = null;
   // 当前正在流式的会话 id（响应式，供 store 层在切换会话时判断是否需中止）
@@ -137,6 +141,7 @@ export function useStreaming() {
   };
 
   const cleanup = () => {
+    decisionDraft.value = '';
     cancelPendingRaf();
     if (visibilityHandler) {
       document.removeEventListener('visibilitychange', visibilityHandler);
@@ -234,6 +239,7 @@ export function useStreaming() {
     convStore.scheduleSaveCache(true);
 
     isLoading.value = true;
+    decisionDraft.value = '';
     activeStreamingConversationId.value = conversationId;
     currentAbortController = new AbortController();
 
@@ -269,7 +275,7 @@ export function useStreaming() {
       const markResolved = () => { resolved = true; clearTimeout(safetyTimeout); };
 
       const callbacks = {
-        onChunk: (content) => {
+        onChunk: (content, meta) => {
           // 切换会话自中止检测：用户已切到别的会话时，停止向旧会话写消息并中止请求，
           // 否则 currentStreamingId 仍指向旧会话消息，新会话 UI 状态会错乱
           if (convStore.currentConversationId !== conversationId) {
@@ -277,6 +283,15 @@ export function useStreaming() {
             abortCurrentRequest();
             return;
           }
+          // agent 决策阶段内容 → 写入思考草稿区（不进消息正文）；
+          // 直答回答也走这里，done 时草稿转正为正文
+          if (meta?.decision) {
+            decisionDraft.value += content;
+            onStreamEvent?.('chunk', content);
+            return;
+          }
+          // 非 decision 内容（RAG/chat 路径或 agent 收尾生成）→ 取代草稿，进入正文
+          decisionDraft.value = '';
           // 首字上屏埋点：第一个 chunk 到达时记录时间
           if (!firstChunkReceived) {
             firstChunkReceived = true;
@@ -317,6 +332,8 @@ export function useStreaming() {
           updateMessage(convStore, conversationId, aiMsgId, (m) => ({ ...m, intent: intent || m.intent }));
         },
         onToolCall: (toolCall) => {
+          // 决策草稿被工具调用取代 → 收起草稿，前端展示过程卡片
+          decisionDraft.value = '';
           updateMessage(convStore, conversationId, aiMsgId, (m) => ({
             ...m,
             toolCalls: [...(m.toolCalls || []), toolCall],
@@ -373,6 +390,15 @@ export function useStreaming() {
               return { ...m, text: newText, content: newText };
             });
           }
+          // 直答回答：决策草稿即正文，done 时转正
+          if (decisionDraft.value) {
+            const draftText = decisionDraft.value;
+            decisionDraft.value = '';
+            updateMessage(convStore, conversationId, aiMsgId, (m) => {
+              const newText = getMessageText(m) + draftText;
+              return { ...m, text: newText, content: newText };
+            });
+          }
           if (conv && (conv.title.startsWith('新会话') || conv.title === '默认会话')) {
             const userText = trimmedText;
             if (userText) {
@@ -395,6 +421,7 @@ export function useStreaming() {
           reconnectAttempt.value = 0;
           activeStreamingConversationId.value = null;
           currentAbortController = null;
+          decisionDraft.value = '';
           convStore.scheduleSaveCache(true);
           onStreamEvent?.('done');
           markResolved();
@@ -403,6 +430,7 @@ export function useStreaming() {
         onError: (error) => {
           console.debug('[Stream] onError callback fired:', error.message);
           cancelPendingRaf();
+          decisionDraft.value = '';
 
           // 空内容的 AI 消息标记为错误
           updateMessage(convStore, conversationId, aiMsgId, (m) => {
@@ -424,6 +452,7 @@ export function useStreaming() {
         },
         onAbort: () => {
           cancelPendingRaf();
+          decisionDraft.value = '';
           isLoading.value = false;
           isReconnecting.value = false;
           activeStreamingConversationId.value = null;
@@ -473,6 +502,7 @@ export function useStreaming() {
   };
 
   const abortCurrentRequest = () => {
+    decisionDraft.value = ''; // 中断即丢弃未转正的思考草稿
     // 中断可能由「切换会话」触发：被中断的会话随即不再是最当前会话，
     // 先记下它的 id，中断后定向补一次立即保存 + 后端同步，
     // 否则半截消息只会留在本地缓存、永远同步不到后端
@@ -501,6 +531,7 @@ export function useStreaming() {
     isConnected,
     isReconnecting,
     reconnectAttempt,
+    decisionDraft,
     sendMessage,
     retryMessage,
     editAndResendMessage,

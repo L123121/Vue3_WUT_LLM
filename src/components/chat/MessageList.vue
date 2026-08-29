@@ -9,6 +9,8 @@ const props = defineProps({
   messages: { type: Array, default: () => [] },
   isLoading: Boolean,
   currentStreamingId: { type: String, default: '' },
+  // agent 决策草稿：仅流式中的气泡展示，tool_call 后收起、done 后转正
+  decisionDraft: { type: String, default: '' },
 });
 
 const emit = defineEmits(['copy', 'focus-input']);
@@ -104,7 +106,13 @@ defineExpose({ scrollToBottom, shouldAutoScroll });
       @scroll="handleScroll"
     >
       <div v-for="(item, index) in messages" :key="item.id" :id="`msg-${item.id}`" :data-index="index">
-        <MessageBubble :message="item" :question-message="getPreviousUserMessage(index)" @copy="handleCopy" @focus-input="emit('focus-input')" />
+        <MessageBubble
+          :message="item"
+          :question-message="getPreviousUserMessage(index)"
+          :decision-draft="item.id === currentStreamingId ? decisionDraft : ''"
+          @copy="handleCopy"
+          @focus-input="emit('focus-input')"
+        />
       </div>
     </div>
 

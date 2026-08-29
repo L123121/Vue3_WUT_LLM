@@ -185,9 +185,9 @@ export const sendMessageStream = async (message, history = [], callbacks, option
     let buffer = '';
     let lastDataTime = Date.now();
 
-    // 包装 onChunk，首次调用时打 TTFT
+    // 包装 onChunk，首次调用时打 TTFT（meta 携带 decision 标记等事件元数据）
     const originalOnChunk = callbacks.onChunk;
-    const measuredOnChunk = (content) => {
+    const measuredOnChunk = (content, meta) => {
       if (!ttftMeasured) {
         ttftMeasured = true;
         const ttftMs = Math.round(performance.now() - ttftStart);
@@ -202,7 +202,7 @@ export const sendMessageStream = async (message, history = [], callbacks, option
           localStorage.setItem(key, JSON.stringify(arr));
         } catch {}
       }
-      originalOnChunk(content);
+      originalOnChunk(content, meta);
     };
     const measuredCallbacks = { ...callbacks, onChunk: measuredOnChunk };
 
@@ -256,7 +256,7 @@ export const sendMessageStream = async (message, history = [], callbacks, option
             }
             if (content) {
               debug('[Stream] chunk:', content.substring(0, 30));
-              measuredCallbacks.onChunk(content);
+              measuredCallbacks.onChunk(content, { decision: json.decision === true });
             }
             if (json.intent) measuredCallbacks.onIntent?.(json.intent);
             if (json.tool_call) measuredCallbacks.onToolCall?.(json.tool_call);

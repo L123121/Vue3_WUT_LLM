@@ -44,6 +44,8 @@ export const useChatStore = defineStore('chat', () => {
   // 状态 - 代理到 messageStore
   const isLoading = computed(() => messageStore.isLoading);
   const currentStreamingId = computed(() => messageStore.currentStreamingId);
+  // agent 决策草稿：流式进行中的"思考草稿区"文本
+  const decisionDraft = computed(() => messageStore.decisionDraft);
   const isConnected = computed(() => messageStore.isConnected);
   const isReconnecting = computed(() => messageStore.isReconnecting);
   const reconnectAttempt = computed(() => messageStore.reconnectAttempt);
@@ -104,6 +106,7 @@ export const useChatStore = defineStore('chat', () => {
     // 消息状态
     isLoading,
     currentStreamingId,
+    decisionDraft,
     isConnected,
     isReconnecting,
     reconnectAttempt,

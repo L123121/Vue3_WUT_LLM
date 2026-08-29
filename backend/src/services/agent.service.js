@@ -278,10 +278,11 @@ class AgentService {
           if (chunk.done) {
             toolCalls = chunk.tool_calls || null;
           } else if (chunk.content) {
-            // LLM 直接开始回答（未调工具）→ 实时透传
+            // 决策阶段内容实时透传（decision: true 标记）。模型可能在输出文本后
+            // 又发起 tool_calls，因此前端把 decision 内容先渲染到"思考草稿区"；
+            // 若随后出现 tool_call，前端丢弃草稿渲染过程卡片，不会泄露半截决策文本。
             streamedText += chunk.content;
-            // 决策阶段先缓存；确认没有 tool_calls 后才下发，避免模型同时输出
-            // 文本和工具调用时把半截决策内容泄露给用户。
+            yield { type: "content", content: chunk.content, done: false, decision: true };
           }
         }
       } catch (err) {
@@ -302,11 +303,9 @@ class AgentService {
 
       const validCalls = (toolCalls || []).filter((tc) => tc.function?.name);
 
-      // LLM 直接回答（无工具调用）→ 收尾
+      // LLM 直接回答（无工具调用）→ 内容已在决策阶段实时透传，此处直接收尾
       if (validCalls.length === 0) {
-        if (streamedText) {
-          yield { type: "content", content: streamedText, done: false };
-        } else {
+        if (!streamedText) {
           yield { type: "content", content: "抱歉，我没有理解您的问题。", done: false };
         }
         trace.totalMs = Date.now() - totalStart;
@@ -438,14 +437,25 @@ class AgentService {
    */
   async chat(message, history = [], options = {}) {
     let reply = "";
+    // 决策阶段内容带 decision 标记实时透传；若随后出现 tool_call，说明这段是
+    // 被废弃的"思考草稿"（前端也会丢弃），不能计入最终 reply
+    let pendingDecisionText = "";
     const toolNames = [];
     let sources = [];
     let trace = null;
 
     for await (const ev of this.chatStream(message, history, options)) {
       if (ev.type === "content") {
-        if (!ev.done) reply += ev.content || "";
+        if (!ev.done) {
+          if (ev.decision) {
+            pendingDecisionText += ev.content || "";
+          } else {
+            reply += ev.content || "";
+            pendingDecisionText = "";
+          }
+        }
       } else if (ev.type === "tool_call") {
+        pendingDecisionText = ""; // 草稿被工具调用取代
         if (ev.tool_call?.name) toolNames.push(ev.tool_call.name);
       } else if (ev.type === "sources") {
         sources = ev.sources || [];
@@ -455,6 +465,8 @@ class AgentService {
         throw ev.error; // AgentDecisionError（agentShouldFallback=true）→ 控制器降级 RAG
       }
     }
+    // 直接回答路径：内容全部以 decision 标记透传，收尾时即为最终回答
+    reply += pendingDecisionText;
 
     return {
       reply: reply || "抱歉，我没有理解您的问题。",

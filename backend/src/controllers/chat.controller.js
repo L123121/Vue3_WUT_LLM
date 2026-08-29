@@ -64,6 +64,9 @@ function writeStreamEvent(res, event, fallbackTraceId) {
     });
   } else if (event.type === "content") {
     if (event.done) res.write("data: [DONE]\n\n");
+    // decision: true 标记 agent 决策阶段内容 → 前端渲染到"思考草稿区"，
+    // 出现 tool_call 时前端丢弃草稿（详见 agent.service chatStream）
+    else if (event.decision) writeSse(res, { content: event.content || "", decision: true });
     else writeSse(res, { content: event.content || "" });
   }
 }
@@ -124,8 +127,14 @@ function createChatHandlers(conversationOrchestrator) {
         signal: abortController.signal,
       };
       const audit = { answer: '', sources: [], traceId: req.traceId };
+      // agent 决策草稿：tool_call 出现即被废弃，不计入审计答案
+      let decisionDraft = '';
       for await (const event of conversationOrchestrator.chatStream(message, history || [], context)) {
-        if (event.type === 'content' && !event.done) audit.answer += event.content || '';
+        if (event.type === 'content' && !event.done) {
+          if (event.decision) decisionDraft += event.content || '';
+          else { audit.answer += event.content || ''; decisionDraft = ''; }
+        }
+        if (event.type === 'tool_call') decisionDraft = '';
         if (event.type === 'sources') audit.sources = event.sources || [];
         if (event.type === 'trace' && event.trace?.traceId) audit.traceId = event.trace.traceId;
         writeStreamEvent(res, event, req.traceId);
@@ -133,7 +142,7 @@ function createChatHandlers(conversationOrchestrator) {
 
       void recordAudit({
         question: message,
-        answer: audit.answer,
+        answer: audit.answer || decisionDraft,
         sources: audit.sources,
         traceId: audit.traceId,
         userId: req.userId,
