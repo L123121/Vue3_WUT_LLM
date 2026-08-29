@@ -9,6 +9,7 @@ import {
   saveConversationMessages as apiSaveMessages,
 } from '../api/conversations.js';
 import { useAuthStore } from './auth.store.js';
+import { useToastStore } from './toast.store.js';
 import { reportError } from '../utils/errorHandler.js';
 import {
   normalizeMessages,
@@ -20,6 +21,7 @@ import {
   loadCache,
   saveCache,
   saveIncremental,
+  clearCache,
   cleanupLegacyKeys,
 } from '../utils/conversationCache.js';
 
@@ -75,12 +77,12 @@ let loadGeneration = 0; // 账号切换时使旧的异步加载结果失效
 // - 防抖：500ms 合并连续写入，避免流式每帧都发请求
 // - 静默失败：catch 不弹 toast，仅 console.warn 留痕
 // - 仅同步会话消息，不覆盖 title（title 由 renameConversation 单独管理）
-const _triggerBackendSync = async () => {
+const _triggerBackendSync = async (targetConvId = null) => {
   // 从模块变量读取最新 store 状态（兼容定时器/外部调用场景）
   const store = latestStoreRef.value;
   if (!store) return true;
-  const convId = store.currentConversationId;
-  // 本地会话不推后端
+  const convId = targetConvId || store.currentConversationId;
+  // 本地会话不推后端：等 flushPendingChanges / loadConversations 统一迁移
   if (!convId || convId.startsWith('local_') || convId === 'local') return true;
 
   // 检查认证状态（直接调用 light 版本避免创建 auth store 实例竞争）
@@ -100,6 +102,9 @@ const _triggerBackendSync = async () => {
     return true;
   } catch (e) {
     reportError('BackendSync', e, { convId });
+    // 同步失败意味着这些消息的唯一副本还在 localStorage 里，
+    // 必须让用户知道，避免误以为已上云后清理浏览器数据导致丢失
+    _notifySyncFailure();
     return false;
   }
 };
@@ -112,17 +117,41 @@ const _scheduleBackendSync = (delay = 500) => {
   }, delay);
 };
 
+// 缓存按用户隔离：写入时带上当前登录用户的 id（游客为 guest 命名空间），
+// 避免切号时读到别人的缓存，也让「未同步消息」能留在所属账号名下等下次登录迁移
+const currentCacheUserId = () => {
+  try {
+    return latestStoreRef.value?.userId ?? null;
+  } catch {
+    return null;
+  }
+};
+
+// 同步失败提示：30s 内最多弹一次，避免后端重启期间连环弹窗
+let lastSyncFailureToastAt = 0;
+const _notifySyncFailure = () => {
+  const now = Date.now();
+  if (now - lastSyncFailureToastAt < 30000) return;
+  lastSyncFailureToastAt = now;
+  try {
+    useToastStore().error('消息同步到云端失败，本条消息已暂存本机，稍后会自动重试');
+  } catch {
+    // Pinia 未就绪（单测环境等）时忽略
+  }
+};
+
 const scheduleSave = (conversations, currentId, dirtyConvId) => {
+  if (!conversations || conversations.length === 0) return; // 重置态：不把空列表写进缓存
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    saveIncremental(conversations, currentId, dirtyConvId);
+    saveIncremental(conversations, currentId, dirtyConvId, currentCacheUserId());
     saveTimer = null;
   }, 300);
 };
 
 const flushSave = (conversations, currentId) => {
   if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
-  saveCache(conversations, currentId);
+  saveCache(conversations, currentId, currentCacheUserId());
 };
 
 const ensureLocalFallback = (conversationsRef, currentConversationIdRef) => {
@@ -143,7 +172,10 @@ const latestStoreRef = { value: null }; // 间接持有最近一次 store 实例
 const beforeUnloadHandler = () => {
   const store = latestStoreRef.value;
   if (!store) return;
-  flushSave(store.conversations, store.currentConversationId);
+  // 空列表 = 重置/切号后的瞬时状态，写入会把缓存里未同步的消息覆盖掉
+  if (store.conversations.length > 0) {
+    flushSave(store.conversations, store.currentConversationId);
+  }
   if (store.currentConversationId) {
     localStorage.setItem(CURRENT_CONVERSATION_KEY, store.currentConversationId);
   }
@@ -241,7 +273,7 @@ export const useConversationStore = defineStore('conversation', () => {
 
     const generation = loadGeneration;
     const request = (async () => {
-      const cached = loadCache();
+      const cached = loadCache(currentCacheUserId());
       const hasCachedConversations = restoreCachedState(cached);
 
       if (!isBackendAvailable()) {
@@ -382,13 +414,22 @@ export const useConversationStore = defineStore('conversation', () => {
       if (currentConversationId.value !== conversationId) return;
       const index = conversations.value.findIndex((c) => c.id === conversationId);
       if (index !== -1 && conv) {
-        const normalized = normalizeMessages(conv.messages);
-        conversations.value[index].messages = normalized.length > 0 ? normalized : [createWelcomeMessage()];
+        const fetched = normalizeMessages(conv.messages);
+        // 本地列表可能包含同步失败期间未上传的消息（比服务端更长），
+        // 服务端也可能有其他端新增的消息（比本地更长）。
+        // 取更长的一侧：既保住未同步的尾部消息，也不丢其他端的新消息。
+        const local = normalizeMessages(conversations.value[index].messages || []);
+        const merged = local.length > fetched.length ? local : fetched;
+        conversations.value[index].messages = merged.length > 0 ? merged : [createWelcomeMessage()];
         conversations.value[index].title = conv.title;
         // 消息整体替换，重建该会话的索引
         _unregisterConversationMessages(conversationId);
         _registerConversationMessages(conversationId, conversations.value[index].messages);
         flushSave(conversations.value, currentConversationId.value);
+        // 本地比服务端长 = 有同步失败期间积压的消息，此时刚登录成功、后端可用，立即补传
+        if (local.length > fetched.length) {
+          _triggerBackendSync(conversationId);
+        }
       }
     } catch (error) {
       reportError('loadConversationMessages', error, { conversationId });
@@ -490,11 +531,11 @@ export const useConversationStore = defineStore('conversation', () => {
 
   // ========== 统一 localStorage 持久化 ==========
 
-  const scheduleSaveCache = (immediate = false) => {
+  const scheduleSaveCache = (immediate = false, targetConvId = null) => {
     const conv = currentConversation.value;
     if (immediate) {
       flushSave(conversations.value, currentConversationId.value);
-      _triggerBackendSync(); // 立即同步到后端（fire-and-forget）
+      _triggerBackendSync(targetConvId); // 立即同步到后端（fire-and-forget）
     } else {
       scheduleSave(conversations.value, currentConversationId.value, conv?.id);
       _scheduleBackendSync(500); // 防抖同步到后端
@@ -535,7 +576,19 @@ export const useConversationStore = defineStore('conversation', () => {
     isLoaded.value = false;
     messagesMap.clear();
     localStorage.removeItem(CURRENT_CONVERSATION_KEY);
-    localStorage.removeItem('chat_cache');
+    // ⚠️ 故意不删除会话缓存（chat_cache:<userId>）：里面可能留着同步失败期间
+    // 未上传的消息（唯一副本）。登录/切号后各自的缓存留在各自命名空间，
+    // 下次 loadConversations 会迁移 local_ 会话并按需补传消息。
+    // 只有确认同步成功的登出流程才允许调 clearPersistedCache() 清理。
+  };
+
+  // 清空当前用户的会话缓存（含旧版全局 key）。
+  // 仅在「已确认后端同步成功」的登出流程调用；登录/401 路径禁止调用。
+  const clearPersistedCache = () => {
+    let userId = null;
+    try { userId = getAuthStore().user?.id || null; } catch { /* 未初始化 */ }
+    clearCache(userId);
+    localStorage.removeItem(CURRENT_CONVERSATION_KEY);
   };
 
   // 页面刷新/关闭前将未保存的数据刷入 localStorage
@@ -563,6 +616,9 @@ export const useConversationStore = defineStore('conversation', () => {
   latestStoreRef.value = {
     get conversations() { return conversations.value; },
     get currentConversationId() { return currentConversationId.value; },
+    get userId() {
+      try { return getAuthStore().user?.id || null; } catch { return null; }
+    },
   };
 
   return {
@@ -584,6 +640,7 @@ export const useConversationStore = defineStore('conversation', () => {
     scheduleSaveCache,
     flushPendingChanges,
     resetConversationState,
+    clearPersistedCache,
     // 消息索引 API（O(1) 按 ID 查找，供外部修改消息后同步）
     getMessage: (id) => messagesMap.get(id) || null,
     registerMessage: _registerMessage,

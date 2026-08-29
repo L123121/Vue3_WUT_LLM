@@ -88,7 +88,8 @@ describe('chatStore', () => {
   });
 
   it('restores cached conversations when backend is unavailable', async () => {
-    localStorage.setItem('chat_cache', JSON.stringify({
+    // 未登录 → 游客命名空间
+    localStorage.setItem('chat_cache:guest', JSON.stringify({
       version: 1,
       currentId: 'local_cached',
       conversations: [{
@@ -109,7 +110,7 @@ describe('chatStore', () => {
   });
 
   it('removes stale server conversations while migrating local-only conversations', async () => {
-    localStorage.setItem('chat_cache', JSON.stringify({
+    localStorage.setItem('chat_cache:user-1', JSON.stringify({
       version: 1,
       currentId: 'conv_stale',
       conversations: [
@@ -130,7 +131,7 @@ describe('chatStore', () => {
   });
 
   it('keeps cached server conversations when the list request fails', async () => {
-    localStorage.setItem('chat_cache', JSON.stringify({
+    localStorage.setItem('chat_cache:user-1', JSON.stringify({
       version: 1,
       currentId: 'conv_cached',
       conversations: [
@@ -192,19 +193,96 @@ describe('chatStore', () => {
     expect(store.conversations.some((conv) => conv.id === localId)).toBe(false);
   });
 
-  it('clears in-memory and cached conversations on account reset', async () => {
+  it('keeps persisted cache on account reset and clears it only via clearPersistedCache', async () => {
+    useAuthStore().setUser({ id: 'user-1', name: 'User' });
     const store = useChatStore();
     await store.loadConversations();
     await store.createConversation('Private Chat');
     expect(store.isLoaded).toBe(true);
+    // 确认缓存已写入当前用户命名空间
+    expect(localStorage.getItem('chat_cache:user-1')).not.toBeNull();
 
     store.resetConversationState();
 
     expect(store.conversations).toEqual([]);
     expect(store.currentConversationId).toBe('');
     expect(store.isLoaded).toBe(false);
-    expect(localStorage.getItem('chat_cache')).toBeNull();
     expect(localStorage.getItem('chat_current_conversation_id')).toBeNull();
+    // 缓存必须保留：里面可能有同步失败期间未上传的消息（唯一副本），等下次登录迁移
+    expect(localStorage.getItem('chat_cache:user-1')).not.toBeNull();
+
+    // 仅登出流程（同步成功后）调用 clearPersistedCache 才清理
+    store.clearPersistedCache();
+    expect(localStorage.getItem('chat_cache:user-1')).toBeNull();
+  });
+
+  it('does not wipe cache with an empty conversation list during reset', async () => {
+    useAuthStore().setUser({ id: 'user-1', name: 'User' });
+    const store = useChatStore();
+    await store.loadConversations();
+    await store.createConversation('Chat');
+    const cachedBefore = localStorage.getItem('chat_cache:user-1');
+    expect(cachedBefore).not.toBeNull();
+
+    // 重置把内存列表清空，chat.store 的 watcher 会触发一次空列表的 scheduleSaveCache；
+    // 空列表不得覆盖缓存，否则未同步消息被清掉
+    store.resetConversationState();
+    await new Promise((resolve) => setTimeout(resolve, 350));
+
+    expect(localStorage.getItem('chat_cache:user-1')).toBe(cachedBefore);
+  });
+
+  it('keeps longer local messages over shorter server messages on reload', async () => {
+    useAuthStore().setUser({ id: 'user-1', name: 'User' });
+    // 服务端只同步到 1 条用户消息（同步失败场景），本地缓存里有 3 条（含未上传的 AI 回复）
+    vi.mocked(conversationsApi.fetchConversations).mockResolvedValue([
+      { id: 'conv_synced', title: '同步中断会话', messages: [], updatedAt: '2026-08-17T00:00:00.000Z' },
+    ]);
+    vi.mocked(conversationsApi.fetchConversation).mockResolvedValue({
+      id: 'conv_synced',
+      title: '同步中断会话',
+      messages: [{ id: 'm-user-1', role: 'user', content: '第一条' }],
+    });
+
+    const store = useChatStore();
+    await store.loadConversations();
+    // 模拟缓存中恢复了完整的本地消息（含未同步尾部）
+    store.conversations[0].messages = [
+      { id: 'welcome', role: 'model', content: '你好' },
+      { id: 'm-user-1', role: 'user', content: '第一条' },
+      { id: 'm-ai-1', role: 'model', content: '未同步的回复' },
+    ];
+
+    await store.loadConversationMessages('conv_synced');
+
+    // 本地更长 → 保留本地未同步消息，不被服务端旧状态覆盖
+    const msgs = store.conversations[0].messages;
+    expect(msgs.map((m) => m.id)).toEqual(['welcome', 'm-user-1', 'm-ai-1']);
+  });
+
+  it('prefers server messages when the server has more on reload', async () => {
+    useAuthStore().setUser({ id: 'user-1', name: 'User' });
+    vi.mocked(conversationsApi.fetchConversations).mockResolvedValue([
+      { id: 'conv_multi', title: '多端会话', messages: [], updatedAt: '2026-08-17T00:00:00.000Z' },
+    ]);
+    // 其他端新增过消息：服务端 3 条 > 本地缓存 2 条
+    vi.mocked(conversationsApi.fetchConversation).mockResolvedValue({
+      id: 'conv_multi',
+      title: '多端会话',
+      messages: [
+        { id: 'm-user-1', role: 'user', content: '第一条' },
+        { id: 'm-ai-1', role: 'model', content: '回复一' },
+        { id: 'm-user-2', role: 'user', content: '第二条（其他端发的）' },
+      ],
+    });
+
+    const store = useChatStore();
+    await store.loadConversations();
+
+    await store.loadConversationMessages('conv_multi');
+
+    const msgs = store.conversations[0].messages;
+    expect(msgs.map((m) => m.id)).toEqual(['m-user-1', 'm-ai-1', 'm-user-2']);
   });
 
   it('renames conversation', async () => {

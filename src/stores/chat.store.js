@@ -66,6 +66,9 @@ export const useChatStore = defineStore('chat', () => {
     if (messageStore.isLoading) messageStore.abortCurrentRequest();
     conversationStore.resetConversationState();
   };
+  // 清空当前用户的会话缓存。仅用于「已确认同步成功」的登出流程；
+  // 登录/401 路径不要调用，否则会丢掉未同步消息的唯一副本。
+  const clearPersistedCache = () => conversationStore.clearPersistedCache();
   const flushPendingChanges = async () => {
     if (messageStore.isLoading) messageStore.abortCurrentRequest();
     return conversationStore.flushPendingChanges();
@@ -113,6 +116,7 @@ export const useChatStore = defineStore('chat', () => {
     renameConversation,
     flushPendingChanges,
     resetConversationState,
+    clearPersistedCache,
     deleteConversation,
     getLastMessagePreview,
 

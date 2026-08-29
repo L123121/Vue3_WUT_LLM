@@ -473,6 +473,10 @@ export function useStreaming() {
   };
 
   const abortCurrentRequest = () => {
+    // 中断可能由「切换会话」触发：被中断的会话随即不再是最当前会话，
+    // 先记下它的 id，中断后定向补一次立即保存 + 后端同步，
+    // 否则半截消息只会留在本地缓存、永远同步不到后端
+    const affectedConvId = activeStreamingConversationId.value;
     cancelPendingRaf(true); // 刷新 RAF 缓冲区到消息后中止，避免内容丢失
     if (currentAbortController) {
       currentAbortController.abort();
@@ -480,6 +484,13 @@ export function useStreaming() {
       activeStreamingConversationId.value = null;
       currentStreamingId.value = null;
       isLoading.value = false;
+    }
+    if (affectedConvId) {
+      try {
+        useConversationStore().scheduleSaveCache(true, affectedConvId);
+      } catch {
+        // store 未就绪时忽略（缓存会由 beforeunload 兜底）
+      }
     }
   };
 
