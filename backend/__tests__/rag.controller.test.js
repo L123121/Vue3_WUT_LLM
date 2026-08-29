@@ -139,3 +139,81 @@ describe('rag.controller updateFeedbackEvalStatus', () => {
     expect(allView.evalStatus).toBe('queued');
   });
 });
+
+describe('rag.controller listFeedback（真实 SQLite 回归）', () => {
+  // 历史 bug：await 括号位置错误使 .filter 链在 Promise 上，接口恒 500。
+  // 该接口此前无测试覆盖，用真实存储走一遍完整链路防回归。
+  function getListHandler() {
+    delete require.cache[require.resolve('../src/controllers/rag.controller')];
+    delete require.cache[require.resolve('../src/services/memory-store')];
+    return {
+      handler: require('../src/controllers/rag.controller').listFeedback,
+      store: require('../src/services/memory-store').redis,
+    };
+  }
+
+  const ADMIN = 'admin'; // isAdminRequest 以 userId === 'admin' 判定
+  const USER = 'list_fb_user';
+
+  const makeRes = () => {
+    const res = {};
+    res.status = vi.fn(() => res);
+    res.json = vi.fn(() => res);
+    return res;
+  };
+
+  beforeEach(async () => {
+    vi.restoreAllMocks();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    // 清理共享 SQLite 单例中的反馈数据，保证测试隔离
+    const { store } = getListHandler();
+    const all = await store.hgetall('rag_feedback:all');
+    for (const field of Object.keys(all || {})) {
+      const userId = String(field).split(':')[0];
+      await store.hdel(`rag_feedback:${userId}`, String(field).split(':').slice(1).join(':'));
+      await store.hdel('rag_feedback:all', field);
+    }
+  });
+
+  it('管理员查询反馈返回 200 与分页数据', async () => {
+    const { handler, store } = getListHandler();
+    await store.hset('rag_feedback:list_user', 'c1:m1', {
+      id: 'c1:m1', userId: USER, rating: 'dislike',
+      question: '校车几点？', answer: '未检索到', createdAt: new Date().toISOString(),
+    });
+    await store.hset('rag_feedback:all', `${USER}:c1:m1`, {
+      id: 'c1:m1', userId: USER, rating: 'dislike',
+      question: '校车几点？', answer: '未检索到', createdAt: new Date().toISOString(),
+    });
+
+    const res = makeRes();
+    await handler({ userId: ADMIN, query: { page: 1, limit: 20 } }, res, vi.fn());
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    const payload = res.json.mock.calls[0][0];
+    expect(payload.data.items).toHaveLength(1);
+    expect(payload.data.items[0].question).toBe('校车几点？');
+  });
+
+  it('rating 筛选生效', async () => {
+    const { handler, store } = getListHandler();
+    await store.hset('rag_feedback:all', `${USER}:c2:m2`, {
+      id: 'c2:m2', userId: USER, rating: 'like', question: 'q', answer: 'a', createdAt: new Date().toISOString(),
+    });
+
+    const res = makeRes();
+    await handler({ userId: ADMIN, query: { page: 1, limit: 20, rating: 'like' } }, res, vi.fn());
+
+    const payload = res.json.mock.calls[0][0];
+    expect(payload.data.items.every((item) => item.rating === 'like')).toBe(true);
+  });
+
+  it('非管理员返回 403', async () => {
+    const { handler } = getListHandler();
+    const res = makeRes();
+
+    await handler({ userId: USER, query: {} }, res, vi.fn());
+
+    expect(res.status).toHaveBeenCalledWith(403);
+  });
+});
