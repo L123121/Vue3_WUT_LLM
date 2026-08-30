@@ -1,6 +1,7 @@
 "use strict";
 
 const crypto = require('crypto');
+const config = require('../config');
 const { EmbeddingService } = require('./embedding.service');
 
 /**
@@ -248,6 +249,195 @@ class IndexingService {
     return merged;
   }
 
+  // ===== 场景化子块切割（FAQ / 表格 / 列表） =====
+  //
+  // 默认 25 字符句子包对散文成立，但对三类结构化文本会切碎语义单元：
+  //   FAQ：25 字符会把单条问答切到两条子块，召回串台 → 整条一个子块
+  //   表格：单行无语义 → 小表整表一个子块，大表按行切且行带表头
+  //   列表：单步 25 字符看不出步骤归属 → 按条目边界切，条目带标题前缀
+  // 检索命中的仍是子块，LLM 看到的仍是完整父段落——只改"被检索"的粒度。
+
+  /** 列表行标记：无序（- * • ·）、有序（1. 1、 1) （1） 第N步） */  static get LIST_MARKER_RE() {
+    return /^(?:[-*•·]|\d{1,2}[.、)）]|[（(][一二三四五六七八九十\d]{1,3}[)）]|第[一二三四五六七八九十\d]+步)/;
+  }
+
+  /** FAQ 行特征：Q/问/答前缀、选项行、答案行 */
+  static get FAQ_LINE_RE() {
+    return /^(?:#{1,6}\s*)?(?:Q\s*\d*[：:.、)\s]|问\s*[：:]|答\s*[：:]|\*\*答案|[-\s]*[A-D][.、：:]\s*\S)/;
+  }
+
+  /** 表格分隔行（如 | --- | --- |）：只含 | - : 空格且至少一个 | 与一个 - */
+  static get TABLE_SEPARATOR_RE() {
+    return /^(?=[\s|:-]*\|)(?=[\s|:-]*-)[\s|:-]+$/;
+  }
+
+  _blockLines(paragraph) {
+    return String(paragraph || '').split('\n').map((l) => l.trim()).filter(Boolean);
+  }
+
+  /**
+   * 子块切割统一入口：按段落块型分发策略
+   * @returns {{ type: 'prose'|'faq'|'table'|'list', chunks: string[] }}
+   */
+  _splitChildChunks(paragraph) {
+    if (config.document?.adaptiveChunking === false) {
+      return { type: 'prose', chunks: this._splitSentences(paragraph) };
+    }
+    const type = this._detectBlockType(paragraph);
+    switch (type) {
+      case 'table': return { type, chunks: this._splitTableChildren(paragraph) };
+      case 'faq': return { type, chunks: this._splitFaqChildren(paragraph) };
+      case 'list': return { type, chunks: this._splitListChildren(paragraph) };
+      default: return { type: 'prose', chunks: this._splitSentences(paragraph) };
+    }
+  }
+
+  /** 段落块型检测：表格 > FAQ > 列表 > 散文 */
+  _detectBlockType(paragraph) {
+    const lines = this._blockLines(paragraph);
+    if (lines.length < 3) return 'prose';
+
+    const pipeLines = lines.filter((l) => (l.match(/\|/g) || []).length >= 2);
+    const hasSeparator = lines.some((l) => this.constructor.TABLE_SEPARATOR_RE.test(l));
+    if (pipeLines.length >= 3 && hasSeparator) return 'table';
+
+    if (this._looksLikeFaq(lines)) return 'faq';
+    if (this._looksLikeList(lines)) return 'list';
+    return 'prose';
+  }
+
+  /** FAQ 判定：≥3 行且 ≥50% 行含问答特征、≥60% 行长 ≤80 字 */
+  _looksLikeFaq(lines) {
+    if (lines.length < 3) return false;
+    const faqish = lines.filter((l) => this.constructor.FAQ_LINE_RE.test(l) || /[？?]\s*$/.test(l)).length;
+    const shortLines = lines.filter((l) => l.length <= 80).length;
+    return faqish / lines.length >= 0.5 && shortLines / lines.length >= 0.6;
+  }
+
+  /** 列表判定：≥3 行且 ≥60% 行带列表标记 */
+  _looksLikeList(lines) {
+    if (lines.length < 3) return false;
+    const listLines = lines.filter((l) => this.constructor.LIST_MARKER_RE.test(l)).length;
+    return listLines / lines.length >= 0.6;
+  }
+
+  /**
+   * FAQ 切割：问答条目整条一个子块。只有"提问行"开新条目
+   * （Q 前缀 / 问：/ 问号结尾行），选项、答案、续行归当前条目；
+   * 超长条目退回句子合并。检测用的宽匹配 FAQ_LINE_RE 不能当分组边界。
+   */
+  _splitFaqChildren(paragraph) {
+    const lines = this._blockLines(paragraph);
+    const isItemStart = (l) =>
+      /^(?:#{1,6}\s*)?Q\s*\d*[：:.、)\s]/i.test(l)
+      || /^问\s*[：:]/.test(l)
+      || /^[^，。；]{2,80}[？?]\s*$/.test(l);
+
+    const items = [];
+    let current = null;
+    for (const line of lines) {
+      if (isItemStart(line) || !current) {
+        if (current) items.push(current);
+        current = [line];
+      } else {
+        current.push(line);
+      }
+    }
+    if (current) items.push(current);
+
+    return items.flatMap((itemLines) => {
+      const text = itemLines.join('\n');
+      return text.length > 150 ? this._splitSentences(text) : [text];
+    });
+  }
+
+  /**
+   * 表格切割：≤5 行的小表整表一个子块；大表按数据行切，
+   * 每行子块带表头前缀（裸行值无语义，表头提供列语义）；表外散文走默认合并
+   */
+  _splitTableChildren(paragraph) {
+    const lines = paragraph.split('\n').map((l) => l.trimEnd()).filter((l) => l.trim());
+    const isPipeRow = (l) => (l.match(/\|/g) || []).length >= 2;
+
+    const children = [];
+    let tableLines = [];
+    let proseLines = [];
+
+    const flushProse = () => {
+      if (proseLines.length) {
+        children.push(...this._splitSentences(proseLines.join('\n')));
+        proseLines = [];
+      }
+    };
+    const flushTable = () => {
+      if (!tableLines.length) return;
+      const sepIdx = tableLines.findIndex((l) => this.constructor.TABLE_SEPARATOR_RE.test(l));
+      const header = sepIdx > 0 ? tableLines[sepIdx - 1] : '';
+      const rows = tableLines.filter((l, i) => i !== sepIdx && i !== sepIdx - 1 && isPipeRow(l));
+      if (rows.length <= 5) {
+        children.push(tableLines.join('\n')); // 小表整表检索，行列结构完整
+      } else {
+        for (const row of rows) {
+          children.push(header ? `${header}\n${row}` : row); // 大表按行切，行带表头
+        }
+      }
+      tableLines = [];
+    };
+
+    for (const line of lines) {
+      if (isPipeRow(line)) {
+        flushProse();
+        tableLines.push(line);
+      } else {
+        flushTable();
+        proseLines.push(line);
+      }
+    }
+    flushTable();
+    flushProse();
+
+    return children;
+  }
+
+  /**
+   * 列表切割：按条目边界切，条目带引导句/标题前缀（解决"单步看不出步骤归属"）；
+   * 续行归当前条目，超长条目退回句子合并（每个碎片仍带前缀）
+   */
+  _splitListChildren(paragraph) {
+    const lines = this._blockLines(paragraph);
+    const isListLine = (l) => this.constructor.LIST_MARKER_RE.test(l);
+
+    let title = '';
+    let current = null;
+    const children = [];
+
+    const flush = () => {
+      if (!current) return;
+      const text = current.join('\n');
+      const pieces = text.length > 150 ? this._splitSentences(text) : [text];
+      for (const piece of pieces) {
+        children.push(title ? `${title}：${piece}` : piece);
+      }
+      current = null;
+    };
+
+    for (const line of lines) {
+      if (isListLine(line)) {
+        flush();
+        current = [line];
+      } else if (!current && !title && line.length <= 40) {
+        title = line; // 首个非列表短行 = 引导句/标题
+      } else if (current) {
+        current.push(line); // 续行归当前条目
+      } else {
+        title = line.slice(0, 40); // 超长引导行截断为标题
+      }
+    }
+    flush();
+
+    return children.length ? children : this._splitSentences(paragraph);
+  }
+
   /**
    * 索引单个文档（段落→句子双层切片 → 向量化子级 → 存储到 Qdrant）
    * @param {string} docId
@@ -268,12 +458,14 @@ class IndexingService {
     // 2. 按句子分割（子级），构造子块数据
     const childChunks = [];
     const metadatas = [];
+    const typeTally = { prose: 0, faq: 0, table: 0, list: 0 };
 
     for (let paraIdx = 0; paraIdx < paragraphs.length; paraIdx++) {
       const paraText = paragraphs[paraIdx];
-      const sentences = this._splitSentences(paraText);
+      const { type, chunks: childTexts } = this._splitChildChunks(paraText);
+      typeTally[type] += 1;
 
-      for (const sentence of sentences) {
+      for (const sentence of childTexts) {
         childChunks.push(sentence);
         metadatas.push({
           docId,
@@ -292,7 +484,10 @@ class IndexingService {
       return 0;
     }
 
-    console.log(`[Indexing] 文档切片: ${paragraphs.length} 段落 → ${childChunks.length} 句子`);
+    console.log(`[Indexing] 文档切片: ${paragraphs.length} 段落 → ${childChunks.length} 句子` +
+      (typeTally.faq + typeTally.table + typeTally.list > 0
+        ? `（场景化子块: FAQ ${typeTally.faq} / 表格 ${typeTally.table} / 列表 ${typeTally.list}）`
+        : ''));
 
     // 3. 向量化子级：hash 命中旧向量直接复用，只对新增/变化的 chunk 调用模型
     const reused = new Array(childChunks.length).fill(null);
