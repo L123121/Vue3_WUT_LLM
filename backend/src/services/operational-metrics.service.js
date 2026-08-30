@@ -204,6 +204,16 @@ const createOperationalMetrics = (options = {}) => {
         estimatedCostCny: totals.llmCostCny + totals.ttsCostCny,
       };
     },
+    /**
+     * 有界窗口内的原始样本（供 Prometheus 端点现场分桶直方图用）。
+     * 注意这是滑动窗口样本，只用于分布（histogram），不可当单调计数器累加。
+     */
+    rawSamples() {
+      return {
+        httpDurations: requests.map((item) => item.durationMs).filter((v) => Number.isFinite(v) && v >= 0),
+        llmLatencies: llmUsage.map((item) => item.latencyMs).filter((v) => Number.isFinite(v) && v > 0),
+      };
+    },
     flush,
     close() {
       if (closed) return;

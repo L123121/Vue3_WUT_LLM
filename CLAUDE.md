@@ -171,6 +171,7 @@ chat.store（聚合层）→ 页面统一接口
 - `ai.service.js` — LLM 调用 + 请求队列（LLM_CONCURRENCY=3）
 - `ocr.service.js` — 视觉识别（step-1o-turbo-vision）：图片/扫描件 → Markdown，mupdf 渲染 + 页级并发，支持按页 OCR（opts.pages/returnMap，文本型 PDF 表格页重建用）
 - `judge.service.js` — LLM-as-judge 独立 Key，4 指标合并 1 次请求
+- `prometheus-metrics.service.js` — Prometheus 文本格式渲染（零依赖）：运营计数器 + 有界原始延迟样本现场分桶直方图 + 进程/事件循环自观测，`/api/metrics/prometheus` env 门控 + token 校验，抓取方放外部
 - `intent-router.service.js` — 意图路由（V2.0）：fastRoute 零成本关键词 + LLM 分类兜底（默认关）+ 兜底 rag
 - `agent.service.js` — Agent 工具调度（V2.0）：L2 有界多轮（maxToolRounds=2 + 无进展检测）+ L3 会话记忆摘要 + L4 agent tracer
 - `agent-tools.js` — Agent 工具注册表：search_knowledge_base（复用 RAG）+ calculate（mathjs 安全求值）
@@ -505,6 +506,10 @@ DOC_DEDUP_ENABLED=true
 
 # LLM-as-judge 评测（独立 Key；双判抽样量化 judge 一致性）
 JUDGE_DOUBLE_JUDGE_RATIO=0.1     # 每 10 条抽 1 条复判，两次四指标差均 ≤0.1 判一致；0 关闭
+
+# Prometheus 抓取端点（默认关；抓取方放外部 Prometheus / Grafana Cloud，2G 小主机不本地塞监控栈）
+METRICS_PROMETHEUS_ENABLED=false
+METRICS_PROMETHEUS_TOKEN=        # 设置后抓取需 Bearer token（或 ?token=）；本地留空即可
 
 # Qdrant 调优
 QDRANT_PAYLOAD_INDEX=true        # docId/category 关键词索引（幂等）

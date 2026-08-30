@@ -131,6 +131,13 @@ module.exports = {
     // 每页顶部/底部各考察的非空行数
     zoneLines: parseInt(process.env.DOC_CLEAN_ZONE_LINES, 10) || 3,
   },
+  // Prometheus 文本格式 /metrics 抓取端点（默认关；抓取方放外部 Prometheus / Grafana Cloud，
+  // 2G 小主机不本地塞监控栈）
+  metricsPrometheus: {
+    enabled: process.env.METRICS_PROMETHEUS_ENABLED === 'true',
+    // 设置后抓取需带 Bearer token（或 ?token=）；本地留空即可
+    token: process.env.METRICS_PROMETHEUS_TOKEN || '',
+  },
   // 文档内容去重（sha256 归一化哈希）：重复上传直接返回已有文档，不再产生重复向量
   document: {
     dedupEnabled: process.env.DOC_DEDUP_ENABLED !== 'false',
