@@ -172,6 +172,7 @@ chat.store（聚合层）→ 页面统一接口
 - `ocr.service.js` — 视觉识别（step-1o-turbo-vision）：图片/扫描件 → Markdown，mupdf 渲染 + 页级并发，支持按页 OCR（opts.pages/returnMap，文本型 PDF 表格页重建用）
 - `judge.service.js` — LLM-as-judge 独立 Key，4 指标合并 1 次请求
 - `prometheus-metrics.service.js` — Prometheus 文本格式渲染（零依赖）：运营计数器 + 有界原始延迟样本现场分桶直方图 + 进程/事件循环自观测，`/api/metrics/prometheus` env 门控 + token 校验，抓取方放外部
+- `otel-tracing.service.js` — OTLP trace 导出（env 门控，`OTEL_EXPORTER_OTLP_ENDPOINT` 设置即启用）：手动埋点三处——middleware HTTP 根 span（http.* 语义属性）、`RagTracer.recordStage` 单点接线全部 RAG 阶段子 span（显式时间戳）、ai.service 非流式/流式 LLM span（gen_ai.* 属性）；关闭时 `@opentelemetry/api` 走 Noop，零依赖加载
 - `intent-router.service.js` — 意图路由（V2.0）：fastRoute 零成本关键词 + LLM 分类兜底（默认关）+ 兜底 rag
 - `agent.service.js` — Agent 工具调度（V2.0）：L2 有界多轮（maxToolRounds=2 + 无进展检测）+ L3 会话记忆摘要 + L4 agent tracer
 - `agent-tools.js` — Agent 工具注册表：search_knowledge_base（复用 RAG）+ calculate（mathjs 安全求值）
@@ -510,6 +511,12 @@ JUDGE_DOUBLE_JUDGE_RATIO=0.1     # 每 10 条抽 1 条复判，两次四指标�
 # Prometheus 抓取端点（默认关；抓取方放外部 Prometheus / Grafana Cloud，2G 小主机不本地塞监控栈）
 METRICS_PROMETHEUS_ENABLED=false
 METRICS_PROMETHEUS_TOKEN=        # 设置后抓取需 Bearer token（或 ?token=）；本地留空即可
+
+# OpenTelemetry traces（OTLP http/protobuf 导出）：设置 OTEL_EXPORTER_OTLP_ENDPOINT 即启用，
+# 关闭时零 SDK 加载、零 span 开销；手动埋点 HTTP 根 span / RAG 阶段 / LLM 调用（gen_ai.*）
+OTEL_EXPORTER_OTLP_ENDPOINT=     # 如 Grafana Cloud / Uptrace 的 OTLP http 端点
+OTEL_SERVICE_NAME=wuli-elf-backend
+OTEL_TRACING_ENABLED=true        # 保留端点变量时显式关闭用 false
 
 # Qdrant 调优
 QDRANT_PAYLOAD_INDEX=true        # docId/category 关键词索引（幂等）

@@ -73,5 +73,5 @@
 | 备份恢复 | `scripts/backup.sh`：SQLite better-sqlite3 在线备份 + Qdrant snapshot API + 轮转 |
 | 存储 | SQLite WAL 默认 / Redis 可切（`memory-store.js` 双后端同接口） |
 | 安全 | httpOnly JWT Cookie、Helmet、限流、配额、MIME 校验、工具 Schema 校验 |
-| 可观测 | 结构化日志 + metrics 服务 + 运营看板（OperationsDashboard.vue）+ Prometheus /api/metrics/prometheus 抓取端点（env 门控 + token） |
+| 可观测 | 结构化日志 + metrics 服务 + 运营看板（OperationsDashboard.vue）+ Prometheus /api/metrics/prometheus 抓取端点（env 门控 + token）+ OTLP trace 导出（otel-tracing.service.js，OTEL_EXPORTER_OTLP_ENDPOINT 门控，HTTP/RAG 阶段/LLM 手动埋点） |
 | 部署 | Docker 三阶段（better-sqlite3 强制编译验证）+ 宿主机 nginx 反代 |

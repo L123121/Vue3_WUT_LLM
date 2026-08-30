@@ -9,34 +9,39 @@ const cookieParser = require('cookie-parser');
 const rateLimit = require('express-rate-limit');
 const { createTraceId, logEvent, sanitizeTraceId } = require('../services/observability.service');
 const { operationalMetrics } = require('../services/operational-metrics.service');
+const { withHttpRootSpan } = require('../services/otel-tracing.service');
 
 function applyMiddleware(app) {
   const isProduction = process.env.NODE_ENV === 'production';
 
   app.use((req, res, next) => {
-    const incomingTraceId = req.get('x-trace-id') || req.get('x-request-id');
-    const traceId = sanitizeTraceId(incomingTraceId) || createTraceId('req');
-    req.traceId = traceId;
-    res.locals.traceId = traceId;
-    res.setHeader('X-Trace-Id', traceId);
+    // HTTP 根 span：OTel 启用时包住整个请求（fn 内异步链共享 span 上下文），
+    // 关闭时直通；traceId 优先上游头，否则在 OTel 启用时采用 OTel traceId（两边同源）
+    withHttpRootSpan(req, res, ({ otelTraceId } = {}) => {
+      const incomingTraceId = req.get('x-trace-id') || req.get('x-request-id');
+      const traceId = sanitizeTraceId(incomingTraceId) || otelTraceId || createTraceId('req');
+      req.traceId = traceId;
+      res.locals.traceId = traceId;
+      res.setHeader('X-Trace-Id', traceId);
 
-    const startedAt = Date.now();
-    res.on('finish', () => {
-      const durationMs = Date.now() - startedAt;
-      const requestPath = req.path || String(req.originalUrl || '').split('?')[0];
-      operationalMetrics.recordRequest({ method: req.method, path: requestPath, statusCode: res.statusCode, durationMs, traceId });
-      if (process.env.HTTP_TRACE_LOGS === 'false') return;
-      logEvent('info', 'http_request', {
-        traceId,
-        method: req.method,
-        path: requestPath,
-        statusCode: res.statusCode,
-        durationMs,
-        userId: req.userId || null,
+      const startedAt = Date.now();
+      res.on('finish', () => {
+        const durationMs = Date.now() - startedAt;
+        const requestPath = req.path || String(req.originalUrl || '').split('?')[0];
+        operationalMetrics.recordRequest({ method: req.method, path: requestPath, statusCode: res.statusCode, durationMs, traceId });
+        if (process.env.HTTP_TRACE_LOGS === 'false') return;
+        logEvent('info', 'http_request', {
+          traceId,
+          method: req.method,
+          path: requestPath,
+          statusCode: res.statusCode,
+          durationMs,
+          userId: req.userId || null,
+        });
       });
-    });
 
-    next();
+      next();
+    });
   });
 
   // CORS — 允许前端跨域 + cookie

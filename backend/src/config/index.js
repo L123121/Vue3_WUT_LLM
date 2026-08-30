@@ -138,6 +138,12 @@ module.exports = {
     // 设置后抓取需带 Bearer token（或 ?token=）；本地留空即可
     token: process.env.METRICS_PROMETHEUS_TOKEN || '',
   },
+  // OpenTelemetry traces（OTLP 导出）：设置 OTEL_EXPORTER_OTLP_ENDPOINT 即启用，
+  // 关闭时零 SDK 加载、零 span 开销；服务名 OTEL_SERVICE_NAME（默认 wuli-elf-backend），
+  // OTEL_TRACING_ENABLED=false 可在保留端点变量的同时显式关闭
+  otel: {
+    enabled: !!process.env.OTEL_EXPORTER_OTLP_ENDPOINT && process.env.OTEL_TRACING_ENABLED !== 'false',
+  },
   // 文档内容去重（sha256 归一化哈希）：重复上传直接返回已有文档，不再产生重复向量
   document: {
     dedupEnabled: process.env.DOC_DEDUP_ENABLED !== 'false',

@@ -2,7 +2,11 @@ require('dotenv').config();
 const express = require('express');
 const config = require('./config');
 const { operationalMetrics } = require('./services/operational-metrics.service');
+const { initTracing, shutdownTracing } = require('./services/otel-tracing.service');
 // 环境变量校验已在 config/index.js 中统一处理，此处不再重复
+
+// OTel traces（OTLP 导出）：OTEL_EXPORTER_OTLP_ENDPOINT 未设置时为 Noop（不加载 SDK）
+initTracing();
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3000', 10);
@@ -91,6 +95,7 @@ async function shutdown(signal, exitCode = 0) {
     console.warn('[Server] 向量数据落盘失败:', error.message);
   }
   operationalMetrics.flush();
+  await shutdownTracing();
   server.close(() => {
     operationalMetrics.close();
     console.log('[Server] HTTP server 已关闭');

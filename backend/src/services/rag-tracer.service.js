@@ -8,6 +8,7 @@ const {
   sanitizeError,
   truncateText,
 } = require('./observability.service');
+const { recordStageSpan } = require('./otel-tracing.service');
 
 const TRACE_KEEP = parseInt(process.env.RAG_TRACE_KEEP || '50', 10) || 50;
 const TRACE_KEY = (userId) => `rag:trace:${userId || 'anonymous'}`;
@@ -39,6 +40,14 @@ class RagTracer {
       success: !!success,
       ...compactPayload(details),
       ...(err ? { error: sanitizeError(err) } : {}),
+    });
+    // OTel 启用时把阶段补成带显式时间戳的子 span（retrieve/rerank/generate…），关闭时 Noop
+    recordStageSpan({
+      name,
+      durationMs,
+      success,
+      attributes: details,
+      traceId: this.traceId,
     });
   }
 
