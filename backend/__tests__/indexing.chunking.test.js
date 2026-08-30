@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 function getIndexingService() {
   delete require.cache[require.resolve('../src/services/indexing.service')];
@@ -132,5 +132,119 @@ describe('RerankerService._fallbackRank', () => {
 
     const result = svc._fallbackRank(candidates, 2);
     expect(result[0].id).toBe('content');
+  });
+});
+
+/**
+ * 场景化子块切割：FAQ 整条 / 表格整表或按行 / 列表按条目
+ * 背景：默认 25 字符句子包对结构化文本会把语义单元切碎（FAQ 串台、
+ * 表格行无语义、列表步骤失归属），检索命中的粒度按块型自适应。
+ */
+describe('IndexingService 场景化子块切割', () => {
+  let svc;
+  let config;
+
+  beforeEach(() => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    config = require('../src/config');
+    const IndexingService = getIndexingService();
+    svc = new IndexingService({ addChunks: vi.fn() }, { embedBatch: vi.fn() });
+  });
+
+  afterEach(() => {
+    config.document.adaptiveChunking = true;
+  });
+
+  const FAQ_TEXT = [
+    '### Q1: 保研需要哪些材料？',
+    '- A. 成绩单',
+    '- B. 个人陈述',
+    '**答案：AB**',
+    '### Q2: 什么时候提交申请？',
+    '大四上学期九月初。',
+  ].join('\n');
+
+  it('FAQ：问答条目整条一个子块，不跨条目合并', () => {
+    const { type, chunks } = svc._splitChildChunks(FAQ_TEXT);
+    expect(type).toBe('faq');
+    expect(chunks).toHaveLength(2);
+    expect(chunks[0]).toContain('保研需要哪些材料');
+    expect(chunks[0]).toContain('答案：AB');
+    expect(chunks[0]).not.toContain('什么时候提交申请');
+    expect(chunks[1]).toContain('什么时候提交申请');
+    expect(chunks[1]).toContain('九月初');
+  });
+
+  it('FAQ：超长条目退回句子合并', () => {
+    const sentenceA = '保研政策涉及推荐资格审核、名额分配、综合成绩计算与复试安排等多个环节，各学院实施细则存在明显差异，申请前务必逐条核对当年发布的官方通知原文。';
+    const sentenceB = '同时应以教务处与学院官网的最新版本为准，避免沿用往年经验导致材料缺失或错过关键时间节点，必要时直接咨询学院教务办确认口径。';
+    const sentenceC = '此外各学院复试差额比例与加分政策每年动态调整，最终名单以公示为准，建议同时准备调剂备选方案。';
+    const text = [
+      '### Q: 政策细节',
+      sentenceA + sentenceB + sentenceC,
+      '### Q: 申请时间',
+      '九月上旬提交材料。',
+    ].join('\n');
+    const { type, chunks } = svc._splitChildChunks(text);
+    expect(type).toBe('faq');
+    expect(chunks.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('表格：小表（≤5 数据行）整表一个子块', () => {
+    const text = [
+      '| 学院 | 复试线 |',
+      '| --- | --- |',
+      '| 计算机学院 | 320 |',
+      '| 材料学院 | 310 |',
+    ].join('\n');
+    const { type, chunks } = svc._splitChildChunks(text);
+    expect(type).toBe('table');
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0]).toContain('计算机学院');
+    expect(chunks[0]).toContain('材料学院');
+  });
+
+  it('表格：大表（>5 数据行）按行切且每行带表头', () => {
+    const rows = Array.from({ length: 7 }, (_, i) => `| 学院${i + 1} | ${300 + i} |`);
+    const text = ['| 学院 | 复试线 |', '| --- | --- |', ...rows].join('\n');
+    const { type, chunks } = svc._splitChildChunks(text);
+    expect(type).toBe('table');
+    expect(chunks).toHaveLength(7);
+    for (const chunk of chunks) {
+      expect(chunk).toContain('复试线');      // 每行子块带表头前缀
+      expect(chunk).not.toContain('---');     // 分隔行不进入子块
+    }
+  });
+
+  it('列表：按条目边界切，条目带引导句前缀', () => {
+    const text = [
+      '成绩查询流程',
+      '1. 登录教务系统',
+      '2. 点击成绩查询菜单',
+      '3. 选择学期后查看成绩单',
+    ].join('\n');
+    const { type, chunks } = svc._splitChildChunks(text);
+    expect(type).toBe('list');
+    expect(chunks).toHaveLength(3);
+    expect(chunks[0]).toBe('成绩查询流程：1. 登录教务系统');
+    expect(chunks[1]).toBe('成绩查询流程：2. 点击成绩查询菜单');
+    expect(chunks[2]).toBe('成绩查询流程：3. 选择学期后查看成绩单');
+  });
+
+  it('散文：默认 25 字符合并行为不变（回归保护）', () => {
+    const text = '学校现有三个校区。校区分布如下。\n马房山校区位于洪山区。余家头校区位于武昌区。';
+    const { type, chunks } = svc._splitChildChunks(text);
+    expect(type).toBe('prose');
+    expect(chunks.length).toBeLessThan(4);      // 短句被合并
+    expect(chunks[0].length).toBeGreaterThanOrEqual(25);
+  });
+
+  it('开关关闭：adaptiveChunking=false 回退 25 字符合并，问答条目被串切', () => {
+    config.document.adaptiveChunking = false;
+    const { type, chunks } = svc._splitChildChunks(FAQ_TEXT);
+    expect(type).toBe('prose');
+    // 回退后按 25 字符累积合并：Q1 的答案与 Q2 的题目被并进同一条子块（召回串台）
+    expect(chunks.some((c) => c.includes('答案：AB') && c.includes('什么时候提交申请'))).toBe(true);
   });
 });

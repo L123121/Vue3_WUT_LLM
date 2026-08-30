@@ -147,6 +147,8 @@ module.exports = {
   // 文档内容去重（sha256 归一化哈希）：重复上传直接返回已有文档，不再产生重复向量
   document: {
     dedupEnabled: process.env.DOC_DEDUP_ENABLED !== 'false',
+    // 场景化子块切割：FAQ 整条 / 表格整表或按行 / 列表按条目（默认开；false 回退 25 字符句子包）
+    adaptiveChunking: process.env.DOC_ADAPTIVE_CHUNKING !== 'false',
   },
   // RAG 检索链路配置
   rag: {

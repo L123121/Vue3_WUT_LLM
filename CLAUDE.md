@@ -68,9 +68,15 @@ StepFun step-3.7-flash → 回复 + sources
 ### 父子段落架构
 
 ```
-文档 → 章节合并(按 一、二、三 标题) → 段落(父级) → 句子(子级)
-检索命中句子 → 按 parentId 去重 → BGE-reranker 排序 → 自适应截断 → LLM 上下文
+文档 → 章节合并(按 一、二、三 标题) → 段落(父级) → 子块(按块型自适应)
+检索命中子块 → 按 parentId 去重 → BGE-reranker 排序 → 自适应截断 → LLM 上下文
 ```
+
+子块粒度场景化（`DOC_ADAPTIVE_CHUNKING`，默认开）：散文仍为 25 字符句子包（语义聚焦）；
+FAQ 问答整条一个子块（题目行/问号行开条目，选项答案归条目，防召回串台）；
+Markdown 表格 ≤5 数据行整表一个子块、大表按行切且每行带表头前缀；
+列表按条目边界切且条目带引导句标题前缀（步骤归属）；条目超 150 字退回句子合并。
+检索命中粒度变了，LLM 看到的仍是完整父段落。
 
 ### 状态管理架构
 
@@ -162,7 +168,7 @@ chat.store（聚合层）→ 页面统一接口
 - `src/components/chat/VoiceRecorder.vue` — 语音输入
 
 ### 后端核心
-- `indexing.service.js` — 段落→句子两层切片 + 中文章节合并
+- `indexing.service.js` — 段落→子块两层切片 + 中文章节合并 + 场景化子块（FAQ 整条/表格整表或按行/列表按条目，`DOC_ADAPTIVE_CHUNKING`）
 - `vector-store-qdrant.service.js` — Qdrant 独立服务（默认，dense+sparse 双查询 + 加权融合）
 - `vector-store.service.js` — 本地文件持久化 + 精确相似度检索（稠密+稀疏混合，可切换）
 - `embedding.service.js` — BGE-small-zh ONNX + n-gram 稀疏（整数 key）
@@ -504,6 +510,7 @@ DOC_CLEAN_ENABLED=true           # 页眉页脚清洗（规则法正则 + 位置
 DOC_CLEAN_MIN_PAGES=3            # 位置法最小分页数
 DOC_CLEAN_REPEAT_RATIO=0.3       # 页眉/页脚候选行的跨页重复占比阈值
 DOC_DEDUP_ENABLED=true
+DOC_ADAPTIVE_CHUNKING=true       # 场景化子块切割（FAQ 整条/表格/列表条目）；false 回退 25 字符句子包
 
 # LLM-as-judge 评测（独立 Key；双判抽样量化 judge 一致性）
 JUDGE_DOUBLE_JUDGE_RATIO=0.1     # 每 10 条抽 1 条复判，两次四指标差均 ≤0.1 判一致；0 关闭
