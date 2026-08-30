@@ -138,7 +138,9 @@ chat.store（聚合层）→ 页面统一接口
 离线测试集（32 题，覆盖 6 文档）
   ├─ eval-retrieval.js → Recall/Precision/MRR/nDCG
   ├─ eval-ragas.js → LLM-as-judge（独立 Key + step-3.5-flash）
-  │   └─ 失败降级 → 关键词匹配
+  │   ├─ 失败降级 → 关键词匹配
+  │   └─ 双判抽样 judge-agreement.service.js → 每 10 条抽 1 条复判（JUDGE_DOUBLE_JUDGE_RATIO），
+  │      两次四指标差均 ≤0.1 判"一致"，一致率/平均分歧随评测返回（抽中样本取均值降方差）
   ├─ 人工抽检 EvalScoring.vue → 1-5 分
   └─ 线上反馈 RagFeedback.vue → like/dislike 统计
 回归评估：基线比对，指标变化 > 2% 告警
@@ -500,6 +502,9 @@ DOC_CLEAN_ENABLED=true           # 页眉页脚清洗（规则法正则 + 位置
 DOC_CLEAN_MIN_PAGES=3            # 位置法最小分页数
 DOC_CLEAN_REPEAT_RATIO=0.3       # 页眉/页脚候选行的跨页重复占比阈值
 DOC_DEDUP_ENABLED=true
+
+# LLM-as-judge 评测（独立 Key；双判抽样量化 judge 一致性）
+JUDGE_DOUBLE_JUDGE_RATIO=0.1     # 每 10 条抽 1 条复判，两次四指标差均 ≤0.1 判一致；0 关闭
 
 # Qdrant 调优
 QDRANT_PAYLOAD_INDEX=true        # docId/category 关键词索引（幂等）
