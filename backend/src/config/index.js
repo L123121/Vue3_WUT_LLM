@@ -119,6 +119,16 @@ module.exports = {
     warnUnkRatio: Number.parseFloat(process.env.DOC_SANITIZE_WARN_UNK_RATIO || '0.03'),
     rejectUnkRatio: Number.parseFloat(process.env.DOC_SANITIZE_REJECT_UNK_RATIO || '0.15'),
   },
+  // 页眉页脚清洗（规则法正则 + 位置法跨页重复行检测，入库前一次完成）
+  docClean: {
+    enabled: process.env.DOC_CLEAN_ENABLED !== 'false',
+    // 位置法：\f 分页数达到该值才启用（页太少无重复性证据）
+    minPagesForPosition: parseInt(process.env.DOC_CLEAN_MIN_PAGES, 10) || 3,
+    // 页眉/页脚候选行需出现的页数占比
+    repeatRatio: Number.parseFloat(process.env.DOC_CLEAN_REPEAT_RATIO || '0.3'),
+    // 每页顶部/底部各考察的非空行数
+    zoneLines: parseInt(process.env.DOC_CLEAN_ZONE_LINES, 10) || 3,
+  },
   // 文档内容去重（sha256 归一化哈希）：重复上传直接返回已有文档，不再产生重复向量
   document: {
     dedupEnabled: process.env.DOC_DEDUP_ENABLED !== 'false',

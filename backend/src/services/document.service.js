@@ -6,6 +6,7 @@ const { TextSplitter } = require('../utils/text-splitter');
 const { redis: store } = require('./memory-store');
 const config = require('../config');
 const { sanitizeDocument } = require('./doc-sanitizer.service');
+const { cleanHeaderFooter } = require('./header-footer-cleaner.service');
 
 const VECTOR_STATUS = Object.freeze({
   LOCAL_ONLY: 'local_only',
@@ -82,8 +83,32 @@ class DocumentService {
       throw new Error('文档内容不能为空');
     }
 
-    // ===== 入库清洗与质量闸门（Prompt injection 过滤 + 乱码占比检查）=====
-    // 清洗只在这里做一遍，之后 embedding 与上下文使用的都是同一份文本
+    // ===== 入库清洗与质量闸门（页眉页脚 → 注入过滤 → 乱码占比）=====
+    // 清洗只在这里做一遍，之后 embedding 与上下文使用的都是同一份文本。
+    // 页眉页脚最先删（结构消歧），顺带让"仅页码不同"的两份文档哈希一致、去重生效
+    const cleanEnabled = config.docClean?.enabled !== false;
+    if (cleanEnabled) {
+      const cleaned = cleanHeaderFooter(content);
+      if (cleaned.report.removedRuleLines + cleaned.report.removedPositionLines > 0) {
+        console.log(
+          `[Document] 页眉页脚清洗: 规则法 ${cleaned.report.removedRuleLines} 行, ` +
+          `位置法 ${cleaned.report.removedPositionLines} 行 (${cleaned.report.pages} 页)`,
+        );
+        metadata = {
+          ...metadata,
+          cleanReport: {
+            pages: cleaned.report.pages,
+            removedRuleLines: cleaned.report.removedRuleLines,
+            removedPositionLines: cleaned.report.removedPositionLines,
+            headerSamples: cleaned.report.headerSamples,
+            footerSamples: cleaned.report.footerSamples,
+          },
+        };
+      }
+      content = cleaned.content;
+    }
+
+    // Prompt injection 过滤 + 乱码占比检查
     const { content: sanitizedContent, report } = sanitizeDocument(content);
     if (report.enabled && report.qualityLevel === 'reject') {
       const rejectRatio = config.docSanitize?.rejectUnkRatio ?? 0.15;
