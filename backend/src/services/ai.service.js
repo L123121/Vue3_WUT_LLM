@@ -5,6 +5,7 @@ const config = require('../config');
 const { request, requestStream } = require('../utils/httpClient');
 const { metrics } = require('./metrics.service');
 const { operationalMetrics } = require('./operational-metrics.service');
+const { withActiveSpan, startLlmSpan, setLlmUsage, endLlmSpan } = require('./otel-tracing.service');
 
 // ==================== 请求队列（API 并发限流） ====================
 // 防止 LLM API 限流（429 Too Many Requests），控制同时发往 API 的请求数量。
@@ -265,63 +266,72 @@ class AiService {
   }
 
   async _requestProvider(provider, message, history, opts) {
-    const path = provider.anthropicMode ? '/v1/messages' : '/v2/chat/completions';
-    const payload = {
-      model: provider.model,
-      messages: opts.messages || this._buildMessages(message, history),
-      max_tokens: provider.maxTokens,
-      temperature: provider.temperature,
-      stream: false,
-    };
-    // 推理模型（如 step-3.7-flash）默认关闭思考链，避免思考 token 耗尽预算导致 content 为空
-    if (!provider.anthropicMode && !provider.enableThinking) {
-      payload.enable_thinking = false;
-    }
-    // 原生 function calling（OpenAI 兼容）：调用方传 opts.tools 时携带工具描述
-    if (!provider.anthropicMode && Array.isArray(opts.tools) && opts.tools.length > 0) {
-      payload.tools = opts.tools;
-    }
-    const body = JSON.stringify(payload);
-    const options = this._buildOptions(path, provider);
-    options.headers['Content-Length'] = Buffer.byteLength(body, 'utf8');
-    // 支持调用方覆盖超时时间和重试次数
-    if (opts.timeout) options.timeout = opts.timeout;
-    if (opts.retries !== undefined) options.retries = opts.retries;
-
-    console.log(`[AI] ${options.hostname}${options.path} model=${provider.model} bodyLen=${body.length} tools=${payload.tools?.length || 0}`);
-
-    const startTime = Date.now();
-    const result = await request(options, body);
-    const latency = Date.now() - startTime;
-    metrics.recordLatency('ai', latency);
-
-    let content = '';
-    let toolCalls = null;
-    if (provider.anthropicMode) {
-      content = result.data?.content?.[0]?.text || '';
-    } else {
-      const msg = result.data?.choices?.[0]?.message || {};
-      content = msg.content || '';
-      toolCalls = Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0 ? msg.tool_calls : null;
-    }
-
-    if (content || toolCalls) {
-      console.log(`[AI] 响应 ${content.length} 字符, tool_calls=${toolCalls?.length || 0}`);
-      const usage = result.data?.usage || null;
-      operationalMetrics.recordLlmUsage({ model: result.data?.model || provider.model, usage, traceId: opts.traceId, latencyMs: latency });
-      return {
-        content,
-        isMock: false,
-        model: result.data?.model || provider.model,
-        usage,
-        toolCalls,
+    // LLM 调用 span：OTel 启用时记录 gen_ai 语义属性（模型/token 用量/时延），关闭时 Noop 直通
+    return withActiveSpan(`LLM chat ${provider.model}`, {
+      'gen_ai.system': 'stepfun',
+      'gen_ai.operation.name': 'chat',
+      'gen_ai.request.model': provider.model,
+    }, async (llmSpan) => {
+      const path = provider.anthropicMode ? '/v1/messages' : '/v2/chat/completions';
+      const payload = {
+        model: provider.model,
+        messages: opts.messages || this._buildMessages(message, history),
+        max_tokens: provider.maxTokens,
+        temperature: provider.temperature,
+        stream: false,
       };
-    } else {
-      const msg = `AI 服务返回空响应: ${JSON.stringify(result.data).substring(0, 200)}`;
-      console.warn('[AI]', msg);
-      // 空响应视为可恢复错误，抛出后触发 fallback
-      throw new Error(msg);
-    }
+      // 推理模型（如 step-3.7-flash）默认关闭思考链，避免思考 token 耗尽预算导致 content 为空
+      if (!provider.anthropicMode && !provider.enableThinking) {
+        payload.enable_thinking = false;
+      }
+      // 原生 function calling（OpenAI 兼容）：调用方传 opts.tools 时携带工具描述
+      if (!provider.anthropicMode && Array.isArray(opts.tools) && opts.tools.length > 0) {
+        payload.tools = opts.tools;
+      }
+      const body = JSON.stringify(payload);
+      const options = this._buildOptions(path, provider);
+      options.headers['Content-Length'] = Buffer.byteLength(body, 'utf8');
+      // 支持调用方覆盖超时时间和重试次数
+      if (opts.timeout) options.timeout = opts.timeout;
+      if (opts.retries !== undefined) options.retries = opts.retries;
+
+      console.log(`[AI] ${options.hostname}${options.path} model=${provider.model} bodyLen=${body.length} tools=${payload.tools?.length || 0}`);
+
+      const startTime = Date.now();
+      const result = await request(options, body);
+      const latency = Date.now() - startTime;
+      metrics.recordLatency('ai', latency);
+
+      let content = '';
+      let toolCalls = null;
+      if (provider.anthropicMode) {
+        content = result.data?.content?.[0]?.text || '';
+      } else {
+        const msg = result.data?.choices?.[0]?.message || {};
+        content = msg.content || '';
+        toolCalls = Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0 ? msg.tool_calls : null;
+      }
+
+      if (content || toolCalls) {
+        console.log(`[AI] 响应 ${content.length} 字符, tool_calls=${toolCalls?.length || 0}`);
+        const usage = result.data?.usage || null;
+        operationalMetrics.recordLlmUsage({ model: result.data?.model || provider.model, usage, traceId: opts.traceId, latencyMs: latency });
+        setLlmUsage(llmSpan, usage);
+        llmSpan.setAttribute('ai.latency_ms', latency);
+        return {
+          content,
+          isMock: false,
+          model: result.data?.model || provider.model,
+          usage,
+          toolCalls,
+        };
+      } else {
+        const msg = `AI 服务返回空响应: ${JSON.stringify(result.data).substring(0, 200)}`;
+        console.warn('[AI]', msg);
+        // 空响应视为可恢复错误，抛出后触发 fallback
+        throw new Error(msg);
+      }
+    });
   }
 
   // ========== 流式（经队列） ==========
@@ -405,10 +415,13 @@ class AiService {
     const streamStart = Date.now();
     console.log(`[AI 流式] ${options.hostname}${options.path} model=${provider.model} bodyLen=${body.length} tools=${payload.tools?.length || 0}`);
 
+    // LLM 流式 span：生成器无法 startActiveSpan，手动起/收（父取活跃上下文），usage 由 _parseStream 补
+    const llmSpan = startLlmSpan(provider, { stream: true });
     let res;
     try {
       res = await requestStream(options, body, opts.signal);
     } catch (err) {
+      endLlmSpan(llmSpan, err);
       // 客户端主动取消：向上抛出，不再尝试 fallback
       if (err.name === 'AbortError' || opts.signal?.aborted) {
         const abortErr = new Error('客户端已断开');
@@ -422,15 +435,21 @@ class AiService {
     if (res.statusCode !== 200) {
       let err = '';
       for await (const c of res) err += c;
+      endLlmSpan(llmSpan, new Error(`HTTP ${res.statusCode}`));
       throw new Error(`HTTP ${res.statusCode}: ${err.substring(0, 200)}`);
     }
 
-    yield* this._parseStream(res, provider, opts);
-
-    metrics.recordLatency('ai', Date.now() - streamStart);
+    try {
+      yield* this._parseStream(res, provider, opts, llmSpan);
+      metrics.recordLatency('ai', Date.now() - streamStart);
+      endLlmSpan(llmSpan);
+    } catch (err) {
+      endLlmSpan(llmSpan, err);
+      throw err;
+    }
   }
 
-  async *_parseStream(res, provider, opts = {}) {
+  async *_parseStream(res, provider, opts = {}, llmSpan = null) {
     let buf = '';
     let streamUsage = null;
     let usageRecorded = false;
@@ -443,6 +462,7 @@ class AiService {
       if (usageRecorded || !streamUsage) return;
       usageRecorded = true;
       operationalMetrics.recordLlmUsage({ model: provider.model, usage: streamUsage, traceId: opts.traceId });
+      setLlmUsage(llmSpan, streamUsage);
     };
 
     for await (const chunk of res) {
