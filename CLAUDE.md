@@ -401,7 +401,7 @@ chat.store（聚合层）→ 页面统一接口
 - 乱码过滤：编码错乱用 `ftfy`；OCR 错字（连续 ? / 方块□）用 `[UNK]` 占位替换 + **告警**提示 OCR 质量差。
 
 **第二步 结构消歧（"去干扰"）— 必须先于断行合并**
-- 页眉页脚清除：① 规则法——正则匹配"第X页/共Y页"、"- X -"、"Copyright ©"删整行；② 位置法——pdfplumber 读字符坐标，页面顶部/底部 2cm 内且字体明显小于正文的字符整体丢弃。
+- 页眉页脚清除（已实现：`header-footer-cleaner.service.js`，`addDocument` 入库时最先执行，`DOC_CLEAN_ENABLED` 开关）：① 规则法——整行正则匹配"第X页/共Y页"、"- X -"、"3/10"、"Page X of Y"、"Copyright ©"删整行（\f 可能紧贴正文行，需按 \f 切片段逐段匹配）；② 位置法——pdf-parse 输出按 \f 分页，统计每页顶部/底部各 3 个非空行中跨页重复出现的行（仅归一化"页码上下文"的数字：`第 N 页`→`第#页`，避免把"2021 年级/2022 年级"这类仅差数字的正文行误并；句末标点行与超长行不作候选），出现页占比 ≥30% 判为页眉/页脚整行删除。这是"页顶/底边缘 + 小字体"坐标信号在纯文本域的等价近似——不引 pdfplumber 坐标依赖，对 OCR 输出的分页文本同样生效。清洗报告（命中行数/样例）入文档 metadata.cleanReport。
 - 换行符修复：`\r\n` → `\n`；断行合并——当前行不以 `。？！：；` 结尾、且下一行不以列表序号（`1.`、`一、`、`-`）开头 → 判定硬断行，`\n` 换空格拼接。
 - ⚠️ 中文特殊性：无大小写概念，断行判断不能依赖"下一行大写开头"，只能靠结尾标点 + 列表序号。
 
@@ -492,10 +492,13 @@ RAG_GROUNDING_MIN_SUPPORT=0.35   # 句子判定"已溯源"的 bigram 覆盖率�
 RAG_QUERY_DECOMPOSE_ENABLED=true
 RAG_DECOMPOSE_MAX_SUB_QUERIES=3
 
-# 入库清洗与去重（Prompt injection 过滤 + 乱码闸门 + 内容 hash 去重）
+# 入库清洗与去重（页眉页脚清洗 + Prompt injection 过滤 + 乱码闸门 + 内容 hash 去重）
 DOC_SANITIZE_ENABLED=true
 DOC_SANITIZE_WARN_UNK_RATIO=0.03
 DOC_SANITIZE_REJECT_UNK_RATIO=0.15
+DOC_CLEAN_ENABLED=true           # 页眉页脚清洗（规则法正则 + 位置法跨页重复行）
+DOC_CLEAN_MIN_PAGES=3            # 位置法最小分页数
+DOC_CLEAN_REPEAT_RATIO=0.3       # 页眉/页脚候选行的跨页重复占比阈值
 DOC_DEDUP_ENABLED=true
 
 # Qdrant 调优
