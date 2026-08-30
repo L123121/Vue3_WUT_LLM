@@ -7,6 +7,7 @@ const { metrics } = require('../services/metrics.service');
 const { operationalMetrics } = require('../services/operational-metrics.service');
 const { getFeedbackSummary } = require('../controllers/rag.controller');
 const { saveEvaluation, getEvaluations, compareEvaluations } = require('../services/quality-governance.service');
+const { doubleJudgeStepForRatio, shouldDoubleJudge, computeJudgeAgreement, averageJudgeResults } = require('../services/judge-agreement.service');
 const config = require('../config');
 
 const router = Router();
@@ -61,6 +62,13 @@ router.post('/run', requireAdmin, async (req, res) => {
     const judge = new JudgeService();
     const results = [];
 
+    // 双判抽样：每 step 条抽 1 条复判，量化 judge 一致性（容差 ±0.1）
+    const doubleJudgeStep = doubleJudgeStepForRatio(config.judge?.doubleJudgeRatio ?? 0.1);
+    if (doubleJudgeStep > 0) {
+      sendLog(`⚖️ [Eval] 双判抽样已启用: 每 ${doubleJudgeStep} 条抽 1 条复判`);
+    }
+    const doubleJudgeStats = { sampled: 0, consistent: 0, inconsistent: 0, judgeFailed: 0, diffSum: 0, diffCount: 0 };
+
     for (let i = 0; i < totalCases; i++) {
       const tc = testCases[i];
       sendLog(`🔄 [Eval #${i + 1}/${totalCases}] 问题: ${tc.question.substring(0, 30)}...`);
@@ -75,12 +83,45 @@ router.post('/run', requireAdmin, async (req, res) => {
         const context = (ragResult.sources || []).map(s => s.snippet || s.content || s.text || '').join('\n');
 
         // 2. LLM-as-judge 评测（独立 Key，不抢生产配额）
-        const judgeResult = await judge.evaluate({
+        let judgeResult = await judge.evaluate({
           question: tc.question,
           answer,
           context,
           ground_truth: tc.ground_truth,
         });
+
+        // 双判抽样：首判成功才复判；复判降级（关键词匹配）不计入一致率
+        let doubleJudge = null;
+        if (!judgeResult.error && shouldDoubleJudge(i, doubleJudgeStep)) {
+          const second = await judge.evaluate({
+            question: tc.question,
+            answer,
+            context,
+            ground_truth: tc.ground_truth,
+          });
+          const agreement = computeJudgeAgreement(judgeResult, second);
+          doubleJudge = {
+            metricDiffs: agreement.metricDiffs,
+            maxDiff: agreement.maxDiff,
+            consistent: agreement.consistent,
+          };
+          doubleJudgeStats.sampled++;
+          if (second.error) {
+            doubleJudge.consistent = null;
+            doubleJudge.judgeError = second.error;
+            doubleJudgeStats.judgeFailed++;
+          } else if (agreement.consistent === true) {
+            doubleJudgeStats.consistent++;
+          } else if (agreement.consistent === false) {
+            doubleJudgeStats.inconsistent++;
+          }
+          if (Number.isFinite(agreement.avgDiff)) {
+            doubleJudgeStats.diffSum += agreement.avgDiff;
+            doubleJudgeStats.diffCount++;
+          }
+          judgeResult = averageJudgeResults(judgeResult, second);
+          sendLog(`⚖️ [Eval #${i + 1}] 双判复评: maxDiff=${agreement.maxDiff} consistent=${agreement.consistent}`);
+        }
 
         const metrics = {
           faithfulness: judgeResult.faithfulness ?? 0,
@@ -104,6 +145,7 @@ router.post('/run', requireAdmin, async (req, res) => {
           judgeLatency: judgeResult.latency,
           latency,
           reason: judgeResult.reason || '',
+          ...(doubleJudge ? { doubleJudge } : {}),
         });
 
         sendLog(`✔️ [Eval #${i + 1}] faithful=${(metrics.faithfulness * 100).toFixed(0)}% ` +
@@ -146,6 +188,24 @@ router.post('/run', requireAdmin, async (req, res) => {
     const citationCoverage = results.length > 0
       ? results.filter((result) => Array.isArray(result.sources) && result.sources.length > 0).length / results.length
       : 0;
+
+    // 双判一致性汇总（judge 稳定性的量化证据，随评测结果返回）
+    const judged = doubleJudgeStats.consistent + doubleJudgeStats.inconsistent;
+    const doubleJudgeSummary = doubleJudgeStats.sampled > 0 ? {
+      sampled: doubleJudgeStats.sampled,
+      consistent: doubleJudgeStats.consistent,
+      inconsistent: doubleJudgeStats.inconsistent,
+      judgeFailed: doubleJudgeStats.judgeFailed,
+      agreementRate: judged > 0 ? Math.round((doubleJudgeStats.consistent / judged) * 1000) / 10 : null,
+      avgMetricDiff: doubleJudgeStats.diffCount > 0
+        ? Math.round((doubleJudgeStats.diffSum / doubleJudgeStats.diffCount) * 10000) / 10000
+        : null,
+    } : null;
+    if (doubleJudgeSummary) {
+      sendLog(`⚖️ [Eval] 双判汇总: ${doubleJudgeStats.sampled} 条抽判, 一致 ${doubleJudgeStats.consistent}/` +
+              `不一致 ${doubleJudgeStats.inconsistent}, 一致率 ${doubleJudgeSummary.agreementRate}%`);
+    }
+
     const feedback = await getFeedbackSummary();
     const operationsAfter = operationalMetrics.snapshot();
     const costCny = Math.max(0, Number(operationsAfter.llm?.estimatedCostCny || 0) - Number(operationsBefore.llm?.estimatedCostCny || 0));
@@ -176,6 +236,7 @@ router.post('/run', requireAdmin, async (req, res) => {
       evaluation,
       comparison,
       costCny,
+      doubleJudge: doubleJudgeSummary,
       results,
     })}\n\n`);
 

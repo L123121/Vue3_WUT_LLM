@@ -58,6 +58,8 @@ module.exports = {
     maxTokens: 256,
     temperature: 0,
     timeout: 15000,
+    // 双判抽样比例：0.1 = 每 10 条抽 1 条复判，量化 judge 一致性；0 关闭
+    doubleJudgeRatio: Number.parseFloat(process.env.JUDGE_DOUBLE_JUDGE_RATIO || '0.1'),
   },
   // 讯飞配置（可选，保留用于星火相关能力）
   xunfei: {
