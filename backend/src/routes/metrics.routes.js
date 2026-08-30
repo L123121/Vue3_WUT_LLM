@@ -12,8 +12,40 @@ const {
   getRiskSummary,
   createKnowledgeTask,
 } = require('../services/quality-governance.service');
+const config = require('../config');
+const {
+  renderPrometheusMetrics,
+  collectPrometheusSnapshot,
+  ensureEventLoopMonitor,
+} = require('../services/prometheus-metrics.service');
 
 const router = express.Router();
+
+// ===== Prometheus 抓取端点（env 门控，默认 404；配置在请求时读取，便于测试与热感知）=====
+if (config.metricsPrometheus?.enabled === true) {
+  ensureEventLoopMonitor();
+  if (!config.metricsPrometheus?.token) {
+    console.warn('[Metrics] METRICS_PROMETHEUS_ENABLED=true 且未设置 METRICS_PROMETHEUS_TOKEN：/api/metrics/prometheus 将匿名可读（含模型成本数据），公网部署请设置 token');
+  }
+}
+
+// GET /api/metrics/prometheus — Prometheus 文本格式（Bearer token 或 ?token= 校验）
+router.get('/prometheus', (req, res) => {
+  const prometheusConfig = config.metricsPrometheus || {};
+  if (!prometheusConfig.enabled) {
+    return res.status(404).json({ success: false, error: 'Not Found' });
+  }
+  const token = prometheusConfig.token || '';
+  if (token) {
+    const provided = String(req.get('authorization') || '').replace(/^Bearer\s+/i, '')
+      || String(req.query.token || '');
+    if (provided !== token) {
+      return res.status(401).json({ success: false, error: '无效的抓取凭证' });
+    }
+  }
+  res.setHeader('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
+  res.send(renderPrometheusMetrics(collectPrometheusSnapshot()));
+});
 
 // 内存存储（轻量，重启清空）
 const webVitalsStore = [];
