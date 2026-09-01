@@ -166,7 +166,6 @@ module.exports = {
     maxContextLength: parseInt(process.env.RAG_MAX_CONTEXT_LENGTH, 10) || 6000,
     minSourceScore: Number.parseFloat(process.env.RAG_MIN_SOURCE_SCORE || '0.03'),
     vectorWeight: Number.parseFloat(process.env.RAG_VECTOR_WEIGHT || '0.6'),
-    keywordWeight: Number.parseFloat(process.env.RAG_KEYWORD_WEIGHT || '0.4'),
     rrfK: parseInt(process.env.RAG_RRF_K, 10) || 60,
     // 父段归并后 MMR 去重：剔除与已选父段高度相似的冗余段落
     mmrEnabled: process.env.RAG_MMR_ENABLED !== 'false',

@@ -1,6 +1,16 @@
 <script setup>
 import { RefreshCw } from 'lucide-vue-next';
 
+// 与 metrics.service 的 latencies 桶位一一对应
+const LATENCY_LABELS = {
+  embedding: 'Embedding',
+  ai: 'LLM 调用',
+  vectorSearch: '向量检索',
+  parentChild: '父子召回',
+  rerank: 'Rerank 精排',
+  total: '端到端',
+};
+
 defineProps({
   systemMetrics: { type: Object, default: null },
   metricsLoading: { type: Boolean, default: false },
@@ -31,7 +41,7 @@ defineEmits(['refresh']);
         <div v-for="([key, val]) in Object.entries(systemMetrics.latency)" :key="key"
           class="p-3 rounded-lg bg-slate-50 dark:bg-gray-700/50 border border-slate-100 dark:border-gray-600/50">
           <div class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-            {{ key === 'ai' ? 'LLM 调用' : key === 'chatdoc' ? 'ChatDoc' : key === 'parentChild' ? '父子召回' : key === 'rerank' ? 'Rerank 精排' : key === 'total' ? '端到端' : '教务接口' }}
+            {{ LATENCY_LABELS[key] || key }}
           </div>
           <div class="text-lg font-bold" :class="getLatencyColor(val.avg)">
             {{ formatLatency(val.avg) }}
