@@ -21,7 +21,6 @@ class MetricsService {
       ai: [],            // LLM 直接调用
       chatdoc: [],       // ChatDoc 检索（保留，兼容旧指标）
       vectorSearch: [],  // Qdrant 向量检索
-      keywordSearch: [], // 关键词检索
       parentChild: [],   // 父子召回增强阶段
       total: [],         // 端到端总延迟
       rerank: []         // Rerank 精排延迟
@@ -43,7 +42,6 @@ class MetricsService {
       ai: { total: 0, count: 0 },
       chatdoc: { total: 0, count: 0 },
       vectorSearch: { total: 0, count: 0 },
-      keywordSearch: { total: 0, count: 0 },
       parentChild: { total: 0, count: 0 },
       total: { total: 0, count: 0 },
       rerank: { total: 0, count: 0 }
