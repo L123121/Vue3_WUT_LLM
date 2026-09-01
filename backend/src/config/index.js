@@ -131,6 +131,11 @@ module.exports = {
     // 每页顶部/底部各考察的非空行数
     zoneLines: parseInt(process.env.DOC_CLEAN_ZONE_LINES, 10) || 3,
   },
+  // 文本归一化（字符级去脏 + 断行合并）：全角字母数字转半角、空白/BOM/控制字符、
+  // 乱码 [UNK] 占位；硬断行 \n 换空格拼接（带结构行保护）。false 时两步全关
+  docNormalize: {
+    enabled: process.env.DOC_NORMALIZE_ENABLED !== 'false',
+  },
   // Prometheus 文本格式 /metrics 抓取端点（默认关；抓取方放外部 Prometheus / Grafana Cloud，
   // 2G 小主机不本地塞监控栈）
   metricsPrometheus: {

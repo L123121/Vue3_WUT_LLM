@@ -29,8 +29,10 @@ const INJECTION_PATTERNS = [
   { name: 'payload_injection', re: /<\/?script|javascript:|onerror\s*=/i },
 ];
 
-// 乱码字符：替换符、全角方块、可见 [UNK] 标记、连续问号串
-const GARBAGE_CHAR_RE = /[\uFFFD\u25A0\u25A1\u96A3]|\[UNK\]/g;
+// 乱码字符：替换符、全角方块、可见 [UNK] 标记、连续问号串。
+// 注意不要把 \u96A3（"邻"）这类常用汉字误收进来——它会被 normalizer 输出直通闸门，
+// 含"邻里/邻校"的正常文档会被虚增乱码占比推向 warn/reject
+const GARBAGE_CHAR_RE = /[\uFFFD\u25A0\u25A1]|\[UNK\]/g;
 const GARBAGE_RUN_RE = /\?{4,}/g;
 
 const REDACTED_LINE = '[已过滤：疑似提示词注入]';
