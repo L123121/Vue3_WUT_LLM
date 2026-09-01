@@ -88,6 +88,10 @@ class RerankerService {
 
     const qKey = String(query || '').trim().toLowerCase();
 
+    // 部分缓存命中：已缓存候选直接保留缓存分（不再送模型），仅 miss 的参与推理，
+    // 最后合并成一份列表统一排序。candidates 本身不被重排前的切片截断
+    let toRank = candidates;
+    const cachedCandidates = [];
     if (config?.rag?.cacheEnabled) {
       const uncached = [];
       let allCached = true;
@@ -98,18 +102,18 @@ class RerankerService {
         if (score !== undefined) {
           c._rerankScore = score;
           c._rerankModel = 'cache';
+          cachedCandidates.push(c);
         } else {
           allCached = false;
           uncached.push(c);
         }
       }
       if (allCached) {
-        candidates.forEach(c => { c._rerankModel = 'cache'; });
         candidates.sort((a, b) => (b._rerankScore || 0) - (a._rerankScore || 0));
         return candidates.slice(0, topK);
       }
       if (uncached.length < candidates.length) {
-        candidates = uncached;
+        toRank = uncached;
       }
     }
 
@@ -125,8 +129,8 @@ class RerankerService {
 
     try {
       const MAX_RERANK = 30;
-      const needed = Math.min(candidates.length, Math.max(topK * 2, 10), MAX_RERANK);
-      const slices = candidates.slice(0, needed);
+      const needed = Math.min(toRank.length, Math.max(topK * 2, 10), MAX_RERANK);
+      const slices = toRank.slice(0, needed);
       const texts = slices.map(c => String(c.text || ''));
 
       const inputs = await tokenizer(texts.map(() => query), {
@@ -158,12 +162,8 @@ class RerankerService {
         }
       }
 
-      // 合并部分缓存结果
-      const allResults = this._pendingMerge
-        ? [...slices, ...this._pendingMerge]
-        : slices;
-      this._pendingMerge = undefined;
-
+      // 合并缓存命中与本次推理结果，统一按 rerank 分排序
+      const allResults = [...slices, ...cachedCandidates];
       allResults.sort((a, b) => (b._rerankScore || 0) - (a._rerankScore || 0));
       return allResults.slice(0, topK);
     } catch (err) {
