@@ -28,8 +28,9 @@ const semanticCache = new SemanticCache({
 
 /**
  * 单路向量检索（Qdrant hybrid）：embedding → search → 类别过滤回退 → 缓存
+ * （历史上曾有独立关键词通道，语义 rerank 上线后按评测结论移除，融合在 vector-store 内完成）
  *
- * @returns {Promise<{ candidates: Array, trace: object, vectorResults: Array, keywordResults: Array }>}
+ * @returns {Promise<{ candidates: Array, trace: object, vectorResults: Array }>}
  */
 async function retrieveCandidates(svc, query, options = {}) {
   const searchTopK = parseInt(options.topK || options.childTopK || svc.searchTopK, 10) || svc.searchTopK;
@@ -65,7 +66,6 @@ async function retrieveCandidates(svc, query, options = {}) {
     },
     embedding: { ok: false, dense: false, sparse: false, latency: 0, model: null },
     vector: { count: 0, latency: 0, error: null, backend: 'qdrant_hybrid' },
-    keyword: { enabled: false, count: 0, latency: 0, error: null },
     fused: { count: 0, topScore: 0, channels: [] },
   };
 
@@ -109,7 +109,7 @@ async function retrieveCandidates(svc, query, options = {}) {
           channels: [...new Set(hit.value.candidates.flatMap(item => item._retrievalChannels || []))],
         };
         console.log(`[SemanticCache] 命中 (sim=${hit.similarity}) "${hit.query}" → 复用 ${hit.value.candidates.length} 条候选`);
-        return { candidates: hit.value.candidates, trace, vectorResults: hit.value.candidates, keywordResults: [] };
+        return { candidates: hit.value.candidates, trace, vectorResults: hit.value.candidates };
       }
     }
 
@@ -167,12 +167,6 @@ async function retrieveCandidates(svc, query, options = {}) {
     logEvent('warn', 'rag_vector_search_failed', { error: err.message });
   }
 
-  svc._recordTraceStage(tracer, 'keyword_search', Date.now(), true, {
-    queryVariant,
-    enabled: false,
-    count: 0,
-  });
-
   trace.fused = {
     count: candidates.length,
     topScore: candidates[0]?.score || 0,
@@ -196,7 +190,7 @@ async function retrieveCandidates(svc, query, options = {}) {
     }
   }
 
-  return { candidates, trace, vectorResults: candidates, keywordResults: [] };
+  return { candidates, trace, vectorResults: candidates };
 }
 
 /**
@@ -208,7 +202,7 @@ async function retrieveParentCandidates(svc, query, options = {}) {
   const childTopK = parseInt(options.childTopK || options.topK || 25, 10) || 25;
   const parentTopK = parseInt(options.parentTopK || 0, 10) || 0;
   const includeChildren = options.includeChildren !== false;
-  const { candidates, trace, vectorResults, keywordResults } = await svc.retrieveCandidates(query, {
+  const { candidates, trace, vectorResults } = await svc.retrieveCandidates(query, {
     ...options,
     tracer,
     topK: childTopK,
@@ -235,7 +229,6 @@ async function retrieveParentCandidates(svc, query, options = {}) {
     retrieval: retrievalSummary,
     trace,
     vectorResults,
-    keywordResults,
   };
 
   return ownsTracer

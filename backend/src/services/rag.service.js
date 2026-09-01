@@ -42,7 +42,6 @@ class RagService {
     this.rerankEnabled = ragConfig.rerankEnabled !== false;
     this.rerankTopK = ragConfig.rerankTopK || 10;
     this.searchTopK = ragConfig.searchTopK || 50;
-    this.keywordTopK = ragConfig.keywordTopK || 20;
     this.hybridSearchEnabled = ragConfig.hybridSearchEnabled !== false;
     this.rrfK = ragConfig.rrfK || 60;
     this.minSourceScore = ragConfig.minSourceScore ?? 0.03;

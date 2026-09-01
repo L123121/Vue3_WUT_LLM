@@ -159,7 +159,6 @@ module.exports = {
   rag: {
     hybridSearchEnabled: process.env.RAG_HYBRID_SEARCH !== 'false',
     searchTopK: parseInt(process.env.RAG_VECTOR_TOP_K, 10) || 50,
-    keywordTopK: parseInt(process.env.RAG_KEYWORD_TOP_K, 10) || 20,
     rerankTopK: parseInt(process.env.RAG_RERANK_TOP_K, 10) || 10,
     // cross-encoder 精排开关：小内存机器（2G）可关——融合归一化修复后排序
     // 不再依赖 reranker，关闭可省约 300MB 内存与单次 ~2s 延迟，排序精度略降

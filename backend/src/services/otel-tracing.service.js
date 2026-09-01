@@ -152,7 +152,7 @@ function recordStageSpan({ name, durationMs, success = true, attributes = {}, tr
     });
     if (!success) span.setStatus({ code: api.SpanStatusCode.ERROR, message: 'stage failed' });
     span.end(endedAt);
-  } catch (err) {
+  } catch {
     // 埋点永不影响主流程
   }
 }
