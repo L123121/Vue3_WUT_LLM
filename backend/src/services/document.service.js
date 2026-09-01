@@ -1,12 +1,12 @@
 "use strict";
 
 const crypto = require('crypto');
-const { v4: uuidv4 } = require('uuid');
 const { TextSplitter } = require('../utils/text-splitter');
 const { redis: store } = require('./memory-store');
 const config = require('../config');
 const { sanitizeDocument } = require('./doc-sanitizer.service');
 const { cleanHeaderFooter } = require('./header-footer-cleaner.service');
+const { normalizeCharacters, mergeHardLineBreaks } = require('./text-normalizer.service');
 
 const VECTOR_STATUS = Object.freeze({
   LOCAL_ONLY: 'local_only',
@@ -83,9 +83,53 @@ class DocumentService {
       throw new Error('文档内容不能为空');
     }
 
-    // ===== 入库清洗与质量闸门（页眉页脚 → 注入过滤 → 乱码占比）=====
-    // 清洗只在这里做一遍，之后 embedding 与上下文使用的都是同一份文本。
-    // 页眉页脚最先删（结构消歧），顺带让"仅页码不同"的两份文档哈希一致、去重生效
+    // ===== 入库清洗管线（顺序固定）=====
+    // ① 字符级去脏（全角数字转半角后，页眉页脚规则法的 \d 才匹配"第３页"）
+    // ② 注入过滤 + 乱码闸门：必须在断行合并之前——注入行若被并入正文行，
+    //    整行替换会连正文一起误伤
+    // ③ 页眉页脚删除（结构消歧；断行合并前做，否则页眉行被拼进正文后位置法失效）
+    // ④ 断行合并。清洗只在这里做一遍，之后 embedding 与上下文用的都是同一份文本
+    const normalizeEnabled = config.docNormalize?.enabled !== false;
+    let normalizeReport = null;
+    if (normalizeEnabled) {
+      const norm = normalizeCharacters(content);
+      if (norm.report.totalReplaced > 0) {
+        console.log(`[Document] 字符级去脏: ${norm.report.totalReplaced} 处（乱码 ${norm.report.garbageReplaced + norm.report.mojibakeReplaced}）`);
+        normalizeReport = {
+          fullwidth: norm.report.fullwidth,
+          whitespace: norm.report.whitespace,
+          bom: norm.report.bom,
+          control: norm.report.control,
+          garbageReplaced: norm.report.garbageReplaced + norm.report.mojibakeReplaced,
+        };
+      }
+      content = norm.content;
+    }
+
+    // 注入过滤 + 乱码占比检查
+    const { content: sanitizedContent, report } = sanitizeDocument(content);
+    if (report.enabled && report.qualityLevel === 'reject') {
+      const rejectRatio = config.docSanitize?.rejectUnkRatio ?? 0.15;
+      throw new Error(
+        `文档质量检查未通过：乱码/坏字符占比 ${(report.garbageRatio * 100).toFixed(1)}%` +
+        ` 超过阈值 ${(rejectRatio * 100).toFixed(0)}%，已拒绝入库`,
+      );
+    }
+    if (report.injectionLines > 0) {
+      console.warn(`[Document] 已过滤 ${report.injectionLines} 行疑似提示词注入: ${JSON.stringify(report.injectionHits.slice(0, 5))}`);
+    }
+    if (report.qualityLevel === 'warn') {
+      console.warn(`[Document] 文档乱码占比偏高: ${(report.garbageRatio * 100).toFixed(2)}%（已入库，建议人工复核）`);
+    }
+    if (report.injectionLines > 0 || report.garbageRatio > 0) {
+      metadata = { ...metadata, sanitizeReport: { injectionLines: report.injectionLines, garbageRatio: report.garbageRatio, qualityLevel: report.qualityLevel } };
+    }
+    if (normalizeReport) {
+      metadata = { ...metadata, normalizeReport };
+    }
+    content = sanitizedContent;
+
+    // 页眉页脚删除（结构消歧），顺带让"仅页码不同"的两份文档哈希一致、去重生效
     const cleanEnabled = config.docClean?.enabled !== false;
     if (cleanEnabled) {
       const cleaned = cleanHeaderFooter(content);
@@ -108,25 +152,18 @@ class DocumentService {
       content = cleaned.content;
     }
 
-    // Prompt injection 过滤 + 乱码占比检查
-    const { content: sanitizedContent, report } = sanitizeDocument(content);
-    if (report.enabled && report.qualityLevel === 'reject') {
-      const rejectRatio = config.docSanitize?.rejectUnkRatio ?? 0.15;
-      throw new Error(
-        `文档质量检查未通过：乱码/坏字符占比 ${(report.garbageRatio * 100).toFixed(1)}%` +
-        ` 超过阈值 ${(rejectRatio * 100).toFixed(0)}%，已拒绝入库`,
-      );
+    // 断行合并（最后一步）：此时页眉页脚已删、注入行已替换，合并不会再污染正文
+    if (normalizeEnabled) {
+      const merged = mergeHardLineBreaks(content);
+      if (merged.report.merged > 0) {
+        console.log(`[Document] 断行合并: ${merged.report.merged} 处`);
+        // merge 步骤本身可能产生第一份 normalizeReport（无可替换字符但有断行），
+        // 赋值后必然非空，直接落库
+        normalizeReport = { ...normalizeReport, mergedLines: merged.report.merged };
+        metadata = { ...metadata, normalizeReport };
+      }
+      content = merged.content;
     }
-    if (report.injectionLines > 0) {
-      console.warn(`[Document] 已过滤 ${report.injectionLines} 行疑似提示词注入: ${JSON.stringify(report.injectionHits.slice(0, 5))}`);
-    }
-    if (report.qualityLevel === 'warn') {
-      console.warn(`[Document] 文档乱码占比偏高: ${(report.garbageRatio * 100).toFixed(2)}%（已入库，建议人工复核）`);
-    }
-    if (report.injectionLines > 0 || report.garbageRatio > 0) {
-      metadata = { ...metadata, sanitizeReport: { injectionLines: report.injectionLines, garbageRatio: report.garbageRatio, qualityLevel: report.qualityLevel } };
-    }
-    content = sanitizedContent;
 
     // ===== 内容去重：同内容文档直接返回已有记录，不再产生重复向量 =====
     const dedupEnabled = config.document?.dedupEnabled !== false && !options.force;
@@ -149,7 +186,7 @@ class DocumentService {
       }
     }
 
-    const docId = `doc_${uuidv4()}`;
+    const docId = `doc_${crypto.randomUUID()}`;
     const now = Date.now();
 
     // 切片计数（仅用于元数据展示）
