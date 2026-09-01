@@ -2,7 +2,6 @@
 import { ref, watch, computed, onMounted, onBeforeUnmount } from 'vue';
 import { useChatStore } from '../stores/chat.store.js';
 import { useToastStore } from '../stores/toast.store.js';
-import { useLanguageStore } from '../stores/language.store.js';
 import { useFavoritesStore } from '../stores/favorites.store.js';
 import { Bot, Eraser, Download, ClipboardCopy, FileText, FileCode2, Share2, BookOpen, GraduationCap, Landmark, Library, Volume2, VolumeX } from 'lucide-vue-next';
 import MessageList from '../components/chat/MessageList.vue';
@@ -17,11 +16,9 @@ import { getDocuments } from '../api/rag.js';
 
 const chatStore = useChatStore();
 const toast = useToastStore();
-const languageStore = useLanguageStore();
 const favoritesStore = useFavoritesStore();
 const speechPlayer = useSpeechPlayer();
 const autoSpeak = ref(localStorage.getItem('chat_auto_speak') === 'true');
-const text = computed(() => languageStore.tm('aiChat'));
 const { messageListRef, chatBoxRef, focusChatInput, scrollToBottom, scrollToFavoritedMessage } = useChatScroll(favoritesStore);
 const { showExportMenu, copyConversationAsText, exportConversation, exportConversationAsHtml, shareConversation } = useConversationExport(chatStore, toast);
 
@@ -50,7 +47,7 @@ watch(() => favoritesStore.pendingScrollMessageId, (id) => {
   scrollToFavoritedMessage(id);
 });
 
-const currentTitle = computed(() => chatStore.currentConversation?.title || text.value.assistantTitle);
+const currentTitle = computed(() => chatStore.currentConversation?.title || 'AI 助手');
 const effectiveMessageCount = computed(() => chatStore.messages.filter((msg) => msg.id !== 'welcome' && msg.text?.trim()).length);
 const canClear = computed(() => effectiveMessageCount.value > 0 && !chatStore.isLoading);
 
@@ -102,7 +99,7 @@ const handleError = (message) => {
 };
 
 const handleCopy = () => {
-  toast.success(text.value.copied);
+  toast.success('内容已复制到剪贴板');
 };
 
 // 导出对话

@@ -1,7 +1,6 @@
 <script setup>
 import { ref, watch, nextTick, computed } from 'vue';
 import { Send, Wifi, WifiOff, Command, Trash2, Download, Paperclip, X, FileText, Square } from 'lucide-vue-next';
-import { useLanguageStore } from '../../stores/language.store.js';
 import { useChatStore } from '../../stores/chat.store.js';
 import { useToastStore } from '../../stores/toast.store.js';
 import { uploadChatFile } from '../../api/chat.js';
@@ -17,7 +16,6 @@ const props = defineProps({
 });
 
 const emit = defineEmits(['send', 'error', 'command']);
-const languageStore = useLanguageStore();
 const chatStore = useChatStore();
 const toast = useToastStore();
 const input = ref('');
@@ -281,9 +279,9 @@ defineExpose({
         ref="textareaRef"
         v-model="input"
         @keydown="handleKeydown"
-        :placeholder="placeholder || languageStore.t('chat.inputPlaceholder')"
+        :placeholder="placeholder || '输入您的问题...'"
         :disabled="isLoading"
-        :aria-label="placeholder || languageStore.t('chat.inputPlaceholder')"
+        :aria-label="placeholder || '输入您的问题...'"
         rows="1"
         class="w-full bg-transparent text-slate-800 dark:text-white placeholder:text-slate-400 dark:placeholder:text-gray-500 border-none focus:ring-0 px-1 py-1.5 outline-none resize-none max-h-24 text-sm disabled:opacity-50"
         style="min-height: 32px;"

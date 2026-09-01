@@ -1,7 +1,6 @@
 <script setup>
 import { ref, computed } from 'vue';
 import { Copy, Star, Volume2, Square, Loader2, ThumbsUp, ThumbsDown, GitFork, Pencil } from 'lucide-vue-next';
-import { useLanguageStore } from '../../stores/language.store.js';
 import { useChatStore } from '../../stores/chat.store.js';
 import { useConversationStore } from '../../stores/conversation.store.js';
 import { useFavoritesStore } from '../../stores/favorites.store.js';
@@ -29,7 +28,6 @@ const props = defineProps({
 
 const emit = defineEmits(['copy', 'start-edit']);
 
-const languageStore = useLanguageStore();
 const chatStore = useChatStore();
 const favoritesStore = useFavoritesStore();
 const toast = useToastStore();
@@ -146,7 +144,8 @@ const forkFromHere = async () => {
   }
 };
 
-const formatTime = (timestamp) => languageStore.formatTime(timestamp);
+const formatTime = (timestamp) =>
+  new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit' }).format(new Date(timestamp));
 </script>
 
 <template>
@@ -195,7 +194,7 @@ const formatTime = (timestamp) => languageStore.formatTime(timestamp);
       v-if="isModel && !isError && messageText"
       class="flex items-center gap-1 hover:text-wut-500 transition-all duration-200 cursor-pointer px-1.5 py-0.5 rounded hover:bg-wut-50 dark:hover:bg-gray-700 text-sm opacity-60 hover:opacity-100"
       @click="copyMessage(messageText)"
-      :title="languageStore.t('chat.copyReply')"
+      title="复制回复"
     >
       <Copy :size="14" />
       <span>复制</span>
