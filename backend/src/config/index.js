@@ -225,15 +225,37 @@ module.exports = {
   },
   // 管理员登录配置（密码未设置时生成随机密码，禁止空密码）
   admin: (() => {
-    let password = process.env.ADMIN_PASSWORD || '';
-    if (!password) {
-      password = require('crypto').randomBytes(12).toString('base64url');
-      console.warn('[Config] 未设置 ADMIN_PASSWORD，已生成随机管理员密码:', password);
-      console.warn('[Config] 请在 .env 中设置 ADMIN_PASSWORD 以固定管理员密码');
+    const fs = require('fs');
+    const path = require('path');
+    const username = process.env.ADMIN_USERNAME || 'admin';
+    const fromEnv = process.env.ADMIN_PASSWORD || '';
+
+    if (fromEnv) {
+      // 环境变量已接管：清理历史生成的密码文件，避免旧凭据残留磁盘
+      try { fs.unlinkSync(path.join(__dirname, '../../data/admin-password.txt')); } catch { /* 不存在或不可删均可忽略 */ }
+      return { username, password: fromEnv };
     }
-    return {
-      username: process.env.ADMIN_USERNAME || 'admin',
-      password,
-    };
+
+    // 未设置 ADMIN_PASSWORD：生成随机密码写入本地文件（backend/.gitignore 已排除 data/*），
+    // 重启复用同一份避免轮换；密码本身绝不打印到控制台/日志
+    const credFile = path.join(__dirname, '../../data/admin-password.txt');
+    try {
+      const persisted = fs.existsSync(credFile) ? fs.readFileSync(credFile, 'utf8').trim() : '';
+      if (persisted) {
+        console.warn('[Config] 未设置 ADMIN_PASSWORD，复用已生成的管理员密码文件:', credFile);
+        return { username, password: persisted };
+      }
+      const generated = require('crypto').randomBytes(12).toString('base64url');
+      fs.mkdirSync(path.dirname(credFile), { recursive: true });
+      fs.writeFileSync(credFile, generated, { mode: 0o600 });
+      console.warn('[Config] 未设置 ADMIN_PASSWORD，已生成随机管理员密码并写入文件（不打印明文）:', credFile);
+      console.warn('[Config] 请尽快在 .env 中设置 ADMIN_PASSWORD 以固定管理员密码');
+      return { username, password: generated };
+    } catch (err) {
+      // 落盘失败（只读文件系统等）：fail-closed，不生成无人知晓的密码，也不打印明文
+      console.error('[Config] 管理员密码文件读写失败:', err.message);
+      console.error('[Config] 请通过环境变量 ADMIN_PASSWORD 显式指定管理员密码');
+      return { username, password: '' };
+    }
   })(),
 };
