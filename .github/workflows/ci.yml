@@ -1,0 +1,66 @@
+# ======================================================================
+# PR CI — 武理小精灵
+# 功能: PR 触发与 deploy.yml check job 同等强度的门禁（Lint → Audit → Test）
+# 说明: deploy.yml 仅在 push main 时触发，PR 阶段由本工作流把关，
+#       保证进入 main 的代码先通过同一套检查，避免"合入后才发现红灯"
+# ======================================================================
+
+name: PR CI
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "src/**"
+      - "public/**"
+      - "deploy/**"
+      - "index.html"
+      - "package.json"
+      - "package-lock.json"
+      - "vite.config.js"
+      - "vite-plugin-perf.js"
+      - "Dockerfile"
+      - "docker-compose.yml"
+      - ".github/workflows/ci.yml"
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+
+      - name: Install frontend dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Install backend dependencies
+        run: npm ci
+        working-directory: backend
+
+      - name: Lint
+        run: npm run lint:check
+
+      - name: Audit production dependencies
+        run: |
+          npm audit --omit=dev --audit-level=high
+          npm audit --omit=dev --audit-level=high --prefix backend
+
+      - name: Run tests
+        run: npm run test:all
+        env:
+          JWT_SECRET: test-secret
+          AI_API_KEY: test-ai-key
