@@ -2,12 +2,10 @@
 import { computed, ref, onUnmounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useChatStore } from '../../stores/chat.store';
-import { useLanguageStore } from '../../stores/language.store';
 import { ChevronDown, ChevronRight, Plus, Check, X, MessageSquare, Edit3, Trash2, Search } from 'lucide-vue-next';
 import ConfirmDialog from '../common/ConfirmDialog.vue';
 
 const chatStore = useChatStore();
-const languageStore = useLanguageStore();
 const route = useRoute();
 const router = useRouter();
 
@@ -111,7 +109,7 @@ const formatTime = (date) => {
   if (minutes < 60) return labels.value.minutesAgo(minutes);
   if (hours < 24) return labels.value.hoursAgo(hours);
   if (days < 7) return labels.value.daysAgo(days);
-  return languageStore.formatDate(date, { year: 'numeric', month: '2-digit', day: '2-digit' });
+  return new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(date));
 };
 
 const startEdit = (conv) => {

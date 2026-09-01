@@ -2,7 +2,6 @@
 import { ref, computed, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
 import { User, Bot, RotateCcw, FileText, BookOpen } from 'lucide-vue-next';
-import { useLanguageStore } from '../../stores/language.store.js';
 import { useChatStore } from '../../stores/chat.store.js';
 import { useAuthStore } from '../../stores/auth.store.js';
 import MarkdownRenderer from './MarkdownRenderer.vue';
@@ -36,7 +35,6 @@ const props = defineProps({
 
 const emit = defineEmits(['copy', 'focus-input']);
 const router = useRouter();
-const languageStore = useLanguageStore();
 const chatStore = useChatStore();
 const authStore = useAuthStore();
 
@@ -215,7 +213,7 @@ const saveEdit = async () => {
           v-if="isUser && canRetry"
           class="retry-btn absolute -right-2 -top-2 flex items-center gap-1 bg-orange-500 hover:bg-orange-600 text-white px-2 py-1 rounded-full text-xs shadow-lg transition-all duration-200 cursor-pointer"
           @click="retryMessage(message.id)"
-          :title="languageStore.t('chat.retry') || '重新发送'"
+          :title="'重新发送'"
         >
           <RotateCcw :size="12" />
           <span>重发</span>
