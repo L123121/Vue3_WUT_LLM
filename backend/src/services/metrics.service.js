@@ -19,7 +19,6 @@ class MetricsService {
     this.latencies = {
       embedding: [],     // Embedding 生成
       ai: [],            // LLM 直接调用
-      chatdoc: [],       // ChatDoc 检索（保留，兼容旧指标）
       vectorSearch: [],  // Qdrant 向量检索
       parentChild: [],   // 父子召回增强阶段
       total: [],         // 端到端总延迟
@@ -40,7 +39,6 @@ class MetricsService {
     this.latencyBuckets = {
       embedding: { total: 0, count: 0 },
       ai: { total: 0, count: 0 },
-      chatdoc: { total: 0, count: 0 },
       vectorSearch: { total: 0, count: 0 },
       parentChild: { total: 0, count: 0 },
       total: { total: 0, count: 0 },
@@ -57,7 +55,7 @@ class MetricsService {
 
   /**
    * 记录单次延迟
-   * @param {'ai'|'chatdoc'|'vectorSearch'|'parentChild'|'total'|'rerank'} type
+   * @param {'ai'|'vectorSearch'|'parentChild'|'total'|'rerank'} type
    * @param {number} ms - 毫秒
    */
   recordLatency(type, ms) {

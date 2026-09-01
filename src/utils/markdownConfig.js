@@ -2,7 +2,7 @@
  * Markdown 渲染共享配置
  *
  * 统一管理 DOMPurify 白名单、补全逻辑和转义函数，
- * 供 useMarkdownRenderer.js、MarkdownRenderer.vue 和 markdown.worker.js 共同使用。
+ * 供 MarkdownRenderer.vue 和 markdown.worker.js 共同使用。
  */
 
 // DOMPurify 允许的 HTML 标签

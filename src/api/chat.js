@@ -25,7 +25,6 @@ const getExponentialDelay = (attempt) => {
 export const connectionManager = {
   isConnected: true,
   lastHeartbeat: Date.now(),
-  pendingMessages: [],
   listeners: new Set(),
 
   subscribe(callback) {
@@ -44,40 +43,6 @@ export const connectionManager = {
     if (wasConnected !== connected) {
       this.notify(connected ? 'connected' : 'disconnected');
     }
-  },
-
-  addPendingMessage(message) {
-    this.pendingMessages.push({ ...message, timestamp: Date.now() });
-    this.savePendingMessages();
-  },
-
-  removePendingMessage(id) {
-    this.pendingMessages = this.pendingMessages.filter((m) => m.id !== id);
-    this.savePendingMessages();
-  },
-
-  savePendingMessages() {
-    try {
-      localStorage.setItem('pending_messages', JSON.stringify(this.pendingMessages));
-    } catch (e) {
-      console.warn('Failed to save pending messages:', e);
-    }
-  },
-
-  loadPendingMessages() {
-    try {
-      const stored = localStorage.getItem('pending_messages');
-      if (stored) {
-        this.pendingMessages = JSON.parse(stored);
-      }
-    } catch (e) {
-      console.warn('Failed to load pending messages:', e);
-    }
-  },
-
-  clearPendingMessages() {
-    this.pendingMessages = [];
-    localStorage.removeItem('pending_messages');
   },
 };
 
@@ -115,7 +80,6 @@ const startHeartbeat = () => {
   }, HEARTBEAT_INTERVAL);
 };
 
-connectionManager.loadPendingMessages();
 startHeartbeat();
 
 // Streaming message with stall detection
@@ -126,11 +90,6 @@ export const sendMessageStream = async (message, history = [], callbacks, option
   const maxRetries = options.maxRetries ?? MAX_RETRIES;
   const attempt = options.attempt ?? 0;
   const conversationId = options.conversationId;
-
-  const messageId = `msg_${Date.now()}`;
-  if (attempt === 0) {
-    connectionManager.addPendingMessage({ id: messageId, message, history, conversationId });
-  }
 
   // TTFT 埋点：记录 fetch 发起时刻
   const ttftStart = performance.now();
@@ -150,7 +109,6 @@ export const sendMessageStream = async (message, history = [], callbacks, option
     debug('[Stream] response OK, body type:', response.body?.constructor?.name, 'status:', response.status);
 
     connectionManager.setConnected(true);
-    connectionManager.removePendingMessage(messageId);
 
     const reader = response.body.getReader();
     debug('[Stream] reader created');
@@ -259,7 +217,6 @@ export const sendMessageStream = async (message, history = [], callbacks, option
 
     if (error.name === 'AbortError') {
       console.warn('[Stream] 流式请求被正常中止:', error.message);
-      connectionManager.removePendingMessage(messageId);
       callbacks.onAbort?.();
       return;
     }
@@ -277,7 +234,6 @@ export const sendMessageStream = async (message, history = [], callbacks, option
       });
     }
 
-    connectionManager.removePendingMessage(messageId);
     console.error('[Stream] all retries exhausted, calling onError. Error:', error.message);
     callbacks.onError(error);
   }
