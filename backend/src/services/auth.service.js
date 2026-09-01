@@ -71,6 +71,14 @@ function createAuthError(code, message, status = 400) {
   return error;
 }
 
+// 环境变量口令的比较走常量时间：先各自 sha256 归一长度（timingSafeEqual 要求等长 Buffer，
+// 直接比较原始字符串会因长度差异提前返回而泄露长度信息）
+function timingSafeSecretEqual(a, b) {
+  const digestA = crypto.createHash('sha256').update(String(a)).digest();
+  const digestB = crypto.createHash('sha256').update(String(b)).digest();
+  return crypto.timingSafeEqual(digestA, digestB);
+}
+
 async function hashPassword(password) {
   const salt = crypto.randomBytes(16).toString('hex');
   const derivedKey = await scrypt(password, salt, 64);
@@ -132,8 +140,8 @@ class AuthService {
       throw createAuthError('MISSING_CREDENTIALS', '请输入用户名和密码');
     }
 
-    // 管理员账号：通过统一登录入口验证
-    if (normalizedUsername === normalizeUsername(config.admin.username) && password === config.admin.password) {
+    // 管理员账号：通过统一登录入口验证（口令常量时间比较，不走 scrypt 用户表）
+    if (normalizedUsername === normalizeUsername(config.admin.username) && timingSafeSecretEqual(password, config.admin.password)) {
       return {
         id: 'admin',
         username: config.admin.username || 'admin',
