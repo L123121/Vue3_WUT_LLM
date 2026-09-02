@@ -62,7 +62,11 @@ function adaptiveTruncate(candidates, maxCount, query, overrides = {}, resolveTy
   if (candidates.length <= 1) return candidates;
 
   const typeConfig = query ? resolveTypeConfig(query) : null;
-  const effectiveMaxCount = overrides.rerankTopK ?? (typeConfig ? typeConfig.rerankTopK : maxCount);
+  // maxCount（RAG_RERANK_TOP_K）与类型上限取小：此前 maxCount 被 typeConfig 恒定覆盖，env 旋钮无效
+  const effectiveMaxCount = Math.min(
+    overrides.rerankTopK ?? maxCount,
+    typeConfig ? typeConfig.rerankTopK : maxCount,
+  );
   const baseMinScore = overrides.rerankMinScore ?? (typeConfig ? typeConfig.minScore : 0.30);
   const clamp = typeConfig ? typeConfig.clamp : [0.20, 0.50];
   const cliffGap = overrides.rerankDropoff ?? 0.05;

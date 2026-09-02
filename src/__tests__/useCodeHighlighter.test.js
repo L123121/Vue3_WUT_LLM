@@ -130,14 +130,16 @@ describe('useCodeHighlighter', () => {
   });
 
   describe('highlightVersion', () => {
-    it('starts at 0', () => {
-      expect(highlighter.highlightVersion.value).toBe(0);
+    it('is shared across composable instances (module-level state)', () => {
+      const another = useCodeHighlighter();
+      expect(another.highlightVersion).toBe(highlighter.highlightVersion);
     });
   });
 
   describe('loadedLanguages', () => {
-    it('starts empty', () => {
-      expect(highlighter.loadedLanguages.size).toBe(0);
+    it('is shared across composable instances (module-level state)', () => {
+      const another = useCodeHighlighter();
+      expect(another.loadedLanguages).toBe(highlighter.loadedLanguages);
     });
   });
 });

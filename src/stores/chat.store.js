@@ -36,8 +36,8 @@ export const useChatStore = defineStore('chat', () => {
   const currentConversation = computed(() => conversationStore.currentConversation);
   const sortedConversations = computed(() => conversationStore.sortedConversations);
   // updateMessage 通过 conv.messages = newMessages 替换引用来触发响应式，
-  // 这里直接返回 conv.messages 即可触发 computed 重算，无需额外浅拷贝
-  // （浅拷贝会与 MessageList 的 v-memo 交互产生过期渲染，且增加每帧开销）
+  // 这里直接返回 conv.messages 即可触发 computed 重算，无需每帧浅拷贝
+  // （MessageList 未用 v-memo，浅拷贝只会凭空增加每帧开销）
   const messages = computed(() => conversationStore.currentConversation?.messages || []);
   const isLoaded = computed(() => conversationStore.isLoaded);
 

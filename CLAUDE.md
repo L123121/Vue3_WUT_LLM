@@ -160,7 +160,7 @@ chat.store（聚合层）→ 页面统一接口
 - `src/stores/conversation.store.js` — 会话数据
 - `src/stores/message.store.js` — 流式状态
 - `src/composables/useStreaming.js` — SSE 流式
-- `src/composables/useMarkdownRenderer.js` — Markdown 渲染
+- `src/utils/markdownRendererCore.js` — 模块级 MarkdownIt 单例 + DOMPurify 消毒（MarkdownRenderer.vue 在此之上叠加引用徽标与搜索高亮）
 - `src/api/chat.js` — 流式 API + 连接管理
 - `src/components/chat/ChatBox.vue` — 输入框/语音/文件上传
 - `src/components/chat/MessageList.vue` — 消息列表
@@ -383,6 +383,23 @@ chat.store（聚合层）→ 页面统一接口
 - 效果：同问复测上下文 228 → **6099** 字符、父段 2 → 6，回答从空卡片变为完整官方材料清单（申请表/承诺书/CET-4 成绩/教授推荐书等 11 项）
 - ⚠️ 教训：模型文件缺失是**静默降级**（console.warn + 伪造的模型标签），健康检查全绿——生产部署后应巡检 "[Embedding] 本地模型加载失败" 日志；文件后端 weighted 融合为历史评测复现保留原样（其默认 RRF 免疫量纲问题）
 - 测试：vector-store-qdrant.test.js 融合归一化用例（含开关回退）、indexing.chunking.test.js 新增 6 用例；后端全量 357 用例通过
+
+**23. 全链路审查修复：SSE 事件丢失 / 进程级崩溃隐患 / 三处缓存失效 / 前端流式状态机收敛（2026-09-02）**
+- 背景：对前后端核心链路做整体代码审查，修复 13 处问题（含多个"已上线但实际无效"的优化）
+- ① SSE 事件丢失：`/api/stream` 的 `writeStreamEvent` 没有 grounding/usage/followups 分支且显式丢弃 retrieval——主聊天路径上溯源徽标、token 用量、追问 chips（第 18/16 轮成果）从未到达前端，rag.controller 路径正常所以测试未发现。两个 controller 补齐转发（usage 两侧都补）
+- ② unhandledRejection 击穿进程：agent `decide()` 与 intent-router `classify()` 的 `Promise.race` 超时胜出后，落败的 LLM Promise 若稍后 reject（限流/断连，LLM_CONCURRENCY 排队下大概率迟到）无人观察 → Node 15+ 默认退出。补 `.catch(() => {})`（同 tool-registry withTimeout 的既有处理）
+- ③ 检索缓存永不命中：`canCache` 排除带 tracer 的调用，而所有生产路径都创建 tracer → 500 条精确缓存与语义缓存全是死代码。修复：tracer 只是观测不参与语义，允许缓存；键加入 topK；命中返回 trace 拷贝、写入存 trace 快照（dualRetrieve 会向返回的 trace 追加 queryRewrite/queryDecompose 字段，共享对象会跨请求泄漏）
+- ④ reranker 分数缓存键截断前 200 字符：同段落父候选常共享前缀互相顶替分数，污染自适应截断的断崖检测。改全量 md5（embedding 层同类问题此前已修，此处遗漏）
+- ⑤ `RAG_RERANK_TOP_K` 死旋钮：typeConfig 恒定覆盖 maxCount，env 调了没反应。改 `min(overrides ?? maxCount, typeConfig 上限)`，默认行为不变
+- ⑥ embedding 降级仍谎报模型标签（第 22 轮事故根因之一未除）：`_localDense` 失败降级 n-gram 后 model 仍报 "BGE-small-zh:local-onnx"。改返回 `{vector, degraded}`，降级时 model='ngram-fallback' 且随 embedding 对象带 degraded 标记
+- ⑦ agent 收尾生成裸抛：工具已执行成功但收尾 LLM 失败时直接 500/error SSE，未走既有降级。补 try/catch，未流出内容时 yield AgentDecisionError 降级 RAG，已流出则礼貌收尾（同决策期模式）
+- ⑧ 前端心跳死锁：心跳断连即 return，而发送按钮依赖 isConnected——一次瞬时失败后心跳不再探测恢复、用户被锁死到刷新。移除提前 return
+- ⑨ 响应头无超时：fetch 挂起时 isLoading 永久 true，后续 sendMessage 全部被 isLoading 守卫静默丢弃。新增 30s 响应头超时（手动桥接外部 signal，兼容无 AbortSignal.any 的浏览器），超时走重试而非按"用户中止"
+- ⑩ 65s 一次性安全超时误伤：首 token 6-8s、agent 多轮 15s/轮、重试退避累计 2 分钟，健康流被误杀且触发时不中止请求（isLoading 卡死、内容继续写入）。改活动型超时（任意回调重置），触发时先 abort 再 reject
+- ⑪ stall 超时双收敛：`reader.cancel()` 令挂起的 read() 以 done 结束，onError 后又调 onDone。加 finished 标记单次收敛
+- ⑫ 兜底会话丢失：`sendMessage` 无会话时创建的 conv 未用 `local_` 前缀 → 被当服务端会话反复 PUT 失败 + loadConversations 合并时被丢弃。改 `createLocalConversation()`
+- ⑬ 性能：markdown worker 崩溃后复位单例（此前恒为"存在但已死"，每次大渲染白等 5s；加 30s 重建退避）；MarkdownIt 实例收敛模块级（`markdownRendererCore.js`，每气泡一份 → 全局一份）+ useCodeHighlighter 状态模块级共享；MessageList 上一条用户消息预计算 O(N²)→O(N)；流式期间跳过当前会话的后端全量 PUT（此前每个 500ms token 停顿都 PUT 整会话半截内容，收尾 immediate 补权威同步）；localStorage 兜底不变
+- 测试：useCodeHighlighter 两条"starts at"断言按模块级共享契约改写（跨实例同引用）；后端全量 427 用例、前端 114 用例通过
 
 ### ❌ 尝试但退回
 

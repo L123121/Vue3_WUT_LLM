@@ -15,7 +15,6 @@
     "@opentelemetry/exporter-trace-otlp-http": "^0.221.0",
     "@opentelemetry/sdk-node": "^0.221.0",
     "@qdrant/js-client-rest": "^1.19.0",
-    "axios": "^1.19.0",
     "better-sqlite3": "^12.11.1",
     "cookie-parser": "^1.4.6",
     "cors": "^2.8.5",

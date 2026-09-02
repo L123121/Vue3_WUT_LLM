@@ -11,7 +11,7 @@ import {
   createMessageId,
   getMessageText,
   normalizeMessages,
-  createWelcomeMessage,
+  createLocalConversation,
 } from '../utils/chatHelpers.js';
 
 const STREAM_STALL_TIMEOUT = 60000;
@@ -193,16 +193,19 @@ export function useStreaming() {
   const sendMessage = async (text, retryMsgId = null, fileData = null, onStreamEvent) => {
     const trimmedText = text.trim();
     const convStore = useConversationStore();
+    // 空消息守卫必须先于会话创建，否则空提交也会凭空生成一个「本地会话」
+    if (!trimmedText && !fileData) return;
+    if (isLoading.value) return;
+
     let conv = convStore.currentConversation;
 
     if (!conv) {
-      conv = { id: createMessageId(), title: '本地会话', messages: [createWelcomeMessage()], createdAt: new Date(), updatedAt: new Date() };
+      // 必须用 local_ 前缀的本地会话：isLocalSession 靠前缀识别本地会话，
+      // 普通 id 会被当成服务端会话反复 PUT 同步失败，且 loadConversations 合并时被静默丢弃
+      conv = createLocalConversation('本地会话');
       convStore.conversations.push(conv);
       convStore.currentConversationId = conv.id;
     }
-
-    if (!trimmedText && !fileData) return;
-    if (isLoading.value) return;
 
     const conversationId = conv.id;
     let convIndex = convStore.conversations.findIndex((c) => c.id === conversationId);
@@ -266,13 +269,22 @@ export function useStreaming() {
 
     return new Promise((resolve, reject) => {
       let resolved = false;
-      const safetyTimeout = setTimeout(() => {
-        if (!resolved) {
+      // 活动型安全超时：任何回调活动都重置计时。此前是一次性总时长定时器，
+      // 会误杀健康但偏慢的流（首 token 6-8s、agent 多轮 15s/轮、重试退避累计可达 2 分钟），
+      // 且触发时不中止请求——reject 后 isLoading 卡死、内容仍继续写入消息
+      let safetyTimer = null;
+      const armSafetyTimeout = () => {
+        if (safetyTimer) clearTimeout(safetyTimer);
+        safetyTimer = setTimeout(() => {
+          if (resolved) return;
           resolved = true;
+          // 先中止请求：让 chat.js 的 AbortError 路径收敛状态机（onAbort → isLoading=false）
+          try { currentAbortController?.abort(); } catch { /* 已清理 */ }
           reject(new Error('响应超时，请检查网络连接后重试'));
-        }
-      }, STREAM_STALL_TIMEOUT + 5000);
-      const markResolved = () => { resolved = true; clearTimeout(safetyTimeout); };
+        }, STREAM_STALL_TIMEOUT + 5000);
+      };
+      const markResolved = () => { resolved = true; if (safetyTimer) clearTimeout(safetyTimer); };
+      armSafetyTimeout();
 
       const callbacks = {
         onChunk: (content, meta) => {
@@ -347,7 +359,9 @@ export function useStreaming() {
           }));
         },
         onTrace: (payload) => {
-          const trace = payload?.trace || null;
+          // agent/agenticRag：Agent 链路的轮次/工具/收尾原因 trace（MessageBubble 以
+          // finishReason 字段区分 agent trace 与 RAG trace，二者共用 ragTrace 存储位）
+          const trace = payload?.agent || payload?.agenticRag || payload?.trace || null;
           const rag = payload?.rag || trace?.outcome || {};
           const usedRag = rag.usedRag === true;
           updateMessage(convStore, conversationId, aiMsgId, (m) => ({
@@ -378,6 +392,8 @@ export function useStreaming() {
           // 重试会从头开始流：清空已写入的部分内容，避免"半截+完整"重复拼接
           cancelPendingRaf();
           pendingContent = '';
+          // 决策草稿同理：新尝试会重新流式输出决策内容，不清空会拼接成两份
+          decisionDraft.value = '';
           updateMessage(convStore, conversationId, aiMsgId, (m) => ({ ...m, text: '', content: '' }));
         },
         onDone: () => {
@@ -462,6 +478,17 @@ export function useStreaming() {
         },
       };
 
+      // 流仍在推进（任意回调触发）就不算失联，重置安全超时
+      for (const key of Object.keys(callbacks)) {
+        const fn = callbacks[key];
+        if (typeof fn === 'function') {
+          callbacks[key] = (...args) => {
+            if (!resolved) armSafetyTimeout();
+            return fn(...args);
+          };
+        }
+      }
+
       try {
         sendMessageStream(messageToSend, history, callbacks, {
           signal: currentAbortController.signal,
@@ -482,7 +509,9 @@ export function useStreaming() {
     const msg = conv.messages?.find((m) => m.id === msgId);
     if (!msg || msg.role !== 'user' || !msg.canRetry) return;
     msg.canRetry = false;
-    await sendMessage(getMessageText(msg), msgId);
+    // 带上原消息的附件：文件内容只在 fileData.textContent 里拼进请求体，
+    // 丢失附件的重试等于换了一个问题再问一遍
+    await sendMessage(getMessageText(msg), msgId, msg.files?.[0] || null);
   };
 
   /**
@@ -498,7 +527,7 @@ export function useStreaming() {
     if (!msg || msg.role !== 'user') return;
     msg.content = trimmed;
     msg.text = trimmed; // 兼容旧渲染字段
-    await sendMessage(trimmed, msgId);
+    await sendMessage(trimmed, msgId, msg.files?.[0] || null);
   };
 
   const abortCurrentRequest = () => {

@@ -61,11 +61,6 @@ module.exports = {
     // 双判抽样比例：0.1 = 每 10 条抽 1 条复判，量化 judge 一致性；0 关闭
     doubleJudgeRatio: Number.parseFloat(process.env.JUDGE_DOUBLE_JUDGE_RATIO || '0.1'),
   },
-  // 讯飞配置（可选，保留用于星火相关能力）
-  xunfei: {
-    apiKey: process.env.XUNFEI_API_KEY || '',
-    appId: process.env.XUNFEI_APP_ID || '',
-  },
   // OCR / 视觉识别配置（扫描件 PDF 与图片表格识别，走 StepFun step-1o-turbo-vision）
   ocr: {
     enabled: process.env.OCR_ENABLED !== 'false',
@@ -85,7 +80,7 @@ module.exports = {
     model: process.env.EMBEDDING_MODEL || 'Xenova/bge-small-zh-v1.5',
     cacheDir: process.env.EMBEDDING_CACHE_DIR || path.resolve(__dirname, '../../../.model-cache'),
     localFilesOnly: process.env.EMBEDDING_LOCAL_FILES_ONLY !== 'false',
-    sparseDim: parseInt(process.env.EMBEDDING_SPARSE_DIM || process.env.XUNFEI_EMBEDDING_SPARSE_DIM, 10) || 250002,
+    sparseDim: parseInt(process.env.EMBEDDING_SPARSE_DIM, 10) || 250002,
   },
   // JWT 配置（必须通过环境变量设置，禁止硬编码默认值）
   jwt: {

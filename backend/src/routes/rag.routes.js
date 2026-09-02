@@ -3,7 +3,6 @@
 const { Router } = require('express');
 const { requireAuth, requireAdmin } = require('../middleware/auth.middleware');
 const ragController = require('../controllers/rag.controller');
-const { getRecentRagTraces } = require('../services/rag-tracer.service');
 
 const router = Router();
 
@@ -36,19 +35,5 @@ router.post('/documents/reindex', requireAdmin, ragController.reindexAll);
 
 // 统计信息
 router.get('/stats', ragController.getStats);
-
-// 最近 RAG 链路 trace（仅当前用户）
-router.get('/traces', async (req, res) => {
-  const rawLimit = parseInt(req.query.limit, 10);
-  const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 50) : 20;
-
-  try {
-    const traces = await getRecentRagTraces(req.userId, limit);
-    res.json({ success: true, data: traces });
-  } catch (err) {
-    console.error('[RAG Routes] 读取 RAG trace 失败:', err);
-    res.status(500).json({ success: false, error: '读取 RAG trace 失败' });
-  }
-});
 
 module.exports = router;

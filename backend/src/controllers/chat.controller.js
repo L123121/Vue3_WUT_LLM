@@ -8,8 +8,10 @@ function writeSse(res, payload) {
 }
 
 function writeStreamEvent(res, event, fallbackTraceId) {
-  if (event.type === "retrieval") return;
-  if (event.type === "intent") {
+  if (event.type === "retrieval") {
+    // 检索阶段事件：与 rag.controller 相同形状，前端 onTrace 消费
+    writeSse(res, { traceId: event.traceId || fallbackTraceId, retrieval: event.retrieval, trace: event.trace });
+  } else if (event.type === "intent") {
     writeSse(res, { intent: event.intent });
   } else if (event.type === "sources") {
     writeSse(res, { sources: event.sources });
@@ -62,6 +64,15 @@ function writeStreamEvent(res, event, fallbackTraceId) {
         fallbackReason: outcome.fallbackReason || null,
       },
     });
+  } else if (event.type === "grounding") {
+    // 运行时引用校验：溯源覆盖率随收尾下发（与 rag.controller 形状一致）
+    writeSse(res, { traceId: fallbackTraceId, grounding: event.grounding });
+  } else if (event.type === "usage") {
+    // token 用量随收尾下发
+    writeSse(res, { usage: event.usage });
+  } else if (event.type === "followups") {
+    // 追问建议随收尾下发
+    writeSse(res, { traceId: fallbackTraceId, followups: event.items });
   } else if (event.type === "content") {
     if (event.done) res.write("data: [DONE]\n\n");
     // decision: true 标记 agent 决策阶段内容 → 前端渲染到"思考草稿区"，
@@ -72,33 +83,6 @@ function writeStreamEvent(res, event, fallbackTraceId) {
 }
 
 function createChatHandlers(conversationOrchestrator) {
-  const chatHandler = async (req, res, next) => {
-    try {
-      const { message, history } = req.body;
-      if (!message) {
-        return res.status(400).json({ success: false, error: "消息内容不能为空" });
-      }
-
-      const result = await conversationOrchestrator.chat(message, history || [], {
-        traceId: req.traceId,
-        userId: req.userId,
-        conversationId: req.body?.conversationId || null,
-      });
-      void recordAudit({
-        question: message,
-        answer: result.reply,
-        sources: result.sources,
-        traceId: result.traceId || req.traceId,
-        userId: req.userId,
-        route: result.sources?.length ? 'rag' : 'chat',
-      }).catch((error) => console.warn('[QualityAudit] 非流式记录失败:', error.message));
-      res.json({ success: true, data: result });
-    } catch (error) {
-      console.error("[Chat] 非流式错误:", error);
-      next(error);
-    }
-  };
-
   const streamHandler = async (req, res, next) => {
     let abortController = null;
     let onClientClose = null;
@@ -164,9 +148,9 @@ function createChatHandlers(conversationOrchestrator) {
     }
   };
 
-  return { chatHandler, streamHandler };
+  return { streamHandler };
 }
 
-const { chatHandler, streamHandler } = createChatHandlers(applicationContainer.conversationOrchestrator);
+const { streamHandler } = createChatHandlers(applicationContainer.conversationOrchestrator);
 
-module.exports = { createChatHandlers, chatHandler, streamHandler, writeStreamEvent };
+module.exports = { createChatHandlers, streamHandler, writeStreamEvent };

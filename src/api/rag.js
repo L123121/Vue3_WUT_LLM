@@ -45,14 +45,6 @@ export const uploadFile = async (file, category = 'general', title = '') => {
 };
 
 /**
- * 批量添加文档
- */
-export const addDocuments = async (documents) => {
-  const response = await apiPost('/rag/documents/batch', { documents });
-  return response.json();
-};
-
-/**
  * 删除文档
  */
 export const deleteDocument = async (id) => {

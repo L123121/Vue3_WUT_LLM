@@ -3,10 +3,10 @@ import { ref, computed } from 'vue';
 import { useAuthStore } from '../../stores/auth.store.js';
 import { useThemeStore } from '../../stores/theme.store.js';
 import { useToastStore } from '../../stores/toast.store.js';
-import { Moon, Sun, Upload, Image, Lock, Loader2 } from 'lucide-vue-next';
+import { Moon, Sun, Upload, Lock, Loader2 } from 'lucide-vue-next';
 
 defineProps({ show: Boolean });
-const emit = defineEmits(['close', 'open-avatar-picker']);
+const emit = defineEmits(['close']);
 
 const authStore = useAuthStore();
 const themeStore = useThemeStore();
@@ -89,10 +89,6 @@ const handleChangePassword = async () => {
             <Upload :size="12" />
             <span>上传图片</span>
           </label>
-          <button @click="emit('open-avatar-picker')" class="h-7 px-2.5 rounded-md text-xs border border-slate-200 dark:border-gray-700 text-slate-600 dark:text-gray-300 hover:bg-slate-100 dark:hover:bg-gray-700 transition-colors inline-flex items-center gap-1">
-            <Image :size="12" />
-            <span>选择头像</span>
-          </button>
         </div>
       </div>
     </div>

@@ -28,7 +28,6 @@ const avatarFailed = ref(false);
 watch(() => authStore.user?.avatar, () => { avatarFailed.value = false; });
 
 const showProfilePanel = ref(false);
-const showAvatarPicker = ref(false);
 
 const handleLogout = async () => {
   const synced = await chatStore.flushPendingChanges();
@@ -192,7 +191,7 @@ watch(showProfilePanel, (val) => {
       </div>
 
       <div v-if="showProfilePanel" class="absolute bottom-full left-3 right-3 mb-2 z-30">
-        <ProfilePanel :show="true" @close="showProfilePanel = false" @open-avatar-picker="showAvatarPicker = true" />
+        <ProfilePanel :show="true" @close="showProfilePanel = false" />
       </div>
     </div>
   </div>

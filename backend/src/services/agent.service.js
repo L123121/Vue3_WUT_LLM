@@ -61,11 +61,21 @@ class AgentDecisionError extends Error {
  * 测试环境（NODE_ENV=test / VITEST）跳过，避免污染数据
  */
 const TRACE_LOG_PATH = path.join(__dirname, "..", "..", "data", "agent-traces.jsonl");
+// 轮转闸门：超过 10MB 重命名为 .1（覆盖旧轮转文件），防止文件无界增长
+const TRACE_LOG_MAX_BYTES = 10 * 1024 * 1024;
+let traceRotating = false;
 function persistTrace(trace) {
   if (process.env.NODE_ENV === "test" || process.env.VITEST) return;
   try {
     const line = JSON.stringify({ ...trace, ts: new Date().toISOString() }) + "\n";
-    fs.appendFile(TRACE_LOG_PATH, line, () => {});
+    fs.appendFile(TRACE_LOG_PATH, line, (err) => {
+      if (err || traceRotating) return;
+      fs.stat(TRACE_LOG_PATH, (statErr, stat) => {
+        if (statErr || !stat || stat.size < TRACE_LOG_MAX_BYTES) return;
+        traceRotating = true;
+        fs.rename(TRACE_LOG_PATH, `${TRACE_LOG_PATH}.1`, () => { traceRotating = false; });
+      });
+    });
   } catch {
     // 持久化失败不影响主链路
   }
@@ -202,17 +212,22 @@ class AgentService {
   async decide(message, history = []) {
     const tools = getToolSchemas();
     const messages = buildDecisionMessages(message, history);
+    const decideTimeoutMs = config.agent?.decideTimeoutMs || 15000;
 
     let timer;
+    const decisionPromise = this.aiService.getCompletion(message, [], { tools, messages, timeout: decideTimeoutMs, retries: 0 });
+    // 超时胜出后 decisionPromise 不再被 race 观察，必须吞掉其迟到的 rejection，
+    // 否则 unhandledRejection 会击穿进程（同 tool-registry withTimeout 的处理）
+    decisionPromise.catch(() => {});
     const response = await Promise.race([
-      this.aiService.getCompletion(message, [], { tools, messages, timeout: 15000, retries: 0 }),
+      decisionPromise,
       new Promise((resolve) => {
-        timer = setTimeout(() => resolve({ content: "", toolCalls: null, _timeout: true }), 15000);
+        timer = setTimeout(() => resolve({ content: "", toolCalls: null, _timeout: true }), decideTimeoutMs);
       }),
     ]);
     clearTimeout(timer);
     if (response._timeout) {
-      console.warn("[Agent] 工具决策超时(15s)，直接回答");
+      console.warn(`[Agent] 工具决策超时(${decideTimeoutMs}ms)，直接回答`);
       return { toolCalls: null, content: "", reason: "决策超时，直接回答" };
     }
     if (!response.toolCalls || response.toolCalls.length === 0) {
@@ -414,19 +429,39 @@ class AgentService {
       }
     }
 
-    // 收尾生成：不带 tools，强制 LLM 基于已回注的工具结果给出最终答案
+    // 收尾生成：不带 tools，强制 LLM 基于已回注的工具结果给出最终答案。
+    // 工具已执行但收尾 LLM 失败时不能裸抛 500/裸 error——沿用决策期的降级机制
     const finalTools = reachedLimit ? [] : tools;
-    for await (const chunk of this.aiService.getCompletionStream("", [], { messages, tools: finalTools, signal: options.signal })) {
-      if (chunk.done) {
-        trace.totalMs = Date.now() - totalStart;
-        console.log(`[Agent] 完成，工具=${toolSummary.join(";")}, 总耗时 ${trace.totalMs}ms`);
-        persistTrace(trace);
+    let finalStreamed = false;
+    try {
+      for await (const chunk of this.aiService.getCompletionStream("", [], { messages, tools: finalTools, signal: options.signal })) {
+        if (chunk.done) {
+          trace.totalMs = Date.now() - totalStart;
+          console.log(`[Agent] 完成，工具=${toolSummary.join(";")}, 总耗时 ${trace.totalMs}ms`);
+          persistTrace(trace);
+          // token 用量随收尾下发（与 rag.service.chatStream 一致，前端逐条消息展示成本）
+          if (chunk.usage) yield { type: "usage", usage: chunk.usage };
+          yield { type: "trace", trace };
+          yield { type: "content", content: "", done: true };
+          return;
+        }
+        if (chunk.content) {
+          finalStreamed = true;
+          yield { type: "content", content: chunk.content, done: false };
+        }
+      }
+    } catch (err) {
+      console.warn(`[Agent] 收尾生成失败:`, err.message);
+      trace.finishReason = "error";
+      trace.totalMs = Date.now() - totalStart;
+      persistTrace(trace);
+      if (!finalStreamed) {
+        // 尚未输出任何内容 → 通知控制器降级 RAG 链路
+        yield { type: "error", error: new AgentDecisionError(`agent 收尾生成失败: ${err.message}`, err) };
+      } else {
+        // 已有部分内容流出，无法回退 → 保留已输出内容，礼貌收尾
         yield { type: "trace", trace };
         yield { type: "content", content: "", done: true };
-        return;
-      }
-      if (chunk.content) {
-        yield { type: "content", content: chunk.content, done: false };
       }
     }
   }

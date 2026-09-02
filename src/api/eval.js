@@ -1,14 +1,9 @@
-import { apiGet, apiPost, API_BASE } from './client.js';
+import { apiGet, API_BASE } from './client.js';
 
 /**
  * 评测服务 API
  */
 export const evalApi = {
-  /**
-   * 评测服务健康检查
-   */
-  health: () => apiGet('/eval/health').then(res => res.json()),
-
   /**
    * 获取系统实时指标
    */
@@ -27,9 +22,4 @@ export const evalApi = {
       body: JSON.stringify({ datasetSize, testCases, enableRag: true, ...metadata }),
     });
   },
-
-  /**
-   * 批量计算评测指标（非流式）
-   */
-  calculateMetrics: (results) => apiPost('/eval/metrics', { results }).then(res => res.json()),
 };

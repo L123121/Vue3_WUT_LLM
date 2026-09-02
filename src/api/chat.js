@@ -6,10 +6,9 @@ const MAX_RETRY_DELAY = 30000;
 const HEARTBEAT_INTERVAL = 30000;
 const HEARTBEAT_TIMEOUT = 10000;
 const STREAM_STALL_TIMEOUT = 60000; // 60s without data = stalled
+const RESPONSE_HEADERS_TIMEOUT = 30000; // 建连后迟迟不出响应头的兜底（响应后的慢数据由 stallCheck 负责）
 
-import { apiPost, fetchOpts } from './client.js';
-
-const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+import { fetchOpts } from './client.js';
 
 // 流式热路径日志仅在开发环境输出（生产构建每 chunk 打日志会卡 DevTools）
 const debug = (...args) => {
@@ -53,8 +52,9 @@ const startHeartbeat = () => {
   if (heartbeatTimer) clearInterval(heartbeatTimer);
 
   heartbeatTimer = setInterval(async () => {
-    if (!connectionManager.isConnected) return;
-
+    // 断连时也必须继续探测——心跳的职责就是发现恢复。
+    // 此前断连即 return，而发送按钮又依赖 isConnected，一次瞬时失败
+    // 就会永久锁死发送（只有整页刷新能解开）
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), HEARTBEAT_TIMEOUT);
@@ -82,11 +82,40 @@ const startHeartbeat = () => {
 
 startHeartbeat();
 
+/**
+ * 组合外部中止信号与响应头超时：任一触发即中止请求。
+ * 不用 AbortSignal.any（Safari <17.4 不支持），手动桥接保持全兼容。
+ * timedOut() 用于在 catch 中区分「超时（可重试）」和「用户主动中止」。
+ */
+const createRequestSignal = (externalSignal, timeoutMs) => {
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  const onExternalAbort = () => controller.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) onExternalAbort();
+    else externalSignal.addEventListener('abort', onExternalAbort, { once: true });
+  }
+  return {
+    signal: controller.signal,
+    timedOut: () => timedOut,
+    // 响应头到达后只停超时闸门；外部中止桥接必须保留到流结束，否则流式中途停止会失效
+    clearTimer: () => clearTimeout(timer),
+    dispose: () => {
+      clearTimeout(timer);
+      if (externalSignal) externalSignal.removeEventListener('abort', onExternalAbort);
+    },
+  };
+};
+
 // Streaming message with stall detection
 export const sendMessageStream = async (message, history = [], callbacks, options = {}) => {
   debug('[Stream] sendMessageStream called, message:', message.substring(0, 30));
-  const controller = options.signal ? { abort: () => {} } : new AbortController();
-  const signal = options.signal || controller.signal;
+  const requestSignal = createRequestSignal(options.signal || null, RESPONSE_HEADERS_TIMEOUT);
+  const signal = requestSignal.signal;
   const maxRetries = options.maxRetries ?? MAX_RETRIES;
   const attempt = options.attempt ?? 0;
   const conversationId = options.conversationId;
@@ -103,8 +132,15 @@ export const sendMessageStream = async (message, history = [], callbacks, option
       body: JSON.stringify({ message, history, conversationId, files: options.files || [] }),
       signal,
     });
+    // 响应头已到，超时闸门使命完成；之后的慢数据归 stallCheck 管
+    requestSignal.clearTimer();
 
-    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+    if (!response.ok) {
+      // 携带 status：catch 中区分「确定性 4xx（重试无意义）」和「网络/5xx 故障（可重试）」
+      const httpError = new Error(`HTTP error! status: ${response.status}`);
+      httpError.status = response.status;
+      throw httpError;
+    }
     if (!response.body) throw new Error('Response body is null');
     debug('[Stream] response OK, body type:', response.body?.constructor?.name, 'status:', response.status);
 
@@ -137,10 +173,14 @@ export const sendMessageStream = async (message, history = [], callbacks, option
     };
     const measuredCallbacks = { ...callbacks, onChunk: measuredOnChunk };
 
-    // Stall detection timer
+    // Stall detection timer。
+    // finished 防止二次收敛：stall 触发的 reader.cancel() 会让挂起的 read() 以 done 结束，
+    // 若不设标记，onError 之后还会再走一次 onDone（useStreaming 状态机被收敛两次）
+    let finished = false;
     const stallCheck = setInterval(() => {
       if (Date.now() - lastDataTime > STREAM_STALL_TIMEOUT) {
         clearInterval(stallCheck);
+        finished = true;
         reader.cancel();
         connectionManager.setConnected(false);
         measuredCallbacks.onError(new Error('响应超时（60 秒无数据），请重试'));
@@ -154,7 +194,7 @@ export const sendMessageStream = async (message, history = [], callbacks, option
         if (done) {
           clearInterval(stallCheck);
           debug('[Stream] stream ended (done=true), calling onDone');
-          measuredCallbacks.onDone();
+          if (!finished) measuredCallbacks.onDone();
           break;
         }
 
@@ -171,6 +211,9 @@ export const sendMessageStream = async (message, history = [], callbacks, option
           const data = trimmed.slice(5).trim();
           if (data === '[DONE]') {
             clearInterval(stallCheck);
+            finished = true;
+            // 主动释放响应体：不等服务端关连接（异常路径下可能长时间挂起）
+            reader.cancel().catch(() => {});
             measuredCallbacks.onDone();
             return;
           }
@@ -193,13 +236,17 @@ export const sendMessageStream = async (message, history = [], callbacks, option
             if (json.tool_call) measuredCallbacks.onToolCall?.(json.tool_call);
             if (json.tool_result) measuredCallbacks.onToolResult?.(json.tool_result);
             if (json.sources) measuredCallbacks.onSources?.(json.sources);
-            if (json.rag || json.trace || json.retrieval) measuredCallbacks.onTrace?.(json);
+            // agent/agenticRag：Agent 与 AgenticRAG 链路的轮次/工具/收尾原因 trace
+            //（此前被丢弃，流式下 AgentToolPanel 的 trace 永远为空）
+            if (json.rag || json.trace || json.retrieval || json.agent || json.agenticRag) measuredCallbacks.onTrace?.(json);
             if (json.processCard) measuredCallbacks.onProcess?.(json.processCard);
             if (json.grounding) measuredCallbacks.onGrounding?.(json.grounding);
             if (json.usage) measuredCallbacks.onUsage?.(json.usage);
             if (json.followups) measuredCallbacks.onFollowups?.(json.followups);
             if (json.error) {
               clearInterval(stallCheck);
+              finished = true;
+              reader.cancel().catch(() => {});
               measuredCallbacks.onError(new Error(json.error));
               return;
             }
@@ -210,23 +257,48 @@ export const sendMessageStream = async (message, history = [], callbacks, option
       }
     } finally {
       clearInterval(stallCheck);
+      requestSignal.dispose();
     }
   } catch (error) {
+    requestSignal.dispose();
     console.error('[Stream] fetch failed:', error.name, error.message);
-    connectionManager.setConnected(false);
+    // 收到过 HTTP 响应（含 4xx）说明服务可达，不置断连态——
+    // 此前确定性 4xx 也会触发重连横幅，最长 30s 后心跳才纠正
+    if (!error.status) connectionManager.setConnected(false);
 
     if (error.name === 'AbortError') {
-      console.warn('[Stream] 流式请求被正常中止:', error.message);
-      callbacks.onAbort?.();
-      return;
+      if (requestSignal.timedOut()) {
+        // 响应头超时是可重试故障，走下方指数退避重试，而非按「用户主动中止」处理
+        console.warn('[Stream] 响应头超时（30s），准备重试');
+      } else {
+        console.warn('[Stream] 流式请求被正常中止:', error.message);
+        callbacks.onAbort?.();
+        return;
+      }
     }
 
+    // 确定性 4xx（除 408 请求超时 / 429 限流）重试必然同样失败，直接收敛到 onError
+    const isDeterministic4xx = error.status >= 400 && error.status < 500
+      && error.status !== 408 && error.status !== 429;
+
     // Exponential backoff retry
-    if (attempt < maxRetries) {
+    if (attempt < maxRetries && !isDeterministic4xx) {
       const retryDelay = getExponentialDelay(attempt);
       console.warn(`[Stream] retry attempt ${attempt + 1}/${maxRetries}, delay ${Math.round(retryDelay)}ms, error: ${error.message}`);
       callbacks.onRetry?.(attempt + 1, maxRetries, retryDelay);
-      await delay(retryDelay);
+      // 退避等待期间用户点「停止」应立即生效，而非等满退避时长
+      await new Promise((resolve) => {
+        const timer = setTimeout(resolve, retryDelay);
+        options.signal?.addEventListener('abort', () => {
+          clearTimeout(timer);
+          resolve();
+        }, { once: true });
+      });
+      if (options.signal?.aborted) {
+        console.warn('[Stream] 重试退避期间被用户中止');
+        callbacks.onAbort?.();
+        return;
+      }
       return sendMessageStream(message, history, callbacks, {
         ...options,
         attempt: attempt + 1,
@@ -256,16 +328,4 @@ export const uploadChatFile = async (file) => {
     throw new Error(err.error || '文件上传失败');
   }
   return response.json();
-};
-
-export const generateTitle = async (message) => {
-  try {
-    const response = await apiPost('/chat/title', { message });
-    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-
-    const data = await response.json();
-    return data.title || message.slice(0, 18);
-  } catch {
-    return message.slice(0, 18);
-  }
 };
