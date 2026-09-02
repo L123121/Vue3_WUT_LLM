@@ -23,6 +23,9 @@ import { ref } from 'vue';
  */
 let worker = null;
 let isReady = ref(false);
+let lastCrashAt = 0;
+// 崩溃退避：模块加载失败类错误会持续崩，短间隔重建只会让每次渲染白等超时
+const RESPAWN_COOLDOWN_MS = 30000;
 
 // pending 条目：{ resolve, reject, timer }
 // 每条带独立超时定时器，超时即 reject 并自我清理，杜绝泄漏。
@@ -41,6 +44,7 @@ function rejectAllPending(reason) {
 
 function initWorker() {
   if (worker || isReady.value) return;
+  if (Date.now() - lastCrashAt < RESPAWN_COOLDOWN_MS) return;
   try {
     worker = new Worker(
       new URL('../workers/markdown.worker.js', import.meta.url),
@@ -59,8 +63,14 @@ function initWorker() {
 
     worker.onerror = (err) => {
       console.error('[MarkdownWorker] Error:', err);
-      // Worker 崩溃：拒绝所有在途请求，调用方各自降级主线程
+      // Worker 崩溃：拒绝所有在途请求，调用方各自降级主线程。
+      // 必须复位单例状态，否则 worker 恒为「存在但已死」，
+      // 后续每次大内容渲染都要等满 5s 超时才能走主线程兜底
       rejectAllPending(new Error('markdown worker error'));
+      try { worker.terminate(); } catch { /* 已死 */ }
+      worker = null;
+      isReady.value = false;
+      lastCrashAt = Date.now();
     };
 
     isReady.value = true;
@@ -75,6 +85,8 @@ export function useMarkdownWorker() {
 
   const renderInWorker = (content) => {
     return new Promise((resolve, reject) => {
+      // 上次崩溃后已过冷却期 → 允许重建一次再判定
+      if (!worker || !isReady.value) initWorker();
       if (!worker || !isReady.value) {
         reject(new Error('markdown worker unavailable'));
         return;

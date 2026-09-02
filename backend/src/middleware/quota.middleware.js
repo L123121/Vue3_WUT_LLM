@@ -20,7 +20,6 @@ async function quotaMiddleware(req, res, next) {
     "/api/auth/login", "/api/auth/register", "/api/auth/logout", "/api/auth/me",
     "/api/metrics",
     "/api/rag/stats", "/api/rag/documents",
-    "/api/memory",
   ];
   // API 列表页本身精确跳过；但注意 "/api" 不能作为前缀匹配，
   // 否则 /api/chat、/api/stream 等消耗 LLM 的接口也会被误跳过（配额失效）

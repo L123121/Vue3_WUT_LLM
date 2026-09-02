@@ -367,13 +367,23 @@ class AiService {
   async *_doGetCompletionStream(message, history = [], opts = {}) {
     // 主 provider 连接建立前失败时，可切换到备用 provider
     if (this.fallback) {
+      const streamed = { any: false };
       try {
-        yield* this._streamProvider(this.primary, message, history, opts);
+        for await (const chunk of this._streamProvider(this.primary, message, history, opts)) {
+          if (chunk.content) streamed.any = true;
+          yield chunk;
+        }
         return; // 主 provider 成功完成
       } catch (err) {
         // 客户端已断开：不切备用 provider，直接结束（避免白烧备用额度）
         if (err.name === 'AbortError' || opts.signal?.aborted) throw err;
-        console.warn(`[AI 流式] 主 provider 失败 (${err.message})，切换到备用 provider`);
+        if (streamed.any) {
+          // 中途失败：已向调用方输出部分内容，备用 provider 重发整段会造成
+          // "半截回答 + 完整回答" 拼接重复，只能如实向上抛（上层有收尾/降级逻辑）
+          console.warn(`[AI 流式] 主 provider 中途失败（已输出内容，不切备用）: ${err.message}`);
+          throw err;
+        }
+        console.warn(`[AI 流式] 主 provider 连接建立前失败 (${err.message})，切换到备用 provider`);
       }
       // 主 provider 失败，尝试备用
       yield* this._streamProvider(this.fallback, message, history, opts);

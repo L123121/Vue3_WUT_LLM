@@ -48,13 +48,17 @@ const handleScroll = () => {
 
 const handleCopy = (text) => emit('copy', text);
 
-const getPreviousUserMessage = (index) => {
-  for (let messageIndex = index - 1; messageIndex >= 0; messageIndex -= 1) {
-    const candidate = props.messages[messageIndex];
-    if (candidate?.role === 'user') return candidate;
+// 预计算每条消息对应的「上一条用户消息」：模板逐行回溯是 O(N²)，
+// 流式期间 messages 数组每帧都被替换，历史长时 vnode diff 开销被放大 N 倍
+const previousUserMessageById = computed(() => {
+  const map = new Map();
+  let lastUser = null;
+  for (const item of props.messages) {
+    map.set(item.id, lastUser);
+    if (item.role === 'user') lastUser = item;
   }
-  return null;
-};
+  return map;
+});
 
 // Reconnection state
 const reconnectProgress = computed(() => {
@@ -108,7 +112,7 @@ defineExpose({ scrollToBottom, shouldAutoScroll });
       <div v-for="(item, index) in messages" :key="item.id" :id="`msg-${item.id}`" :data-index="index">
         <MessageBubble
           :message="item"
-          :question-message="getPreviousUserMessage(index)"
+          :question-message="previousUserMessageById.get(item.id)"
           :decision-draft="item.id === currentStreamingId ? decisionDraft : ''"
           @copy="handleCopy"
           @focus-input="emit('focus-input')"

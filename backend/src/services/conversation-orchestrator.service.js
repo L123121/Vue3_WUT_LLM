@@ -152,6 +152,8 @@ class ConversationOrchestrator {
       ], { signal: context.signal });
       for await (const chunk of stream) {
         if (chunk.done) {
+          // token 用量随收尾下发（此前丢弃，纯 chat 路由的用量从未到达前端）
+          if (chunk.usage) yield { type: "usage", usage: chunk.usage };
           yield { type: "content", content: "", done: true };
         } else if (chunk.content) {
           fullReply += chunk.content;

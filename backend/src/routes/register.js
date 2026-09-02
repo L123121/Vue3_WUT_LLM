@@ -7,7 +7,7 @@ const config = require('../config');
 
 function applyRoutes(app, chatLimiter) {
   const { router: apiRoutes } = require('./index');
-  const { chatHandler, streamHandler } = require('../controllers/chat.controller');
+  const { streamHandler } = require('../controllers/chat.controller');
   const { speechHandler } = require('../controllers/audio.controller');
   const { chatUpload, parseFile } = require('../services/file-upload.service');
   const { requireAuth } = require('../middleware/auth.middleware');
@@ -41,7 +41,6 @@ function applyRoutes(app, chatLimiter) {
       endpoints: [
         { method: 'GET', path: '/api/health', description: '健康检查' },
         { method: 'GET', path: '/api', description: 'API列表' },
-        { method: 'POST', path: '/api', description: '聊天接口（非流式）' },
         { method: 'POST', path: '/api/stream', description: '流式聊天接口' },
         { method: 'POST', path: '/api/audio/speech', description: 'AI 回复语音合成' },
         { method: 'POST', path: '/api/auth/login', description: '登录' },
@@ -50,10 +49,6 @@ function applyRoutes(app, chatLimiter) {
       ],
     });
   });
-
-  // 聊天接口
-  app.post('/api', chatLimiter, chatHandler);
-  app.post('/api/chat', chatLimiter, chatHandler);
 
   // 认证路由
   app.use('/api/auth', authRoutes);

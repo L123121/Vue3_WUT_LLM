@@ -96,8 +96,9 @@ class RerankerService {
       const uncached = [];
       let allCached = true;
       for (const c of candidates) {
+        // 必须全量哈希：截断前 200 字符会让同前缀长候选互撞缓存键（同 embedding 层曾修过的问题）
         const textHash = crypto.createHash('md5')
-          .update(String(c.text || '').slice(0, 200)).digest('hex').slice(0, 12);
+          .update(String(c.text || '')).digest('hex').slice(0, 12);
         const score = rerankerScoreCache.get(`${qKey}|${textHash}`);
         if (score !== undefined) {
           c._rerankScore = score;
@@ -156,7 +157,7 @@ class RerankerService {
         for (const c of slices) {
           if (c._rerankScore !== undefined) {
             const textHash = crypto.createHash('md5')
-              .update(String(c.text || '').slice(0, 200)).digest('hex').slice(0, 12);
+              .update(String(c.text || '')).digest('hex').slice(0, 12);
             rerankerScoreCache.set(`${qKey}|${textHash}`, c._rerankScore);
           }
         }

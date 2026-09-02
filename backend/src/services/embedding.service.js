@@ -107,35 +107,39 @@ class EmbeddingService {
 
   /**
    * 本地 BGE-small-zh dense + n-gram sparse 混合向量
+   * 模型缺失/推理失败时静默降级 n-gram，此时 model 标签必须如实反映（degraded: true），
+   * 否则健康检查全绿但检索质量已塌（round-22 生产事故的排查教训）
    */
   async _localHybridEmbed(text) {
-    const dense = await this._localDense(text);
+    const { vector: dense, degraded } = await this._localDense(text);
     return {
       dense,
       sparse: this._localSparse(text),
-      model: 'BGE-small-zh:local-onnx',
+      model: degraded ? 'ngram-fallback' : 'BGE-small-zh:local-onnx',
       dimensions: dense.length,
+      degraded,
     };
   }
 
   /**
-   * 本地 BGE-small-zh 生成 dense 向量（512 维）
+   * 本地 BGE-small-zh 生成 dense 向量（512 维），失败降级 n-gram
+   * @returns {Promise<{vector: number[], degraded: boolean}>}
    */
   async _localDense(text) {
-    if (!text) return new Array(DEFAULT_DENSE_DIM).fill(0);
+    if (!text) return { vector: new Array(DEFAULT_DENSE_DIM).fill(0), degraded: false };
 
     try {
       const model = await this._ensureLocalModel();
       if (model) {
         const result = await model(text, { pooling: 'cls', normalize: true });
-        return Array.from(result.data);
+        return { vector: Array.from(result.data), degraded: false };
       }
     } catch (err) {
       console.warn(`[Embedding] BGE 推理失败，降级 n-gram: ${err.message}`);
     }
 
     // n-gram fallback
-    return this._fallbackDense(text);
+    return { vector: this._fallbackDense(text), degraded: true };
   }
 
   /**

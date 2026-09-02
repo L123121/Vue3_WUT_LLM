@@ -159,12 +159,17 @@ class IntentRouter {
   async classify(message) {
     try {
       const prompt = CLASSIFICATION_PROMPT.replace("{message}", String(message || ""));
+      let timer;
+      const classifyPromise = this.aiService.getCompletion(prompt, [], { timeout: 15000, retries: 0 });
+      // 超时胜出后 classifyPromise 不再被 race 观察，须吞掉迟到的 rejection 防击穿进程
+      classifyPromise.catch(() => {});
       const response = await Promise.race([
-        this.aiService.getCompletion(prompt, [], { timeout: 15000, retries: 0 }),
-        new Promise((resolve) =>
-          setTimeout(() => resolve({ content: "", _timeout: true }), 15000)
-        ),
+        classifyPromise,
+        new Promise((resolve) => {
+          timer = setTimeout(() => resolve({ content: "", _timeout: true }), 15000);
+        }),
       ]);
+      clearTimeout(timer);
       if (response._timeout) {
         logEvent("warn", "intent_classify_timeout", { timeoutMs: 15000 });
         return this._fallbackRoute(message);

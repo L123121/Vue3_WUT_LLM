@@ -650,6 +650,26 @@ class RagService {
       tracer?.markFallback('rag_pipeline_error');
       this._recordTraceStage(tracer, 'llm', aiStart, false, { model: config.ai.model || 'step-3.7-flash' }, err);
       console.warn(`[RAG] 流式检索失败，降级: ${err.message}`);
+      if (fullReply) {
+        // 已输出部分内容：降级重发会让用户看到 "半截 RAG 回答 + 完整纯 LLM 回答" 拼接。
+        // 保持已有内容礼貌收尾（同 agent 收尾失败的处理模式）
+        metrics.recordLatency('total', Date.now() - totalStart);
+        this._recordTraceStage(tracer, 'total', totalStart, true, {
+          usedRag: true,
+          matchedDocs: pipeline.sources.length,
+          retrievedChunks: pipeline.topChunks.length,
+        });
+        tracer?.finish({
+          usedRag: true,
+          usedParentChild: true,
+          matchedDocs: pipeline.sources.length,
+          retrievedChunks: pipeline.topChunks.length,
+          fallbackReason: 'rag_pipeline_error',
+        });
+        yield { type: 'trace', trace: tracer.toSummary() };
+        yield { type: 'content', content: '', done: true };
+        return;
+      }
     }
 
     // 流式生成失败时降级:纯 LLM 无 RAG 上下文

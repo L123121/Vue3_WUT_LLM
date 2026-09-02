@@ -188,6 +188,9 @@ const ragChatStream = async (req, res, next) => {
       } else if (chunk.type === 'followups') {
         // 追问建议：零成本从引用文档/章节标题生成，前端渲染为可点击 chips
         res.write(`data: ${JSON.stringify({ traceId: req.traceId, followups: chunk.items })}\n\n`);
+      } else if (chunk.type === 'usage') {
+        // token 用量随收尾下发
+        res.write(`data: ${JSON.stringify({ usage: chunk.usage })}\n\n`);
       } else if (chunk.type === 'content') {
         if (chunk.done) {
           res.write(`data: [DONE]\n\n`);

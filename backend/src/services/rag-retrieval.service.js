@@ -37,16 +37,21 @@ async function retrieveCandidates(svc, query, options = {}) {
   const tracer = options.tracer || null;
   const queryVariant = options.queryVariant || 'primary';
 
-  // 缓存拦截：tracer/noCache/category 存在时不缓存
-  const canCache = config.rag.cacheEnabled && !tracer && !options.noCache && !options.category;
+  // 缓存拦截：noCache（评测隔离）/显式 category（调用方意图过滤）不缓存。
+  // tracer 只是观测对象不参与检索语义，此前排除导致生产链路缓存永不命中（每次都全量 embedding+向量库往返）
+  const canCache = config.rag.cacheEnabled && !options.noCache && !options.category;
   if (canCache) {
-    const cacheKey = String(query || '').trim().toLowerCase();
+    // 键含 topK：不同 topK 的调用共享条目会拿到截断长度错误的候选池
+    const cacheKey = `${String(query || '').trim().toLowerCase()}|k${searchTopK}`;
     const cached = retrievalCache.get(cacheKey);
     if (cached) {
-      cached.trace = cached.trace || {};
-      cached.trace.cacheHit = true;
-      cached.trace.queryVariant = queryVariant;
-      return cached;
+      // 返回 trace 拷贝：dualRetrieve 会向 trace 追加 queryRewrite/queryDecompose 等字段，
+      // 直接返回缓存对象会把本次请求的观测信息写进缓存、泄漏给后续请求
+      return {
+        candidates: cached.candidates,
+        trace: { ...cached.trace, cacheHit: true, queryVariant },
+        vectorResults: cached.candidates,
+      };
     }
   }
 
@@ -180,12 +185,19 @@ async function retrieveCandidates(svc, query, options = {}) {
     channels: trace.fused.channels,
   });
 
-  // 缓存写入
-  if (canCache) {
-    const cacheKey = String(query || '').trim().toLowerCase();
-    retrievalCache.set(cacheKey, { candidates, trace, rewrittenQuery: trace?.rewrittenQuery || null });
+  // 缓存写入。空候选池不写：向量库瞬时故障被上方 catch 吞掉后 candidates 为 []，
+  // 若写入会让同一查询在 TTL 内全部命中空缓存、即便故障已恢复也答"无可靠来源"
+  //（语义缓存本来就有 candidates.length > 0 闸门，精确缓存此前漏了）
+  if (canCache && candidates.length > 0) {
+    const cacheKey = `${String(query || '').trim().toLowerCase()}|k${searchTopK}`;
+    retrievalCache.set(cacheKey, {
+      candidates,
+      // trace 快照：调用方（dualRetrieve）会向返回的 trace 追加字段，不能让它们写进缓存
+      trace: { ...trace },
+      rewrittenQuery: trace?.rewrittenQuery || null,
+    });
     // 语义缓存写入：同一份候选池供近义问题复用
-    if (semanticCacheEnabled && queryEmbedding?.dense && candidates.length > 0) {
+    if (semanticCacheEnabled && queryEmbedding?.dense) {
       semanticCache.store(query, queryEmbedding.dense, { candidates });
     }
   }

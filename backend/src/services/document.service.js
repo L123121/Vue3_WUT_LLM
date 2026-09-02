@@ -1,7 +1,6 @@
 "use strict";
 
 const crypto = require('crypto');
-const { TextSplitter } = require('../utils/text-splitter');
 const { redis: store } = require('./memory-store');
 const config = require('../config');
 const { sanitizeDocument } = require('./doc-sanitizer.service');
@@ -17,10 +16,6 @@ const VECTOR_STATUS = Object.freeze({
 
 class DocumentService {
   constructor(options = {}) {
-    this.splitter = new TextSplitter({
-      chunkSize: 500,
-      chunkOverlap: 50,
-    });
     this.store = options.store || store;
     // 延迟初始化：避免模块加载时的循环依赖
     this._indexing = options.indexingService || null;
@@ -189,17 +184,14 @@ class DocumentService {
     const docId = `doc_${crypto.randomUUID()}`;
     const now = Date.now();
 
-    // 切片计数（仅用于元数据展示）
-    const chunks = this.splitter.splitByParagraph(content);
-    console.log(`[Document] 文档切片完成: ${chunks.length} 段`);
-
     const docMetadata = {
       id: docId,
       title,
       category,
       content,
       contentLength: content.length,
-      chunkCount: chunks.length,
+      // 占位 0，索引完成后由 indexDocument 返回的真实切片数覆盖
+      chunkCount: 0,
       contentHash,
       createdAt: now,
       vectorStatus: VECTOR_STATUS.INDEXING,
@@ -226,6 +218,7 @@ class DocumentService {
           vectorMessage,
           vectorUpdatedAt: Date.now(),
           indexedChunkCount,
+          chunkCount: indexedChunkCount,
         });
         console.log(`[Document] 向量索引完成: ${docId}, ${indexedChunkCount} 切片`);
         return {
@@ -266,7 +259,7 @@ class DocumentService {
     return {
       id: docId,
       title,
-      chunkCount: chunks.length,
+      chunkCount: outcome.indexedChunkCount || 0,
       indexedChunkCount: outcome.indexedChunkCount,
       vectorStatus: outcome.vectorStatus,
       vectorMessage: outcome.vectorMessage,

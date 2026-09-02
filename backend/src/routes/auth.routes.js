@@ -4,7 +4,6 @@
 const express = require('express');
 const rateLimit = require('express-rate-limit');
 const authService = require('../services/auth.service');
-const quotaService = require('../services/quota.service');
 const { COOKIE_NAME, requireAuth, generateToken } = require('../middleware/auth.middleware');
 
 const router = express.Router();
@@ -97,17 +96,6 @@ router.get('/me', async (req, res) => {
   } catch (error) {
     console.error('[AuthMe] error:', error.message);
     sendAuthError(res, error, '获取用户信息失败');
-  }
-});
-
-// GET /api/auth/quota — 获取当前用户配额
-router.get('/quota', async (req, res) => {
-  try {
-    const usage = await quotaService.getUsage(req.userId);
-    res.json({ success: true, data: { quota: usage } });
-  } catch (error) {
-    console.error('[AuthQuota] error:', error.message);
-    res.status(500).json({ success: false, error: '获取配额信息失败' });
   }
 });
 

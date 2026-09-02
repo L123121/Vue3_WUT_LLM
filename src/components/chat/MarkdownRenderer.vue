@@ -1,11 +1,10 @@
 <script setup>
 import { ref, watch, onUnmounted } from 'vue';
-import MarkdownIt from 'markdown-it';
-import hljs from 'highlight.js/lib/core';
 import DOMPurify from 'dompurify';
 import { useMarkdownWorker } from '../../composables/useMarkdownWorker.js';
 import { useCodeHighlighter } from '../../composables/useCodeHighlighter.js';
-import { ALLOWED_TAGS, ALLOWED_ATTR, completeMarkdown, normalizeBlockSyntax, escapeHtml, createLinkSecurityRule } from '../../utils/markdownConfig.js';
+import { ALLOWED_TAGS, ALLOWED_ATTR, escapeHtml } from '../../utils/markdownConfig.js';
+import { renderSanitizedHtml } from '../../utils/markdownRendererCore.js';
 import { applyCitationBadges } from '../../utils/citations.js';
 import CodeRunner from './CodeRunner.vue';
 import 'highlight.js/styles/atom-one-dark.css';
@@ -15,7 +14,8 @@ import 'highlight.js/styles/atom-one-dark.css';
 // Worker for large content (>2000 chars)
 const WORKER_THRESHOLD = 2000;
 const { renderInWorker } = useMarkdownWorker();
-const { getLanguageLabel, isExecutableLanguage, highlightVersion, ensureLanguage } = useCodeHighlighter();
+// highlightVersion（模块级共享）：动态语言异步注册完成后触发所有气泡重渲染
+const { highlightVersion } = useCodeHighlighter();
 
 const props = defineProps({ content: { type: String, default: '' }, sources: { type: Array, default: () => [] }, highlight: { type: String, default: '' } });
 const emit = defineEmits(['copyCode', 'citation-click']);
@@ -41,59 +41,11 @@ const wrapHighlight = (html) => {
   return highlighted.replaceAll('\u0001', () => tags[i++]);
 };
 
-// 代码块渲染 - 使用 CodeBlock 组件的 HTML 结构
-const renderCodeBlock = (code, language, label, rawCode) => {
-  const encodedCode = encodeURIComponent(code);
-  const encodedRawCode = encodeURIComponent(rawCode || code);
-  const isExecutable = isExecutableLanguage(label);
-  const runButton = isExecutable
-    ? `<button class="run-code-btn flex items-center gap-1.5 hover:text-green-400 transition-all duration-200 cursor-pointer px-2 py-0.5 rounded hover:bg-white/10" data-code="${encodedRawCode}" data-lang="${encodeURIComponent(label)}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg><span>运行</span></button>`
-    : '';
-  return `<div class="code-block-wrapper my-3 rounded-lg overflow-hidden bg-[#282c34] text-white shadow-md border border-slate-700"><div class="flex items-center justify-between px-3 py-1.5 bg-[#21252b] text-xs text-gray-400 select-none border-b border-slate-700"><span class="font-mono font-medium opacity-80">${label}</span><div class="flex items-center gap-2">${runButton}<button class="copy-code-btn flex items-center gap-1.5 text-gray-300 hover:text-white transition-all duration-200 cursor-pointer px-2 py-0.5 rounded bg-slate-600/80 hover:bg-slate-500" data-code="${encodedCode}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg><span class="copy-text">复制</span></button></div></div><pre class="!m-0 !p-4 overflow-x-auto bg-[#282c34] font-mono text-sm leading-normal"><code class="hljs ${language}">${code}</code></pre></div>`;
-};
-
-// 代码高亮包装
-const highlightCodeBlock = (str, lang) => {
-  const normalizedLang = (lang || '').trim().toLowerCase();
-  const mappedLang = getLanguageLabel(normalizedLang);
-
-  if (mappedLang && hljs.getLanguage(mappedLang)) {
-    try {
-      return renderCodeBlock(
-        hljs.highlight(str, { language: mappedLang, ignoreIllegals: true }).value,
-        `language-${mappedLang}`, mappedLang, str
-      );
-    } catch { /* fall through */ }
-  }
-
-  if (mappedLang) {
-    ensureLanguage(mappedLang).then(() => { highlightVersion.value++; });
-  }
-
-  try {
-    const autoResult = hljs.highlightAuto(str);
-    if (autoResult?.value) {
-      return renderCodeBlock(autoResult.value, `language-${autoResult.language || 'text'}`, autoResult.language || 'text', str);
-    }
-  } catch { /* fall through */ }
-
-  return renderCodeBlock(escapeHtml(str), '', normalizedLang || 'text', str);
-};
-
-const md = new MarkdownIt({
-  html: false, xhtmlOut: true, breaks: true, linkify: true, typographer: true, highlight: highlightCodeBlock,
-});
-
-createLinkSecurityRule(md);
-
-// --- Rendering logic with Worker offloading ---
-
+// MarkdownIt 实例与代码高亮收敛在模块级 markdownRendererCore.js（每气泡一份 → 全局一份）
 const renderMarkdownMain = (content) => {
   if (!content || content.trim() === '') return '';
   try {
-    const completed = normalizeBlockSyntax(completeMarkdown(content));
-    const raw = md.render(completed);
-    const sanitized = DOMPurify.sanitize(raw, { ALLOWED_TAGS, ALLOWED_ATTR });
+    const sanitized = renderSanitizedHtml(content);
     // 将 【文档N】 / [N] 渲染为可点击、可悬停的行内引用
     return wrapHighlight(applyCitationBadges(sanitized, props.sources));
   } catch (e) {
@@ -108,21 +60,23 @@ let throttleTimer = null;
 const renderedContent = ref('');
 const lastRenderedAt = ref('');
 const isLoadingWorker = ref(false);
-
-// Initial render
-renderedContent.value = renderMarkdownMain(props.content);
-lastRenderedAt.value = props.content;
+// 渲染序号：async 渲染（worker 超时后转主线程慢路径）返回时可能已有更新的渲染
+// 在途/完成，过期结果不得落地，否则内容回退且 isContentStale 恒真（光标闪烁不消）
+let renderSeq = 0;
 
 const renderCitations = (html) => applyCitationBadges(html, props.sources);
 
   const updateRender = async () => {
+    const seq = ++renderSeq;
     const content = props.content;
+    const isStale = () => seq !== renderSeq;
 
     // Use Web Worker for large content; reject 语义：不可用/超时/onerror → 主线程兜底
     if (content && content.length > WORKER_THRESHOLD) {
       isLoadingWorker.value = true;
       try {
         const html = await renderInWorker(content);
+        if (isStale()) return;
         if (html) {
           renderedContent.value = wrapHighlight(renderCitations(DOMPurify.sanitize(html, { ALLOWED_TAGS, ALLOWED_ATTR })));
           lastRenderedAt.value = content;
@@ -133,15 +87,24 @@ const renderCitations = (html) => applyCitationBadges(html, props.sources);
         }
       } catch {
         // Worker 失败/超时/不可用 → 主线程兜底（与原 fallback 行为一致）
+        if (isStale()) return;
         renderedContent.value = renderMarkdownMain(content);
         lastRenderedAt.value = content;
       }
       isLoadingWorker.value = false;
     } else {
+      // 小内容不走 worker：若此前有一轮 worker 渲染把指示器点亮（内容被替换的场景），在这里熄灭
+      isLoadingWorker.value = false;
       renderedContent.value = renderMarkdownMain(content);
       lastRenderedAt.value = content;
     }
   };
+
+// 初始渲染同样走 updateRender：大内容（>2000 字符）应享受 worker 路径，
+// 此前 setup 里无条件同步渲染，打开多条长消息的历史会话时全部挤在主线程。
+// 不能 top-level await（会把组件变成异步组件，需要 Suspense 边界）；
+// 小内容路径内部无 await，调用即同步完成
+updateRender();
 
 watch(
   () => [props.content, highlightVersion.value],

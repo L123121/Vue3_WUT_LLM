@@ -10,6 +10,9 @@ import {
 } from '../api/conversations.js';
 import { useAuthStore } from './auth.store.js';
 import { useToastStore } from './toast.store.js';
+// 顶层 import 但只在函数体内调用（惰性）：与 message.store → useStreaming → 本模块
+// 存在模块循环，运行时调用时各模块均已初始化完毕
+import { useMessageStore } from './message.store.js';
 import { reportError } from '../utils/errorHandler.js';
 import {
   normalizeMessages,
@@ -531,6 +534,18 @@ export const useConversationStore = defineStore('conversation', () => {
 
   // ========== 统一 localStorage 持久化 ==========
 
+  // 流式进行中跳过后端全量同步：半截消息会随每个 500ms token 停顿反复 PUT
+  // 整个会话（内容线性增长、每次都是立即过期的中间态）；收尾（done/error/abort）
+  // 会以 immediate=true 补一次权威同步。其他会话的变更不受影响，照常防抖同步
+  const _isStreamingConversation = (conv) => {
+    try {
+      const streamingConvId = useMessageStore().activeStreamingConversationId;
+      return !!streamingConvId && (!conv || conv.id === streamingConvId);
+    } catch {
+      return false; // store 未就绪按非流式处理
+    }
+  };
+
   const scheduleSaveCache = (immediate = false, targetConvId = null) => {
     const conv = currentConversation.value;
     if (immediate) {
@@ -538,7 +553,9 @@ export const useConversationStore = defineStore('conversation', () => {
       _triggerBackendSync(targetConvId); // 立即同步到后端（fire-and-forget）
     } else {
       scheduleSave(conversations.value, currentConversationId.value, conv?.id);
-      _scheduleBackendSync(500); // 防抖同步到后端
+      if (!_isStreamingConversation(conv)) {
+        _scheduleBackendSync(500); // 防抖同步到后端
+      }
     }
   };
 

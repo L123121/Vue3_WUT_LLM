@@ -11,7 +11,6 @@ vi.mock('../api/chat.js', () => ({
     subscribe: vi.fn(() => () => {}),
     isConnected: true,
   },
-  generateTitle: vi.fn().mockResolvedValue('Mock Title'),
 }));
 
 vi.mock('../api/conversations.js', () => ({
