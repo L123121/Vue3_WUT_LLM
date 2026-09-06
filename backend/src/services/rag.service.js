@@ -3,15 +3,12 @@
 const { AiService } = require('./ai.service');
 const { DocumentService } = require('./document.service');
 const { EmbeddingService } = require('./embedding.service');
-const { vectorStore: vectorStoreSingleton } = require('./vector-store.service');
+const { vectorStore: vectorStoreSingleton } = require('./vector-store-qdrant.service');
 const { RerankerService } = require('./reranker.service');
 const config = require('../config');
 const { metrics } = require('./metrics.service');
 const { RagTracer } = require('./rag-tracer.service');
 const {
-  QUESTION_TYPE,
-  TYPE_CONFIG,
-  DOC_CATEGORY_KEYWORDS,
   classifyQuestion,
   getTypeConfig,
   inferDocCategory,
@@ -55,6 +52,9 @@ class RagService {
     // 跨文档问题分解：对比/列举类问题拆子查询扩大召回池（reranker 仍按原问题打分，精度不受影响）
     this.queryDecomposeEnabled = ragConfig.queryDecomposeEnabled !== false;
     this.queryDecomposeMax = Math.min(Math.max(parseInt(ragConfig.queryDecomposeMaxSubQueries, 10) || 3, 1), 5);
+    // 查询翻译（默认关闭，灰度开启）：HyDE 假设文档 / Step-Back 上位问题作为额外召回变体
+    this.hydeEnabled = ragConfig.hydeEnabled === true;
+    this.stepBackEnabled = ragConfig.stepBackEnabled === true;
     this.rerankerService = new RerankerService();
   }
 
@@ -236,10 +236,7 @@ class RagService {
         });
 
         // 5. 组装上下文（由 maxContextLength 控制长度）
-        const { context, sources } = await contextBuilder.buildContextFromParents(parentCandidates, {
-          maxContextLength: truncateOverrides.maxContextLength ?? this.maxContextLength,
-          getDocument: (docId) => this.documentService.getDocument(docId),
-        });
+        const { context, sources } = await this._buildContextFromParents(parentCandidates, truncateOverrides);
         enhancedContext = context;
         parentSources = sources;
 
@@ -429,10 +426,6 @@ class RagService {
     return ragRetrieval.retrieveParentCandidates(this, query, options);
   }
 
-  async aggregateParentCandidates(chunks, options = {}) {
-    return ragRetrieval.aggregateParentCandidates(this, chunks, options);
-  }
-
   fuseRetrievalResults(vectorResults = [], keywordResults = [], limit = this.searchTopK, _query = null) {
     return ragRetrieval.fuseRetrievalResults(this, vectorResults, keywordResults, limit, _query);
   }
@@ -470,49 +463,118 @@ class RagService {
     return ragPrompt.parseProcessCard(reply);
   }
 
+  /**
+   * 非流式 RAG 问答：统一 drain chatStream()（单一管线驱动，消除两套循环的 drift 风险，
+   * 与 agent.service.chat 的收口方式一致）。
+   *
+   * 返回形状与原实现对齐：context/topChunks/questionType/rewrittenQuery/retrieval 随
+   * chatStream 的 done 事件回传（includePipeline 仅此处使用，公开流式端点不受影响）。
+   * 检索管线本身崩溃时（chatStream 内部已含生成失败降级）降级纯 LLM，与旧行为一致。
+   */
   async chat(message, history = [], options = {}) {
-    const tracer = this._createTracer(message, options);
     const totalStart = Date.now();
+    let reply = '';
+    let sources = [];
+    let usage = null;
+    let processCard = null;
+    let grounding = null;
+    let followups = [];
+    let trace = null;
+    let pipelineMeta = null;
 
     try {
-      const result = await this.localSearchChat(message, history, { ...options, tracer });
-      if (result) return this._finishTrace(tracer, result);
+      for await (const event of this.chatStream(message, history, { ...options, includePipeline: true })) {
+        if (event.type === 'content') {
+          if (event.done) pipelineMeta = event.pipeline || pipelineMeta;
+          else reply += event.content || '';
+        } else if (event.type === 'sources') {
+          sources = event.sources || [];
+        } else if (event.type === 'usage') {
+          usage = event.usage || null;
+        } else if (event.type === 'process') {
+          processCard = event.processCard || null;
+        } else if (event.type === 'grounding') {
+          grounding = event.grounding || null;
+        } else if (event.type === 'followups') {
+          followups = event.items || [];
+        } else if (event.type === 'trace') {
+          trace = event.trace || trace;
+        }
+      }
     } catch (err) {
+      const tracer = this._createTracer(message, options);
       tracer.markFallback('rag_pipeline_error');
       this._recordTraceStage(tracer, 'rag_pipeline', Date.now(), false, {}, err);
       console.warn(`[RAG] 本地检索失败，降级到纯 LLM: ${err.message}`);
+
+      const aiStart = Date.now();
+      try {
+        const result = await this.aiService.getCompletion(message, history);
+        const aiLatency = Date.now() - aiStart;
+        metrics.recordLatency('ai', aiLatency);
+        this._recordTraceStage(tracer, 'llm', aiStart, true, {
+          model: config.ai.model || 'step-3.7-flash',
+          isMock: !!result.isMock,
+          outputChars: (result.content || '').length,
+          usage: result.usage || null,
+        });
+        metrics.recordLatency('total', Date.now() - totalStart);
+        metrics.recordRagQuery({ usedRag: false, usedParentChild: false });
+        this._recordTraceStage(tracer, 'total', totalStart, true, { usedRag: false });
+
+        return this._finishTrace(tracer, {
+          reply: result.content,
+          isMock: result.isMock,
+          sources: [],
+          context: '',
+          model: config.ai.model || 'step-3.7-flash',
+          usage: result.usage || null,
+        }, { usedRag: false, usedParentChild: false });
+      } catch (llmErr) {
+        this._recordTraceStage(tracer, 'llm', aiStart, false, { model: config.ai.model || 'step-3.7-flash' }, llmErr);
+        this._recordTraceStage(tracer, 'total', totalStart, false, { usedRag: false }, llmErr);
+        tracer.markError(llmErr);
+        tracer.finish({ usedRag: false, usedParentChild: false });
+        throw llmErr;
+      }
     }
 
-    const aiStart = Date.now();
-    try {
-      const result = await this.aiService.getCompletion(message, history);
-      const aiLatency = Date.now() - aiStart;
-      metrics.recordLatency('ai', aiLatency);
-      this._recordTraceStage(tracer, 'llm', aiStart, true, {
-        model: config.ai.model || 'step-3.7-flash',
-        isMock: !!result.isMock,
-        outputChars: (result.content || '').length,
-        usage: result.usage || null,
-      });
-      metrics.recordLatency('total', Date.now() - totalStart);
-      metrics.recordRagQuery({ usedRag: false, usedParentChild: false });
-      this._recordTraceStage(tracer, 'total', totalStart, true, { usedRag: false });
+    const context = pipelineMeta?.context || '';
+    const topChunks = Array.isArray(pipelineMeta?.topChunks) ? pipelineMeta.topChunks : [];
+    const fallbackReason = pipelineMeta?.fallbackReason || null;
+    const questionType = pipelineMeta?.questionType ?? null;
+    const rewrittenQuery = pipelineMeta?.rewrittenQuery ?? null;
+    const retrieval = pipelineMeta?.retrieval ?? null;
+    const totalLatency = Date.now() - totalStart;
+    const aiLatency = trace?.timings?.find((stage) => stage.name === 'llm')?.durationMs ?? 0;
 
-      return this._finishTrace(tracer, {
-        reply: result.content,
-        isMock: result.isMock,
-        sources: [],
-        context: '',
-        model: config.ai.model || 'step-3.7-flash',
-        usage: result.usage || null,
-      }, { usedRag: false, usedParentChild: false });
-    } catch (err) {
-      this._recordTraceStage(tracer, 'llm', aiStart, false, { model: config.ai.model || 'step-3.7-flash' }, err);
-      this._recordTraceStage(tracer, 'total', totalStart, false, { usedRag: false }, err);
-      tracer.markError(err);
-      tracer.finish({ usedRag: false, usedParentChild: false });
-      throw err;
-    }
+    return {
+      // 知识库为空时保持旧契约（reply=null）；其余路径 drain 到的即最终回复
+      reply: fallbackReason === 'no_documents' ? null : reply,
+      isMock: false,
+      sources,
+      context,
+      topChunks,
+      model: config.ai.model || 'step-3.7-flash',
+      usage,
+      questionType,
+      rewrittenQuery,
+      retrieval,
+      grounding: grounding || null,
+      processCard: processCard || null,
+      followups,
+      traceId: trace?.traceId || null,
+      trace: trace || null,
+      _metrics: {
+        totalLatency,
+        aiLatency,
+        matchedDocs: sources.length,
+        retrievedChunks: topChunks.length,
+        questionType,
+        rewrittenQuery,
+        retrieval,
+      },
+    };
   }
 
   async *chatStream(message, history = [], options = {}) {
@@ -522,6 +584,17 @@ class RagService {
     // 事件收集器,用于在管道内 yield
     const events = [];
     const onEvent = (event) => events.push(event);
+
+    // chat() drain 时提取管线信息。includePipeline 仅 chat 内部传入，
+    // 公开流式端点不带该标志 → done 事件不携带管线负载，SSE 契约不变
+    const pipelineMeta = () => options.includePipeline ? {
+      context: pipeline.context,
+      topChunks: pipeline.topChunks,
+      questionType: pipeline.questionType,
+      rewrittenQuery: pipeline.rewrittenQuery,
+      retrieval: pipeline.retrieval,
+      fallbackReason: pipeline.fallbackReason || null,
+    } : null;
 
     const pipeline = await this._runRAGPipeline(message, history, { ...options, tracer, onEvent });
 
@@ -534,7 +607,7 @@ class RagService {
         tracer.finish({ usedRag: true, usedParentChild: false, matchedDocs: 0, retrievedChunks: 0 });
         yield { type: 'trace', trace: tracer.toSummary() };
         yield { type: 'content', content: event.reply, done: false };
-        yield { type: 'content', content: '', done: true };
+        yield { type: 'content', content: '', done: true, pipeline: pipelineMeta() };
         return;
       } else if (event.type === 'sources') {
         metrics.recordRagQuery({
@@ -566,7 +639,7 @@ class RagService {
       });
       yield { type: 'trace', trace: tracer.toSummary() };
       yield { type: 'content', content: this._buildNoReliableSourcesReply(), done: false };
-      yield { type: 'content', content: '', done: true };
+      yield { type: 'content', content: '', done: true, pipeline: pipelineMeta() };
       return;
     }
 
@@ -639,7 +712,7 @@ class RagService {
             rewrittenQuery: pipeline.rewrittenQuery,
           });
           yield { type: 'trace', trace: tracer.toSummary() };
-          yield { type: 'content', content: '', done: true };
+          yield { type: 'content', content: '', done: true, pipeline: pipelineMeta() };
           return;
         }
         outputChars += (chunk.content || '').length;
@@ -667,7 +740,7 @@ class RagService {
           fallbackReason: 'rag_pipeline_error',
         });
         yield { type: 'trace', trace: tracer.toSummary() };
-        yield { type: 'content', content: '', done: true };
+        yield { type: 'content', content: '', done: true, pipeline: pipelineMeta() };
         return;
       }
     }
@@ -693,7 +766,7 @@ class RagService {
           this._recordTraceStage(tracer, 'total', totalStart, true, { usedRag: false });
           tracer.finish({ usedRag: false, usedParentChild: false });
           yield { type: 'trace', trace: tracer.toSummary() };
-          yield { type: 'content', content: '', done: true };
+          yield { type: 'content', content: '', done: true, pipeline: pipelineMeta() };
           return;
         }
         fallbackOutputChars += (chunk.content || '').length;
@@ -709,18 +782,6 @@ class RagService {
   }
   _hasReliableCandidates(candidates) {
     return resultMapper.hasReliableCandidates(candidates, this.minSourceScore);
-  }
-
-  _buildParentSource(doc, match) {
-    return resultMapper.buildParentSource(doc, match);
-  }
-
-  _parentMatchToCandidate(match, doc, rank, options = {}) {
-    return resultMapper.parentMatchToCandidate(match, doc, rank, options);
-  }
-
-  _chunkToCandidate(chunk, rank) {
-    return resultMapper.chunkToCandidate(chunk, rank);
   }
 
   _chunkToSource(chunk) {
@@ -739,15 +800,6 @@ class RagService {
   // 问题类型分类 + 差异化阈值
   // 按问题类型调整 minScore / rerankTopK，不用额外 LLM 调用，零延迟
   // ──────────────────────────────────────────────
-
-  /** 问题类型枚举 */
-  static QuestionType = QUESTION_TYPE;
-
-  /** 按问题类型的阈值配置 */
-  static TYPE_CONFIG = TYPE_CONFIG;
-
-  /** 文档类别关键词表：用于元数据过滤（Multi-faceted Filtering）的 query → category 自动推断 */
-  static DOC_CATEGORY_KEYWORDS = DOC_CATEGORY_KEYWORDS;
 
   /**
    * 根据问题文本分类
@@ -789,14 +841,6 @@ class RagService {
   /** 检测是否需要改写：有历史 + 含代词/省略 */
   shouldRewriteQuery(query, history) {
     return queryRewrite.shouldRewriteQuery(query, history);
-  }
-
-  /**
-   * 用 LLM 改写 query：将带指代/省略的问题补全为独立的自包含问题
-   * @returns {Promise<string|null>} 改写后的 query，失败返回 null
-   */
-  async rewriteQuery(query, history) {
-    return queryRewrite.rewriteQuery(query, history, this.aiService);
   }
 
   /**
@@ -868,10 +912,6 @@ class RagService {
     });
   }
 
-  _groupChunksByParent(chunks) {
-    return contextBuilder.groupChunksByParent(chunks);
-  }
-
   /**
    * 从已 rerank 的父段落聚合结果构建上下文
    */
@@ -880,14 +920,6 @@ class RagService {
       maxContextLength: overrides.maxContextLength ?? this.maxContextLength,
       getDocument: (docId) => this.documentService.getDocument(docId),
     });
-  }
-
-  _preferFilledFields(existing, incoming) {
-    return resultMapper.preferFilledFields(existing, incoming);
-  }
-
-  _normalizeScore(score) {
-    return resultMapper.normalizeScore(score);
   }
 
   _buildNoReliableSourcesReply() {

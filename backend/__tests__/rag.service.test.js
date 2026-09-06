@@ -160,4 +160,89 @@ describe('RagService', () => {
       expect(rag.shouldRewriteQuery('转专业需要什么条件', history)).toBe(false);
     });
   });
+
+  // —— chat() 统一 drain chatStream（非流式单管线驱动） ——
+  describe('chat drain chatStream', () => {
+    it('聚合回复、来源、管线信息与 trace', async () => {
+      const RagService = getRagService();
+      const rag = new RagService({ getCompletion: vi.fn() });
+      rag.chatStream = async function* (_message, _history, options) {
+        expect(options.includePipeline).toBe(true);
+        yield { type: 'sources', sources: [{ id: 's1', title: '文档A' }] };
+        yield { type: 'content', content: '你好', done: false };
+        yield { type: 'process', processCard: { steps: [] } };
+        yield { type: 'grounding', grounding: { coverage: 1, level: 'high' } };
+        yield { type: 'followups', items: ['追问1'] };
+        yield { type: 'usage', usage: { totalTokens: 42 } };
+        yield { type: 'trace', trace: { traceId: 't-1', timings: [{ name: 'llm', durationMs: 123, success: true }] } };
+        yield {
+          type: 'content', content: '', done: true,
+          pipeline: {
+            context: '上下文', topChunks: [{ id: 'c1' }], questionType: 'factual',
+            rewrittenQuery: '改写后的问题', retrieval: { channels: ['vector'], hasResults: true },
+            fallbackReason: null,
+          },
+        };
+      };
+
+      const result = await rag.chat('问题', []);
+
+      expect(result.reply).toBe('你好');
+      expect(result.sources).toEqual([{ id: 's1', title: '文档A' }]);
+      expect(result.context).toBe('上下文');
+      expect(result.topChunks).toEqual([{ id: 'c1' }]);
+      expect(result.traceId).toBe('t-1');
+      expect(result.questionType).toBe('factual');
+      expect(result.processCard).toEqual({ steps: [] });
+      expect(result.grounding).toEqual({ coverage: 1, level: 'high' });
+      expect(result.followups).toEqual(['追问1']);
+      expect(result.usage).toEqual({ totalTokens: 42 });
+      expect(result._metrics.aiLatency).toBe(123);
+    });
+
+    it('知识库为空（no_documents）时保持 reply=null 契约', async () => {
+      const RagService = getRagService();
+      const rag = new RagService({ getCompletion: vi.fn() });
+      rag.chatStream = async function* () {
+        yield { type: 'trace', trace: { traceId: 't-2', timings: [] } };
+        yield {
+          type: 'content', content: '', done: true,
+          pipeline: {
+            context: '', topChunks: [], questionType: 'general', rewrittenQuery: '',
+            retrieval: { channels: [], hasResults: false }, fallbackReason: 'no_documents',
+          },
+        };
+      };
+
+      const result = await rag.chat('问题', []);
+      expect(result.reply).toBeNull();
+      expect(result.context).toBe('');
+    });
+
+    it('检索管线崩溃时降级纯 LLM', async () => {
+      const RagService = getRagService();
+      const aiService = { getCompletion: vi.fn().mockResolvedValue({ content: '纯 LLM 回答', isMock: false, usage: null }) };
+      const rag = new RagService(aiService);
+      rag.chatStream = async function* () {
+        throw new Error('向量库不可用');
+      };
+
+      const result = await rag.chat('问题', []);
+
+      expect(result.reply).toBe('纯 LLM 回答');
+      expect(aiService.getCompletion).toHaveBeenCalledOnce();
+      expect(result.sources).toEqual([]);
+      expect(result.trace.outcome.usedRag).toBe(false);
+    });
+
+    it('降级纯 LLM 也失败时上抛错误', async () => {
+      const RagService = getRagService();
+      const rag = new RagService({ getCompletion: vi.fn().mockRejectedValue(new Error('LLM 也不可用')) });
+      rag.chatStream = async function* () {
+        throw new Error('向量库不可用');
+      };
+
+      await expect(rag.chat('问题', [])).rejects.toThrow('LLM 也不可用');
+    });
+  });
 });

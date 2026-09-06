@@ -1,6 +1,7 @@
 <script setup>
 import { ref, watch, computed, onMounted, onBeforeUnmount } from 'vue';
-import { useChatStore } from '../stores/chat.store.js';
+import { useConversationStore } from '../stores/conversation.store.js';
+import { useMessageStore } from '../stores/message.store.js';
 import { useToastStore } from '../stores/toast.store.js';
 import { useFavoritesStore } from '../stores/favorites.store.js';
 import { Bot, Eraser, Download, ClipboardCopy, FileText, FileCode2, Share2, BookOpen, GraduationCap, Landmark, Library, Volume2, VolumeX } from 'lucide-vue-next';
@@ -14,13 +15,17 @@ import { useChatScroll } from '../composables/useChatScroll.js';
 import { buildStarterQuestions } from '../utils/starterQuestions.js';
 import { getDocuments } from '../api/rag.js';
 
-const chatStore = useChatStore();
+const conversationStore = useConversationStore();
+const messageStore = useMessageStore();
 const toast = useToastStore();
 const favoritesStore = useFavoritesStore();
 const speechPlayer = useSpeechPlayer();
 const autoSpeak = ref(localStorage.getItem('chat_auto_speak') === 'true');
 const { messageListRef, chatBoxRef, focusChatInput, scrollToBottom, scrollToFavoritedMessage } = useChatScroll(favoritesStore);
-const { showExportMenu, copyConversationAsText, exportConversation, exportConversationAsHtml, shareConversation } = useConversationExport(chatStore, toast);
+const { showExportMenu, copyConversationAsText, exportConversation, exportConversationAsHtml, shareConversation } = useConversationExport(conversationStore, toast);
+
+// 当前会话消息列表（模板中自动解包，脚本内需 .value）
+const messages = computed(() => conversationStore.currentConversation?.messages || []);
 
 // 空状态示例问题：优先从知识库文档动态生成（按类别打散取多样主题），拉取失败退回静态兜底
 const exampleQuestions = ref([
@@ -47,15 +52,15 @@ watch(() => favoritesStore.pendingScrollMessageId, (id) => {
   scrollToFavoritedMessage(id);
 });
 
-const currentTitle = computed(() => chatStore.currentConversation?.title || 'AI 助手');
-const effectiveMessageCount = computed(() => chatStore.messages.filter((msg) => msg.id !== 'welcome' && msg.text?.trim()).length);
-const canClear = computed(() => effectiveMessageCount.value > 0 && !chatStore.isLoading);
+const currentTitle = computed(() => conversationStore.currentConversation?.title || 'AI 助手');
+const effectiveMessageCount = computed(() => messages.value.filter((msg) => msg.id !== 'welcome' && msg.text?.trim()).length);
+const canClear = computed(() => effectiveMessageCount.value > 0 && !messageStore.isLoading);
 
 const showClearConfirm = ref(false);
 
 const confirmClear = () => {
   showClearConfirm.value = false;
-  Promise.resolve(chatStore.clearMessages()).catch((e) => {
+  Promise.resolve(messageStore.clearMessages()).catch((e) => {
     console.error('[AIChat] 清空会话异常:', e);
   });
 };
@@ -65,9 +70,9 @@ const confirmClear = () => {
 const handleSend = async (message, fileData = null) => {
   speechPlayer.stop();
   try {
-    await chatStore.sendMessage(message, null, fileData);
+    await messageStore.sendMessage(message, null, fileData);
     if (autoSpeak.value) {
-      const reply = [...chatStore.messages].reverse().find((item) => item.role === 'model' && !item.isError && item.text?.trim());
+      const reply = [...messages.value].reverse().find((item) => item.role === 'model' && !item.isError && item.text?.trim());
       if (reply) {
         void speechPlayer.play(reply.id, reply.text)
           .then((result) => {
@@ -110,22 +115,22 @@ const handleCommand = (command) => {
 };
 
 const initializeChat = async () => {
-  await chatStore.loadConversations();
+  await conversationStore.loadConversations();
 
   // 没有消息备份，走正常加载流程
-  if (chatStore.currentConversationId) {
-    await chatStore.loadConversationMessages(chatStore.currentConversationId);
+  if (conversationStore.currentConversationId) {
+    await conversationStore.loadConversationMessages(conversationStore.currentConversationId);
   }
   await scrollToBottom();
 };
 
-watch(() => chatStore.messages.length, scrollToBottom);
-watch(() => chatStore.currentConversationId, scrollToBottom);
+watch(() => messages.value.length, scrollToBottom);
+watch(() => conversationStore.currentConversationId, scrollToBottom);
 onMounted(() => {
   // Pinia store 跨路由切换保持存活。
   // 只有首次加载（页面刷新）才需要从 localStorage/后端拉数据，
   // 切换标签页回来时 store 里的消息仍然存在，无需重新加载。
-  if (!chatStore.isLoaded) {
+  if (!conversationStore.isLoaded) {
     initializeChat();
   }
 });
@@ -235,7 +240,7 @@ onBeforeUnmount(() => speechPlayer.stop());
 
     <!-- 空状态：仅欢迎消息时展示吉祥物 + 示例问题 -->
     <div
-      v-if="effectiveMessageCount === 0 && !chatStore.isLoading"
+      v-if="effectiveMessageCount === 0 && !messageStore.isLoading"
       class="flex-1 min-h-0 overflow-y-auto flex items-center justify-center p-6"
     >
       <div class="w-full max-w-2xl flex flex-col items-center text-center">
@@ -273,10 +278,10 @@ onBeforeUnmount(() => speechPlayer.stop());
     <MessageList
       v-else
       ref="messageListRef"
-      :messages="chatStore.messages"
-      :is-loading="chatStore.isLoading"
-      :current-streaming-id="chatStore.currentStreamingId"
-      :decision-draft="chatStore.decisionDraft"
+      :messages="messages"
+      :is-loading="messageStore.isLoading"
+      :current-streaming-id="messageStore.currentStreamingId"
+      :decision-draft="messageStore.decisionDraft"
       @copy="handleCopy"
       @focus-input="focusChatInput"
     />
@@ -284,11 +289,11 @@ onBeforeUnmount(() => speechPlayer.stop());
     <!-- 输入框 -->
     <ChatBox
       ref="chatBoxRef"
-      :is-loading="chatStore.isLoading"
+      :is-loading="messageStore.isLoading"
       :placeholder="text.inputPlaceholder"
-      :is-connected="chatStore.isConnected"
-      :is-reconnecting="chatStore.isReconnecting"
-      :reconnect-attempt="chatStore.reconnectAttempt"
+      :is-connected="messageStore.isConnected"
+      :is-reconnecting="messageStore.isReconnecting"
+      :reconnect-attempt="messageStore.reconnectAttempt"
       @send="handleSend"
       @error="handleError"
       @command="handleCommand"

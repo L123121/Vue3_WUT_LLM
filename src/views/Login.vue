@@ -207,7 +207,7 @@ import {
 } from 'lucide-vue-next';
 import logoUrl from '../assets/wuhan-university-logo.png';
 import { useAuthStore } from '../stores/auth.store.js';
-import { useChatStore } from '../stores/chat.store.js';
+import { useConversationStore } from '../stores/conversation.store.js';
 import { useThemeStore } from '../stores/theme.store.js';
 import { prefetchRoute, prefetchAll } from '../utils/prefetch.js';
 
@@ -228,7 +228,7 @@ const MODE_CONFIG = {
 const router = useRouter();
 const route = useRoute();
 const authStore = useAuthStore();
-const chatStore = useChatStore();
+const convStore = useConversationStore();
 const themeStore = useThemeStore();
 
 const accountMode = ref('login'); // 'login' | 'register'
@@ -325,7 +325,7 @@ async function handleSubmit() {
       await authStore.login(accountUsername.value, accountPassword.value);
     }
 
-    chatStore.resetConversationState();
+    convStore.resetConversationState();
     prefetchRoute(redirectTarget.value);
     prefetchAll();
     await router.replace(redirectTarget.value);

@@ -8,10 +8,9 @@ const DB_FILE = path.join(DATA_DIR, 'store.db');
 const LEGACY_FILE = path.join(DATA_DIR, 'store.json');
 
 /**
- * SQLiteStore — 基于 better-sqlite3 的持久化存储
+ * SQLiteStore — 基于 better-sqlite3 的持久化存储（唯一实现）
  *
- * 外部 API 与 MemoryStore / RedisStore 完全一致，可无缝替换。
- * 支持 hash / set / list 三种数据结构，数据即时持久化（无需 debounce save）。
+ * 提供 hash / set / list 三种数据结构的 Redis 风格接口，数据即时持久化（无需 debounce save）。
  */
 class SQLiteStore {
   constructor() {
@@ -392,20 +391,10 @@ class SQLiteStore {
   get status() { return 'ready'; }
 }
 
-// ==================== 选择后端 ====================
-// 优先级：REDIS_URL > SQLite（默认）
+// ==================== 单例 ====================
 
-let store;
-const REDIS_URL = process.env.REDIS_URL;
-
-if (REDIS_URL) {
-  const { RedisStore } = require('./redis-store');
-  store = new RedisStore(REDIS_URL);
-  console.log('[Store] 使用 Redis');
-} else {
-  store = new SQLiteStore();
-  console.log('[Store] 使用 SQLite（本地持久化）');
-}
+const store = new SQLiteStore();
+console.log('[Store] 使用 SQLite（本地持久化）');
 
 // ========== 会话管理（不变） ==========
 

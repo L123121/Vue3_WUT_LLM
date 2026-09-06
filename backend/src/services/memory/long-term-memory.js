@@ -3,9 +3,26 @@
 const { redis: store } = require('../memory-store');
 const { EmbeddingService } = require('../embedding.service');
 const { parseRedisList } = require('./helpers');
+const config = require('../../config');
 
 const MAX_LONG_TERM = 100;
 const KEYWORD_BOOST = 0.3;
+
+/**
+ * 记忆四类治理（2026-09-03 新增，借鉴 AgentHarness 长期记忆分类）：
+ *   preference - 用户偏好（回答风格/格式/语言）
+ *   feedback   - 错误反馈（用户指出的错误与纠正，优先级最高的学习信号）
+ *   fact       - 稳定事实（专业/年级/课程/目标等）
+ *   reference  - 外部参考（用户提到的重要资料/链接/文件）
+ * 历史遗留类型（qa 等）直通，不强制归入四类。
+ */
+const MEMORY_TYPES = {
+  preference: '偏好',
+  feedback: '错误反馈',
+  fact: '事实',
+  reference: '外部参考',
+};
+
 const mutationQueues = new Map();
 
 function withMemoryLock(key, task) {
@@ -28,7 +45,14 @@ class LongTermMemory {
   }
 
   /**
-   * 添加长期记忆（自动计算 embedding + 去重）
+   * 添加长期记忆（自动计算 embedding + 两级去重合并）
+   *
+   * 去重分两级：
+   *   1. 文本级：精确匹配 / 高重叠子串（_findDuplicate，零成本）
+   *   2. 语义级：同类型记忆 embedding cosine ≥ dedupSimilarity（默认 0.9）
+   *      视为重复——限同类型，避免"偏好"吞掉"事实"
+   * 命中重复时执行**合并**而非简单 touch：保留信息量更大的内容、
+   * confidence 取高并小幅奖励、累计 mergedCount（重复出现的记忆是强信号）
    */
   async add(userId, memory) {
     const key = `memory:${userId}:long_term`;
@@ -48,20 +72,30 @@ class LongTermMemory {
     return withMemoryLock(key, async () => {
       const raw = await store.lrange(key, 0, -1);
       const list = parseRedisList(raw);
-      const dup = this._findDuplicate(list, entry.content);
+      const dup = this._findDuplicate(list, entry.content)
+        || this._findSemanticDuplicate(list, entry);
       if (dup) {
-        dup.lastAccessedAt = new Date().toISOString();
-        dup.accessCount = (dup.accessCount || 0) + 1;
-        if (!dup.embedding && entry.embedding) dup.embedding = entry.embedding;
-        console.log(`[Memory] 去重: "${entry.content.slice(0, 30)}..." 合并到已有记忆 ${dup.id}`);
+        this._mergeInto(dup, entry);
+        console.log(`[Memory] 去重合并[${MEMORY_TYPES[dup.type] || dup.type}]: "${String(entry.content).slice(0, 30)}..." → ${dup.id}（merged ${dup.mergedCount} 次）`);
         await replaceList(key, list);
         return dup;
       }
 
       list.push(entry);
       while (list.length > MAX_LONG_TERM) {
-        const removed = list.shift();
-        if (removed) console.log(`[Memory] 超出上限，移除: ${removed.id}`);
+        // 驱逐价值最低的记忆（原为简单 FIFO 逐出最旧）：
+        // confidence 低 + 访问少者优先逐出，高置信/高频记忆即使较老也保留
+        let victimIdx = 0;
+        let victimScore = Infinity;
+        list.forEach((m, i) => {
+          const score = (m.confidence || 0.5) + Math.min(m.accessCount || 0, 10) * 0.02;
+          if (score < victimScore) {
+            victimScore = score;
+            victimIdx = i;
+          }
+        });
+        const [removed] = list.splice(victimIdx, 1);
+        if (removed) console.log(`[Memory] 超出上限，驱逐低价值记忆: ${removed.id}（score=${victimScore.toFixed(2)}）`);
       }
       await replaceList(key, list);
       return entry;
@@ -164,6 +198,51 @@ class LongTermMemory {
   }
 
   /**
+   * 查找语义重复的记忆（第二级去重）：
+   * 同类型 + embedding cosine ≥ dedupSimilarity（默认 0.9）
+   * embedding 不可用（无 Key/测试环境）时自动跳过，退化为纯文本级去重
+   */
+  _findSemanticDuplicate(list, entry) {
+    const threshold = config.memory?.dedupSimilarity ?? 0.9;
+    if (!entry.embedding || !Array.isArray(entry.embedding) || list.length === 0) return null;
+
+    let best = null;
+    let bestSim = threshold;
+    for (const m of list) {
+      if (!m.embedding || m.type !== entry.type) continue;
+      const sim = EmbeddingService.cosineSimilarity(entry.embedding, m.embedding);
+      if (sim >= bestSim) {
+        best = m;
+        bestSim = sim;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * 重复项合并：保留信息量更大（更长）的内容，confidence 取高并小幅奖励，
+   * 累计 mergedCount——同一事实被反复提及是"值得记住"的强信号
+   */
+  _mergeInto(existing, incoming) {
+    const incomingLen = String(incoming.content || '').length;
+    const existingLen = String(existing.content || '').length;
+    if (incomingLen > existingLen) {
+      existing.content = incoming.content;
+      if (incoming.embedding) existing.embedding = incoming.embedding;
+    } else if (!existing.embedding && incoming.embedding) {
+      existing.embedding = incoming.embedding;
+    }
+    existing.confidence = Math.min(
+      Math.max(existing.confidence || 0, incoming.confidence || 0) + 0.05,
+      0.99
+    );
+    existing.lastAccessedAt = new Date().toISOString();
+    existing.accessCount = (existing.accessCount || 0) + 1;
+    existing.mergedCount = (existing.mergedCount || 1) + 1;
+    return existing;
+  }
+
+  /**
    * 异步计算并存入 embedding
    */
   async _computeEmbedding(entry) {
@@ -190,4 +269,4 @@ class LongTermMemory {
   }
 }
 
-module.exports = { LongTermMemory, withMemoryLock };
+module.exports = { LongTermMemory, withMemoryLock, MEMORY_TYPES };

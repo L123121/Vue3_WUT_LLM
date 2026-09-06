@@ -1,8 +1,8 @@
 <script setup>
 import { ref, computed } from 'vue';
 import { Copy, Star, Volume2, Square, Loader2, ThumbsUp, ThumbsDown, GitFork, Pencil } from 'lucide-vue-next';
-import { useChatStore } from '../../stores/chat.store.js';
 import { useConversationStore } from '../../stores/conversation.store.js';
+import { useMessageStore } from '../../stores/message.store.js';
 import { useFavoritesStore } from '../../stores/favorites.store.js';
 import { useToastStore } from '../../stores/toast.store.js';
 import { useSpeechPlayer } from '../../composables/useSpeechPlayer.js';
@@ -28,7 +28,8 @@ const props = defineProps({
 
 const emit = defineEmits(['copy', 'start-edit']);
 
-const chatStore = useChatStore();
+const conversationStore = useConversationStore();
+const messageStore = useMessageStore();
 const favoritesStore = useFavoritesStore();
 const toast = useToastStore();
 const speechPlayer = useSpeechPlayer();
@@ -61,14 +62,14 @@ const submitFeedback = async (rating) => {
     await submitRagFeedback({
       rating,
       messageId: props.message.id,
-      conversationId: chatStore.currentConversationId,
+      conversationId: conversationStore.currentConversationId,
       questionMessageId: props.questionMessage?.id || '',
       question: props.questionMessage?.content ?? props.questionMessage?.text ?? '',
       answer: props.messageText,
       traceId: props.message.traceId || props.message.ragTrace?.traceId || '',
       sources: buildFeedbackSources(),
     });
-    chatStore.setMessageFeedback(props.message.id, { rating, submittedAt });
+    messageStore.setMessageFeedback(props.message.id, { rating, submittedAt });
     feedbackState.value = 'done';
   } catch (error) {
     console.error('[RAG Feedback] 提交失败:', error);
@@ -119,15 +120,14 @@ const copyMessage = (text) => {
 
 const isFavorited = computed(() => favoritesStore.isFavorite(props.message.id));
 const toggleFavorite = () => {
-  favoritesStore.toggleFavorite(props.message, chatStore.currentConversation);
+  favoritesStore.toggleFavorite(props.message, conversationStore.currentConversation);
 };
 
 // ===== 分叉：复制当前消息（含）之前的历史到新会话 =====
-const conversationStore = useConversationStore();
 const forkLoading = ref(false);
 const forkFromHere = async () => {
-  const conv = chatStore.currentConversation;
-  if (!conv || forkLoading.value || chatStore.isLoading) return;
+  const conv = conversationStore.currentConversation;
+  if (!conv || forkLoading.value || messageStore.isLoading) return;
   forkLoading.value = true;
   try {
     const res = await forkConversation(conv.id, props.message.id);
@@ -225,7 +225,7 @@ const formatTime = (timestamp) =>
 
     <button
       v-if="messageText && !isStreaming"
-      :disabled="forkLoading || chatStore.isLoading"
+      :disabled="forkLoading || messageStore.isLoading"
       class="flex items-center gap-1 hover:text-wut-500 transition-all duration-200 cursor-pointer px-1.5 py-0.5 rounded text-sm disabled:opacity-50"
       :class="timeClasses"
       @click="forkFromHere"

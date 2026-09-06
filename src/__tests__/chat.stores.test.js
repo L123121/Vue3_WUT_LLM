@@ -1,8 +1,25 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { setActivePinia, createPinia } from 'pinia';
-import { useChatStore } from '../stores/chat.store.js';
+import { useConversationStore } from '../stores/conversation.store.js';
+import { useMessageStore } from '../stores/message.store.js';
 import { useAuthStore } from '../stores/auth.store.js';
 import * as conversationsApi from '../api/conversations.js';
+
+// chat.store 组合门面已删除。此视图按「消息 store 优先、会话 store 兜底」解析成员，
+// 让既有用例继续覆盖两个真身 store 的组合行为（成员解析在每次访问时进行，读到的始终是最新状态）。
+const useChatSurface = () => {
+  const conversationStore = useConversationStore();
+  const messageStore = useMessageStore();
+  return new Proxy({}, {
+    get(_, key) {
+      if (key in messageStore) return messageStore[key];
+      return conversationStore[key];
+    },
+    has(_, key) {
+      return key in messageStore || key in conversationStore;
+    },
+  });
+};
 
 // Mock the API modules
 vi.mock('../api/chat.js', () => ({
@@ -23,7 +40,7 @@ vi.mock('../api/conversations.js', () => ({
   clearConversationMessages: vi.fn(),
 }));
 
-describe('chatStore', () => {
+describe('chat stores (conversation + message)', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     localStorage.clear();
@@ -42,14 +59,14 @@ describe('chatStore', () => {
   });
 
   it('initializes with empty state', () => {
-    const store = useChatStore();
+    const store = useChatSurface();
     expect(store.conversations).toEqual([]);
     expect(store.isLoading).toBe(false);
     expect(store.currentStreamingId).toBeNull();
   });
 
   it('creates a local conversation', async () => {
-    const store = useChatStore();
+    const store = useChatSurface();
     const id = await store.createConversation('Test Chat');
 
     expect(id).toMatch(/^local_/);
@@ -59,7 +76,7 @@ describe('chatStore', () => {
   });
 
   it('switches conversation', async () => {
-    const store = useChatStore();
+    const store = useChatSurface();
     const id1 = await store.createConversation('Chat 1');
     const id2 = await store.createConversation('Chat 2');
 
@@ -68,7 +85,7 @@ describe('chatStore', () => {
   });
 
   it('deletes conversation and switches to another', async () => {
-    const store = useChatStore();
+    const store = useChatSurface();
     const id1 = await store.createConversation('Chat 1');
     const id2 = await store.createConversation('Chat 2');
 
@@ -78,7 +95,7 @@ describe('chatStore', () => {
   });
 
   it('creates default conversation when all deleted', async () => {
-    const store = useChatStore();
+    const store = useChatSurface();
     await store.createConversation('Only Chat');
     await store.deleteConversation(store.conversations[0].id);
 
@@ -100,7 +117,7 @@ describe('chatStore', () => {
       }],
     }));
 
-    const store = useChatStore();
+    const store = useChatSurface();
     await store.loadConversations();
 
     expect(store.currentConversationId).toBe('local_cached');
@@ -122,7 +139,7 @@ describe('chatStore', () => {
       { id: 'conv_server', title: 'Server', messages: [], updatedAt: '2026-08-17T01:00:00.000Z' },
     ]);
 
-    const store = useChatStore();
+    const store = useChatSurface();
     await store.loadConversations();
 
     expect(store.conversations.map((conv) => conv.id)).toEqual(['conv_server', 'conv_created']);
@@ -140,7 +157,7 @@ describe('chatStore', () => {
     useAuthStore().setUser({ id: 'user-1', name: 'User' });
     vi.mocked(conversationsApi.fetchConversations).mockResolvedValue(null);
 
-    const store = useChatStore();
+    const store = useChatSurface();
     await store.loadConversations();
 
     expect(store.conversations).toHaveLength(1);
@@ -157,7 +174,7 @@ describe('chatStore', () => {
       updatedAt: '2026-08-18T00:00:00.000Z',
     });
 
-    const store = useChatStore();
+    const store = useChatSurface();
     await store.loadConversations();
 
     expect(conversationsApi.createConversation).toHaveBeenCalledWith('新会话');
@@ -167,7 +184,7 @@ describe('chatStore', () => {
   });
 
   it('migrates a local conversation before account logout', async () => {
-    const store = useChatStore();
+    const store = useChatSurface();
     const localId = await store.createConversation('待同步会话');
     store.conversations[0].messages.push({ id: 'local-message', role: 'user', content: '保留我' });
 
@@ -194,7 +211,7 @@ describe('chatStore', () => {
 
   it('keeps persisted cache on account reset and clears it only via clearPersistedCache', async () => {
     useAuthStore().setUser({ id: 'user-1', name: 'User' });
-    const store = useChatStore();
+    const store = useChatSurface();
     await store.loadConversations();
     await store.createConversation('Private Chat');
     expect(store.isLoaded).toBe(true);
@@ -217,13 +234,13 @@ describe('chatStore', () => {
 
   it('does not wipe cache with an empty conversation list during reset', async () => {
     useAuthStore().setUser({ id: 'user-1', name: 'User' });
-    const store = useChatStore();
+    const store = useChatSurface();
     await store.loadConversations();
     await store.createConversation('Chat');
     const cachedBefore = localStorage.getItem('chat_cache:user-1');
     expect(cachedBefore).not.toBeNull();
 
-    // 重置把内存列表清空，chat.store 的 watcher 会触发一次空列表的 scheduleSaveCache；
+    // 重置把内存列表清空，防抖保存的守卫会跳过空列表；
     // 空列表不得覆盖缓存，否则未同步消息被清掉
     store.resetConversationState();
     await new Promise((resolve) => setTimeout(resolve, 350));
@@ -243,7 +260,7 @@ describe('chatStore', () => {
       messages: [{ id: 'm-user-1', role: 'user', content: '第一条' }],
     });
 
-    const store = useChatStore();
+    const store = useChatSurface();
     await store.loadConversations();
     // 模拟缓存中恢复了完整的本地消息（含未同步尾部）
     store.conversations[0].messages = [
@@ -275,7 +292,7 @@ describe('chatStore', () => {
       ],
     });
 
-    const store = useChatStore();
+    const store = useChatSurface();
     await store.loadConversations();
 
     await store.loadConversationMessages('conv_multi');
@@ -285,7 +302,7 @@ describe('chatStore', () => {
   });
 
   it('renames conversation', async () => {
-    const store = useChatStore();
+    const store = useChatSurface();
     await store.createConversation('Old Name');
     const id = store.conversations[0].id;
 
@@ -294,7 +311,7 @@ describe('chatStore', () => {
   });
 
   it('ignores empty rename', async () => {
-    const store = useChatStore();
+    const store = useChatSurface();
     await store.createConversation('Keep');
     const id = store.conversations[0].id;
 
@@ -303,7 +320,7 @@ describe('chatStore', () => {
   });
 
   it('clears messages to welcome only', async () => {
-    const store = useChatStore();
+    const store = useChatSurface();
     await store.createConversation('Chat');
     // Manually add a message
     store.conversations[0].messages.push({ id: 'test', role: 'user', text: 'hi', timestamp: new Date() });
@@ -314,7 +331,7 @@ describe('chatStore', () => {
   });
 
   it('returns message preview', async () => {
-    const store = useChatStore();
+    const store = useChatSurface();
     await store.createConversation('Chat');
     store.conversations[0].messages.push({
       id: 'msg1',
@@ -329,7 +346,7 @@ describe('chatStore', () => {
   });
 
   it('returns click hint for empty conversation', async () => {
-    const store = useChatStore();
+    const store = useChatSurface();
     await store.createConversation('Chat');
     // Only welcome message
     const preview = store.getLastMessagePreview(store.conversations[0]);
@@ -337,7 +354,7 @@ describe('chatStore', () => {
   });
 
   it('sorted conversations by updatedAt desc', async () => {
-    const store = useChatStore();
+    const store = useChatSurface();
     await store.createConversation('First');
     await store.createConversation('Second');
 
@@ -347,7 +364,7 @@ describe('chatStore', () => {
   });
 
   it('deletes a specific message', async () => {
-    const store = useChatStore();
+    const store = useChatSurface();
     await store.createConversation('Chat');
     store.conversations[0].messages.push(
       { id: 'm1', role: 'user', text: 'a', timestamp: new Date() },
@@ -360,7 +377,7 @@ describe('chatStore', () => {
   });
 
   it('does not delete welcome message', async () => {
-    const store = useChatStore();
+    const store = useChatSurface();
     await store.createConversation('Chat');
 
     store.deleteMessage('welcome');
@@ -435,7 +452,7 @@ describe('chatStore', () => {
   });
 
   it('abortCurrentRequest is a function', () => {
-    const store = useChatStore();
+    const store = useChatSurface();
     expect(typeof store.abortCurrentRequest).toBe('function');
   });
 });

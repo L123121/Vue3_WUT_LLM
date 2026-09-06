@@ -1,4 +1,5 @@
 import { ref, computed } from 'vue';
+import { evalApi } from '../api/eval.js';
 
 export function useEvalData() {
   const evalData = ref(null);
@@ -6,6 +7,12 @@ export function useEvalData() {
   const humanScores = ref({});
   const comments = ref({});
   const loading = ref(false);
+
+  // 服务端持久化（导入的评测报告）：currentReportId 为空 = 本地降级模式
+  const currentReportId = ref(null);
+  const importedReports = ref([]);
+  const saving = ref(false);
+  const serverError = ref('');
 
   const currentItem = computed(() => {
     if (!evalData.value?.results) return null;
@@ -30,27 +37,96 @@ export function useEvalData() {
     };
   });
 
-  function handleFileUpload(event) {
+  function applyPayload(payload) {
+    evalData.value = { results: payload.results || [] };
+    humanScores.value = payload.humanScores || {};
+    comments.value = payload.comments || {};
+    currentIndex.value = 0;
+  }
+
+  /** 已导入评测列表（侧栏选择用） */
+  async function loadImportedReports() {
+    try {
+      const res = await evalApi.listImportedReports();
+      if (res.success) importedReports.value = res.data || [];
+    } catch {
+      // 后端不可达时保持空列表，页面仍可用本地模式
+    }
+  }
+
+  /** 选中一条已导入评测：从服务端拉完整 payload 回放工作台 */
+  async function selectImportedReport(id) {
+    loading.value = true;
+    serverError.value = '';
+    try {
+      const res = await evalApi.fetchImportedReport(id);
+      if (!res.success) throw new Error(res.error || '加载失败');
+      currentReportId.value = id;
+      applyPayload(res.data);
+    } catch (err) {
+      serverError.value = err.message;
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  /**
+   * 上传评测报告：优先走服务端导入（持久化 + 可续打分）；
+   * 后端不可达/导入失败时降级为原本地模式（只读浏览，刷新即丢）。
+   */
+  async function importFile(event) {
     const file = event.target.files[0];
     if (!file) return;
 
     loading.value = true;
-    const reader = new FileReader();
-    reader.onload = (e) => {
+    serverError.value = '';
+    try {
+      const report = JSON.parse(await file.text());
       try {
-        evalData.value = JSON.parse(e.target.result);
-        currentIndex.value = 0;
-        if (evalData.value.humanScores) {
-          humanScores.value = evalData.value.humanScores;
-          comments.value = evalData.value.comments || {};
-        }
-      } catch (err) {
-        alert('JSON 解析失败: ' + err.message);
-      } finally {
-        loading.value = false;
+        const res = await evalApi.importManualReport(report);
+        if (!res.success) throw new Error(res.error || '导入失败');
+        currentReportId.value = res.data.id;
+        await loadImportedReports();
+        const payloadRes = await evalApi.fetchImportedReport(res.data.id);
+        if (!payloadRes.success) throw new Error(payloadRes.error || '回读失败');
+        applyPayload(payloadRes.data);
+        return;
+      } catch (serverErr) {
+        // 落到本地降级
+        serverError.value = `服务端导入失败，已降级为本地模式（打分不会持久化）：${serverErr.message}`;
       }
-    };
-    reader.readAsText(file);
+      evalData.value = report;
+      humanScores.value = report.humanScores || {};
+      comments.value = report.comments || {};
+      currentIndex.value = 0;
+      currentReportId.value = null;
+    } catch (err) {
+      serverError.value = `JSON 解析失败: ${err.message}`;
+    } finally {
+      loading.value = false;
+      event.target.value = '';
+    }
+  }
+
+  /** 人工打分回写服务端（仅导入模式可用） */
+  async function saveScores() {
+    if (!currentReportId.value) return false;
+    saving.value = true;
+    try {
+      const res = await evalApi.saveImportedScores(currentReportId.value, {
+        humanScores: humanScores.value,
+        comments: comments.value,
+      });
+      if (!res.success) throw new Error(res.error || '保存失败');
+      serverError.value = '';
+      await loadImportedReports();
+      return true;
+    } catch (err) {
+      serverError.value = err.message;
+      return false;
+    } finally {
+      saving.value = false;
+    }
   }
 
   function setScore(id, score) {
@@ -101,7 +177,14 @@ export function useEvalData() {
     loading,
     currentItem,
     stats,
-    handleFileUpload,
+    currentReportId,
+    importedReports,
+    saving,
+    serverError,
+    loadImportedReports,
+    selectImportedReport,
+    importFile,
+    saveScores,
     setScore,
     exportScores,
     prevItem,

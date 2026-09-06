@@ -2,7 +2,7 @@
 import { ref, computed, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
 import { User, Bot, RotateCcw, FileText, BookOpen } from 'lucide-vue-next';
-import { useChatStore } from '../../stores/chat.store.js';
+import { useMessageStore } from '../../stores/message.store.js';
 import { useAuthStore } from '../../stores/auth.store.js';
 import MarkdownRenderer from './MarkdownRenderer.vue';
 import RetrievalTracePanel from './RetrievalTracePanel.vue';
@@ -35,7 +35,7 @@ const props = defineProps({
 
 const emit = defineEmits(['copy', 'focus-input']);
 const router = useRouter();
-const chatStore = useChatStore();
+const msgStore = useMessageStore();
 const authStore = useAuthStore();
 
 const userAvatar = computed(() => authStore.user?.avatar || '');
@@ -45,7 +45,7 @@ const isModel = computed(() => props.message.role === 'model');
 const isError = computed(() => props.message.isError === true);
 const canRetry = computed(() => props.message.canRetry === true);
 
-const isStreaming = computed(() => chatStore.currentStreamingId === props.message.id);
+const isStreaming = computed(() => msgStore.currentStreamingId === props.message.id);
 
 const hasSources = computed(() => props.message.sources && props.message.sources.length > 0);
 const isFallbackReply = computed(() => (
@@ -111,8 +111,8 @@ const usageLabel = computed(() => {
 // 追问建议（followups SSE 事件写入）：点击直接发起提问
 const followups = computed(() => (Array.isArray(props.message.followups) ? props.message.followups : []));
 const sendFollowup = (text) => {
-  if (!text || chatStore.isLoading) return;
-  chatStore.sendMessage(text);
+  if (!text || msgStore.isLoading) return;
+  msgStore.sendMessage(text);
 };
 
 // Agent 工具面板的透传数据（面板内部状态由 AgentToolPanel 自管）
@@ -143,7 +143,7 @@ const copyCode = (code) => {
 };
 
 const retryMessage = (msgId) => {
-  chatStore.retryMessage(msgId);
+  msgStore.retryMessage(msgId);
 };
 
 const openImage = (url) => {
@@ -180,7 +180,7 @@ const editing = ref(false);
 const editText = ref('');
 const editTextareaRef = ref(null);
 const startEdit = () => {
-  if (chatStore.isLoading) return;
+  if (msgStore.isLoading) return;
   editText.value = messageText.value;
   editing.value = true;
   nextTick(() => editTextareaRef.value?.focus());
@@ -190,9 +190,9 @@ const cancelEdit = () => {
 };
 const saveEdit = async () => {
   const text = editText.value.trim();
-  if (!text || chatStore.isLoading) return;
+  if (!text || msgStore.isLoading) return;
   editing.value = false;
-  await chatStore.editAndResendMessage(props.message.id, text);
+  await msgStore.editAndResendMessage(props.message.id, text);
 };
 </script>
 
@@ -277,7 +277,7 @@ const saveEdit = async () => {
             >取消</button>
             <button
               type="button"
-              :disabled="!editText.trim() || chatStore.isLoading"
+              :disabled="!editText.trim() || msgStore.isLoading"
               class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-white text-wut-700 hover:bg-wut-50 disabled:opacity-50 transition-colors"
               @click="saveEdit"
             >
@@ -321,7 +321,7 @@ const saveEdit = async () => {
             v-for="item in followups"
             :key="item.text"
             type="button"
-            :disabled="chatStore.isLoading"
+            :disabled="msgStore.isLoading"
             class="inline-flex items-center gap-1 rounded-full border border-wut-100 bg-wut-50/60 px-2.5 py-1 text-[11px] font-medium text-wut-600 transition hover:border-wut-300 hover:bg-wut-100 disabled:opacity-50 dark:border-wut-800/50 dark:bg-wut-900/20 dark:text-wut-300 dark:hover:border-wut-700 dark:hover:bg-wut-900/40"
             :title="item.from === 'heading' ? '来自引用文档的章节' : '来自引用文档'"
             @click="sendFollowup(item.text)"

@@ -47,10 +47,8 @@ graph TB
   ↓
 BGE-small-zh ONNX → 稠密 512d + n-gram 稀疏向量（整数 key 哈希）
   ↓
-Qdrant 独立服务检索 (topK=50)（默认 VECTOR_STORE_BACKEND=qdrant）
-  融合：默认 weighted（0.6·dense + 0.4·sparse，官方评测 80.7% recall 优于 RRF 74.5%）
-  RRF 可选（RAG_FUSION=rrf，k=10，score = Σ 1/(k+rank)）
-  （本地文件版 vector-store.service.js 仍保留，VECTOR_STORE_BACKEND=file 可切换）
+Qdrant 独立服务检索 (topK=50)（唯一后端，本地文件持久化版已移除）
+  融合：weighted（0.6·dense + 0.4·sparse，通道内归一化，官方评测 80.7% recall 优于 RRF 74.5%）
   ↓
 50 句子 → 按 parentId 归并 → ~15 个父段落
   ↓
@@ -284,8 +282,8 @@ chat.store（聚合层）→ 页面统一接口
 
   \* 官方 RRF(k=60) 为 MMR 回归修复前跑的数据（当时含 MMR 跨文档剔除回归），与其它行不完全同链路。
   - 结论修正：**RRF 表现差主要是 k=60 偏大**（排名差异被过度压扁，CT05 掉出 top5）；k=10 的 RRF 与加权打平（官方 Recall 同为 97.4%，MRR/nDCG@5 微弱领先 0.007/0.004，属噪声级差异）
-  - 维持默认 weighted：效果相同但零超参、更简单；RRF 保留 `RAG_FUSION=rrf` + `RAG_RRF_K=10` 作为备选
-- 回退：默认融合方式改回 weighted（`config.vectorStore.fusion`，`RAG_FUSION` 环境变量可切 `weighted`/`rrf`），RRF 代码与测试保留（`backend/__tests__/rag.weights.test.js`），便于后续复现
+  - 维持默认 weighted：效果相同但零超参、更简单（RRF 备选实现已随文件版向量库移除）
+- RRF 排名融合实现与 `rag.weights.test.js` 已随文件版向量库一并移除（加权融合为唯一实现）
 - ⚠️ 排坑：RRF 排名必须按**句子唯一 id**（chunk id）计 rank，不能按 docId——同一 doc 的多条句子会相互覆盖，导致 RRF 被严重低估（曾出现 recall 100%→53% 的假象）
 
 **12. 前端性能指标埋点 + 简历数据实测（2026-08-12）**
@@ -495,16 +493,13 @@ LLM_CONCURRENCY=3
 JUDGE_API_KEY=...
 JUDGE_MODEL=step-3.5-flash
 
-# 向量库（2026-08-10 起默认 Qdrant 独立服务；文件持久化版保留可切换）
-VECTOR_STORE_BACKEND=qdrant
+# 向量库（Qdrant 独立服务，唯一后端；文件持久化版已移除）
 QDRANT_URL=http://localhost:6333
-# 混合检索融合：weighted（默认，0.6/0.4 加权打分）| rrf（可选，RAG_FUSION=rrf 切换）
-# 2026-08-09 实测：k=10 的 RRF 与加权打平（Recall 均 97.4%，MRR/nDCG 微弱领先），k=60 明显偏大
-RAG_FUSION=weighted
+# 混合检索融合权重（通道内归一化默认开启，RAG_FUSION_NORM=false 回退）
+RAG_VECTOR_WEIGHT=0.6
+RAG_SPARSE_WEIGHT=0.4
+# 多查询变体合并的 RRF 常数
 RAG_RRF_K=10
-# 以下权重供加权融合与 Qdrant 后端使用
-MILVUS_DENSE_WEIGHT=0.6
-MILVUS_SPARSE_WEIGHT=0.4
 
 # RAG 参数
 RAG_VECTOR_TOP_K=50

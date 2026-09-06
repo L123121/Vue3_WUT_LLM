@@ -10,10 +10,10 @@ const BATCH_SIZE = 32;
 const UPSERT_MAX_RETRY = 3;
 
 /**
- * QdrantVectorStore — Qdrant 独立服务向量库（单例）
+ * QdrantVectorStore — Qdrant 独立服务向量库（单例，唯一实现）
  *
- * 与 vector-store.service.js（文件持久化版）保持完全一致的外部接口：
- *   addChunks / search / deleteByDocId / resetCollection / count / isAvailable / ensureReady / setDocumentProvider
+ * 外部接口：
+ *   addChunks / search / deleteByDocId / resetCollection / count / isAvailable / ensureReady / setDocumentProvider / flush
  *
  * 设计：
  *   - collection 命名向量：dense(512d, Cosine) + sparse(idf modifier)
@@ -48,7 +48,6 @@ class QdrantVectorStore {
     this._initializing = false;
     this._pointCount = 0;
     this._idMap = new Map(); // hash → originalId，用于碰撞探测
-    this._dirty = false;      // 兼容 app.js 优雅关闭检查（Qdrant 无本地脏标记）
 
     this._connect();
   }
@@ -258,7 +257,6 @@ class QdrantVectorStore {
       }
     }
     this._pointCount += points.length;
-    this._dirty = true;
   }
 
   async search(queryEmbedding, topK = 10, filter = null, weights = null) {
@@ -428,15 +426,8 @@ class QdrantVectorStore {
     return !!this._client;
   }
 
-  // ==================== 兼容字段（app.js 使用） ====================
-
-  /** app.js 打印 `vectorStore._docs.length` —— 返回带 length 的轻量对象 */
-  get _docs() {
-    return { length: this._pointCount };
-  }
-
-  /** app.js 优雅关闭时调用 —— Qdrant 无本地脏标记，no-op */
-  _saveSync() {}
+  /** 优雅关闭统一接口 —— Qdrant 服务端自行持久化，无需落盘 */
+  flush() {}
 
   // ==================== 工具 ====================
 

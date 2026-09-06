@@ -4,6 +4,8 @@ const config = require('../config');
 const { metrics } = require('./metrics.service');
 const { logEvent } = require('./observability.service');
 const { decomposeQuery } = require('./query-decompose.service');
+const resultMapper = require('./rag-result-mapper.service');
+const queryRewrite = require('./rag-query-rewrite.service');
 const { QueryCache } = require('../utils/query-cache');
 const { SemanticCache } = require('./rag-semantic-cache.service');
 
@@ -220,7 +222,7 @@ async function retrieveParentCandidates(svc, query, options = {}) {
     topK: childTopK,
   });
   const parentAggregateStart = Date.now();
-  const parents = await svc.aggregateParentCandidates(candidates, {
+  const parents = await aggregateParentCandidates(svc, candidates, {
     limit: parentTopK,
     includeChildren,
   });
@@ -236,7 +238,7 @@ async function retrieveParentCandidates(svc, query, options = {}) {
     category: options.category || null,
     childTopK,
     parentTopK: parentTopK || parents.length,
-    children: candidates.map((chunk, index) => svc._chunkToCandidate(chunk, index + 1)),
+    children: candidates.map((chunk, index) => resultMapper.chunkToCandidate(chunk, index + 1)),
     parents,
     retrieval: retrievalSummary,
     trace,
@@ -298,7 +300,7 @@ async function aggregateParentCandidates(svc, chunks, options = {}) {
       docCache.set(match.docId, doc || null);
     }
 
-    parents.push(svc._parentMatchToCandidate(match, doc, parents.length + 1, { includeChildren }));
+    parents.push(resultMapper.parentMatchToCandidate(match, doc, parents.length + 1, { includeChildren }));
   }
 
   return parents;
@@ -322,16 +324,16 @@ function fuseRetrievalResults(svc, vectorResults = [], keywordResults = [], limi
     };
 
     if (channel === 'vector') {
-      existing._vectorScore = Math.max(existing._vectorScore || 0, svc._normalizeScore(item.score));
+      existing._vectorScore = Math.max(existing._vectorScore || 0, resultMapper.normalizeScore(item.score));
       existing._vectorRank = rank;
     } else if (channel === 'keyword') {
-      existing._keywordScore = Math.max(existing._keywordScore || 0, svc._normalizeScore(item._keywordScore ?? item.score));
+      existing._keywordScore = Math.max(existing._keywordScore || 0, resultMapper.normalizeScore(item._keywordScore ?? item.score));
       existing._keywordRank = rank;
     }
 
     existing._rrfScore += 1 / (svc.rrfK + rank);
     if (!existing._retrievalChannels.includes(channel)) existing._retrievalChannels.push(channel);
-    merged.set(key, { ...existing, ...svc._preferFilledFields(existing, item) });
+    merged.set(key, { ...existing, ...resultMapper.preferFilledFields(existing, item) });
   };
 
   vectorResults.forEach((item, index) => addResult(item, 'vector', index + 1));
@@ -357,10 +359,10 @@ async function dualRetrieve(svc, message, history, options = {}) {
 
   // 1) Query 改写：解决多轮对话中指代/省略问题
   let rewrittenQuery = null;
-  if (svc.shouldRewriteQuery(message, history)) {
+  if (queryRewrite.shouldRewriteQuery(message, history)) {
     const rewriteStart = Date.now();
     try {
-      rewrittenQuery = await svc.rewriteQuery(message, history);
+      rewrittenQuery = await queryRewrite.rewriteQuery(message, history, svc.aiService);
       svc._recordTraceStage(tracer, 'query_rewrite', rewriteStart, true, {
         changed: !!rewrittenQuery,
       });
@@ -375,6 +377,36 @@ async function dualRetrieve(svc, message, history, options = {}) {
     decompose = decomposeQuery(message, svc.queryDecomposeMax);
   }
 
+  // 2.5) 查询翻译（默认关闭，灰度开启）：HyDE 假设文档 / Step-Back 上位问题。
+  // 与改写/分解同一设计——只扩大召回池，reranker 仍按用户原始问题打分，
+  // 因此假设文档内容不准确/上位问题偏移都不会影响精度
+  let hydeDocument = null;
+  let stepBackQuery = null;
+  const translateJobs = [];
+  if (svc.hydeEnabled && !options.disableHyde) {
+    const hydeStart = Date.now();
+    translateJobs.push(
+      queryRewrite.generateHydeDocument(message, svc.aiService)
+        .then(doc => {
+          hydeDocument = doc;
+          svc._recordTraceStage(tracer, 'hyde', hydeStart, true, { generated: !!doc });
+        })
+        .catch(err => svc._recordTraceStage(tracer, 'hyde', hydeStart, false, {}, err))
+    );
+  }
+  if (svc.stepBackEnabled && !options.disableStepBack) {
+    const stepBackStart = Date.now();
+    translateJobs.push(
+      queryRewrite.generateStepBackQuery(message, svc.aiService)
+        .then(q => {
+          stepBackQuery = q;
+          svc._recordTraceStage(tracer, 'step_back', stepBackStart, true, { changed: !!q });
+        })
+        .catch(err => svc._recordTraceStage(tracer, 'step_back', stepBackStart, false, {}, err))
+    );
+  }
+  if (translateJobs.length > 0) await Promise.all(translateJobs);
+
   // 3) 组装检索变体并去重（规范化文本相同视为同一变体）
   const seenVariants = new Set([String(message).trim().toLowerCase()]);
   const variants = [{ query: message, queryVariant: 'original' }];
@@ -383,6 +415,20 @@ async function dualRetrieve(svc, message, history, options = {}) {
     if (!seenVariants.has(key)) {
       seenVariants.add(key);
       variants.push({ query: rewrittenQuery, queryVariant: 'rewritten' });
+    }
+  }
+  if (hydeDocument) {
+    const key = String(hydeDocument).trim().toLowerCase();
+    if (!seenVariants.has(key)) {
+      seenVariants.add(key);
+      variants.push({ query: hydeDocument, queryVariant: 'hyde' });
+    }
+  }
+  if (stepBackQuery) {
+    const key = String(stepBackQuery).trim().toLowerCase();
+    if (!seenVariants.has(key)) {
+      seenVariants.add(key);
+      variants.push({ query: stepBackQuery, queryVariant: 'step_back' });
     }
   }
   for (let i = 0; i < decompose.subQueries.length; i++) {

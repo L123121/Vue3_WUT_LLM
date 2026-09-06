@@ -33,20 +33,12 @@ function applyRoutes(app, chatLimiter) {
     });
   });
 
-  // API 列表
+  // API 列表：从实际路由栈动态生成，避免手写清单与实现脱节
   app.get('/api', (req, res) => {
     res.json({
       app: '武理小精灵后端',
       version: '1.0.0',
-      endpoints: [
-        { method: 'GET', path: '/api/health', description: '健康检查' },
-        { method: 'GET', path: '/api', description: 'API列表' },
-        { method: 'POST', path: '/api/stream', description: '流式聊天接口' },
-        { method: 'POST', path: '/api/audio/speech', description: 'AI 回复语音合成' },
-        { method: 'POST', path: '/api/auth/login', description: '登录' },
-        { method: 'POST', path: '/api/auth/register', description: '注册' },
-        { method: 'GET', path: '/api/auth/me', description: '当前用户' },
-      ],
+      endpoints: listRoutes(app._router?.stack),
     });
   });
 
@@ -134,6 +126,26 @@ function applyRoutes(app, chatLimiter) {
       res.sendFile(path.join(frontendDist, 'index.html'));
     });
   }
+}
+
+/**
+ * 从 Express 路由栈提取已注册端点：route 层取 method+path；
+ * router 挂载层从 regexp 反解字面量挂载前缀后递归（所有挂载均为字符串路径）。
+ */
+function listRoutes(stack, prefix = '', out = []) {
+  for (const layer of stack || []) {
+    if (layer.route) {
+      const methods = Object.keys(layer.route.methods || {}).map((m) => m.toUpperCase()).join('|');
+      out.push({ method: methods || 'GET', path: prefix + layer.route.path });
+    } else if (layer.name === 'router' && Array.isArray(layer.handle?.stack)) {
+      const mounted = String(layer.regexp?.source || '')
+        .replace(/^\^/, '')
+        .replace(/\\\/\?\(\?=\\\/\|\$\)$/, '')
+        .replace(/\\\//g, '/');
+      listRoutes(layer.handle.stack, prefix + mounted, out);
+    }
+  }
+  return out;
 }
 
 /**

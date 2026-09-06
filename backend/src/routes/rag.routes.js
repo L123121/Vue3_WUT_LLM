@@ -27,11 +27,7 @@ router.get('/documents/:id', ragController.getDocument);
 // 文档管理接口（仅管理员可增删改）
 router.post('/documents', requireAdmin, ragController.addDocument);
 router.post('/documents/upload', requireAdmin, ragController.uploadMiddleware, ragController.uploadDocument);
-router.post('/documents/batch', requireAdmin, ragController.addDocuments);
 router.delete('/documents/:id', requireAdmin, ragController.deleteDocument);
-
-// 重索引（仅管理员）
-router.post('/documents/reindex', requireAdmin, ragController.reindexAll);
 
 // 统计信息
 router.get('/stats', ragController.getStats);

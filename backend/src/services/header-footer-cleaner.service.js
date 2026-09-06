@@ -220,5 +220,4 @@ module.exports = {
   stripRepeatingZoneLines,
   matchRuleLine,
   normalizeForRepeat,
-  RULE_PATTERNS,
 };

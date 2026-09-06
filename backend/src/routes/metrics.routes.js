@@ -1,5 +1,5 @@
 /**
- * 指标路由 — Web Vitals 上报与查询（需管理员权限）
+ * 指标路由 — Prometheus 抓取（env 门控）、Web Vitals 上报（匿名可写）与管理员指标查询
  */
 const express = require('express');
 const { requireAuth } = require('../middleware/auth.middleware');

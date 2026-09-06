@@ -3,10 +3,10 @@ import { ref } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { Star, ChevronDown, ChevronRight, X, Bot, User } from 'lucide-vue-next';
 import { useFavoritesStore } from '../../stores/favorites.store.js';
-import { useChatStore } from '../../stores/chat.store.js';
+import { useConversationStore } from '../../stores/conversation.store.js';
 
 const favoritesStore = useFavoritesStore();
-const chatStore = useChatStore();
+const convStore = useConversationStore();
 const router = useRouter();
 const route = useRoute();
 
@@ -24,8 +24,8 @@ const roleIcon = (role) => (role === 'user' ? User : Bot);
 
 // 点击收藏条目：切换到对应会话并滚动定位到该消息
 const openFavorite = async (fav) => {
-  if (chatStore.currentConversationId !== fav.conversationId) {
-    await chatStore.switchConversation(fav.conversationId);
+  if (convStore.currentConversationId !== fav.conversationId) {
+    await convStore.switchConversation(fav.conversationId);
   }
   if (route.path !== '/chat') {
     await router.push('/chat');

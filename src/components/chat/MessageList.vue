@@ -2,7 +2,7 @@
 import { ref, watch, nextTick, onMounted, computed } from 'vue';
 // 改用普通滚动容器，避免 DynamicScroller 虚拟滚动导致的流式跳动
 import { RefreshCw } from 'lucide-vue-next';
-import { useChatStore } from '../../stores/chat.store.js';
+import { useMessageStore } from '../../stores/message.store.js';
 import MessageBubble from './MessageBubble.vue';
 
 const props = defineProps({
@@ -14,7 +14,7 @@ const props = defineProps({
 });
 
 const emit = defineEmits(['copy', 'focus-input']);
-const chatStore = useChatStore();
+const msgStore = useMessageStore();
 const scrollerRef = ref(null);
 
 const AUTO_SCROLL_THRESHOLD = 150;
@@ -62,8 +62,8 @@ const previousUserMessageById = computed(() => {
 
 // Reconnection state
 const reconnectProgress = computed(() => {
-  if (!chatStore.isReconnecting) return 0;
-  return Math.min((chatStore.reconnectAttempt / 3) * 100, 100);
+  if (!msgStore.isReconnecting) return 0;
+  return Math.min((msgStore.reconnectAttempt / 3) * 100, 100);
 });
 
 // 流式进行中、但 AI 消息尚未收到第一个 chunk（内容为空）时显示 typing 占位
@@ -163,11 +163,11 @@ defineExpose({ scrollToBottom, shouldAutoScroll });
 
     <!-- Reconnection overlay -->
     <Transition name="reconnect">
-      <div v-if="chatStore.isReconnecting" class="absolute bottom-24 left-1/2 -translate-x-1/2 z-20">
+      <div v-if="msgStore.isReconnecting" class="absolute bottom-24 left-1/2 -translate-x-1/2 z-20">
         <div class="flex items-center gap-2.5 bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-800 rounded-full px-4 py-2 shadow-lg backdrop-blur-sm">
           <RefreshCw :size="14" class="text-amber-600 dark:text-amber-400 animate-spin" />
           <span class="text-xs font-medium text-amber-700 dark:text-amber-300">
-            正在重连 ({{ chatStore.reconnectAttempt }}/3)
+            正在重连 ({{ msgStore.reconnectAttempt }}/3)
           </span>
           <div class="w-16 h-1.5 bg-amber-200 dark:bg-amber-800 rounded-full overflow-hidden">
             <div class="h-full bg-amber-500 rounded-full transition-all duration-500" :style="{ width: reconnectProgress + '%' }"></div>

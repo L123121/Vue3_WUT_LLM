@@ -9,6 +9,16 @@ const rewriteCache = new QueryCache(
   config.rag.cacheTtlMs || 300000,
 );
 
+// HyDE / Step-Back 缓存（模块级单例）：同 query 直接命中，与 rewrite 缓存同生命周期
+const hydeCache = new QueryCache(
+  config.rag.rewriteCacheMaxEntries || 500,
+  config.rag.cacheTtlMs || 300000,
+);
+const stepBackCache = new QueryCache(
+  config.rag.rewriteCacheMaxEntries || 500,
+  config.rag.cacheTtlMs || 300000,
+);
+
 /**
  * 检测是否需要改写：有历史 + 含代词/省略
  */
@@ -103,4 +113,106 @@ ${historyText}
   }
 }
 
-module.exports = { shouldRewriteQuery, rewriteQuery, hashHistory };
+/**
+ * HyDE（Hypothetical Document Embedding，假设文档嵌入）
+ *
+ * 让 LLM 针对问题直接写一段"假设性回答"，再用这段回答（而非原始问题）去做
+ * 向量检索。回答与知识库文档同属"陈述式文本"，向量空间中比"问题→文档"更接近，
+ * 对短问题/口语化问题的语义召回提升明显。
+ *
+ * 生成的文档只用于**扩大召回池**（作为 dualRetrieve 的一个额外变体），
+ * reranker 仍按用户原始问题打分，因此假设内容不准确也不会影响精度。
+ *
+ * @param {string} query - 用户原始问题
+ * @param {Object} aiService - 提供 getCompletion 的 AI 服务实例
+ * @returns {Promise<string|null>} 假设文档文本，失败返回 null
+ */
+async function generateHydeDocument(query, aiService) {
+  const q = String(query || '').trim();
+  if (!q) return null;
+
+  const cacheKey = q.toLowerCase();
+  if (config.rag.cacheEnabled) {
+    const cached = hydeCache.get(cacheKey);
+    if (cached !== undefined) return cached;
+  }
+
+  const prompt = `请针对以下问题，直接写一段 100~200 字的假设性回答，就像它摘自校园知识库文档一样。
+
+注意：
+1. 用陈述句，不要出现"假设""可能""我认为"等不确定措辞
+2. 不要输出问题本身，不要解释，只输出这段回答
+3. 涉及具体数字/时间/地点时给出合理示例即可
+
+问题：${q}
+
+假设性回答：`;
+
+  try {
+    const result = await aiService.getCompletion(prompt, [], { timeout: 5000, retries: 1 });
+    const doc = (result.content || '').trim().replace(/^["「『]|["」』]$/g, '');
+    // 过短（生成失败）或过长（跑偏成多段）都视为无效
+    if (doc.length < 30 || doc.length > 600) return null;
+
+    if (config.rag.cacheEnabled) hydeCache.set(cacheKey, doc);
+    console.log(`[HyDE] "${q}" → 假设文档 ${doc.length} 字符`);
+    return doc;
+  } catch (err) {
+    console.warn(`[HyDE] 生成失败: ${err.message}`);
+    return null;
+  }
+}
+
+/**
+ * Step-Back Prompting（退步提示）
+ *
+ * 把具体的细节问题抽象为一个更宽泛的"上位问题"，用它额外召回背景/原理类文档。
+ * 例："图书馆三楼自习区几点关门" → "武汉理工大学图书馆的开放时间和场馆规则"。
+ * 上位问题召回的制度性文档常能补足细节检索漏掉的上下文。
+ *
+ * 与 HyDE 相同：只用于扩大召回池，reranker 仍按原始问题打分。
+ *
+ * @param {string} query - 用户原始问题
+ * @param {Object} aiService - 提供 getCompletion 的 AI 服务实例
+ * @returns {Promise<string|null>} 上位问题，失败或无需抽象返回 null
+ */
+async function generateStepBackQuery(query, aiService) {
+  const q = String(query || '').trim();
+  if (!q) return null;
+  // 已经很宽泛的短问题没有退步空间
+  if (q.length < 6) return null;
+
+  const cacheKey = q.toLowerCase();
+  if (config.rag.cacheEnabled) {
+    const cached = stepBackCache.get(cacheKey);
+    if (cached !== undefined) return cached;
+  }
+
+  const prompt = `将以下具体问题抽象为一个更宽泛的上位问题，用于检索相关的背景知识。
+
+注意：
+1. 上位问题应涵盖原问题所属的主题/制度/概念，而不是重复原问题
+2. 只输出上位问题本身，不要多余文字
+3. 如果原问题已经足够宽泛，原样输出原问题
+
+具体问题：${q}
+
+上位问题：`;
+
+  try {
+    const result = await aiService.getCompletion(prompt, [], { timeout: 5000, retries: 1 });
+    const stepped = (result.content || '').trim().replace(/^["「『]|["」』]$/g, '');
+    if (!stepped || stepped.length < 4) return null;
+    // 与原问题相同说明无需抽象，不值得多一路检索
+    if (stepped === q) return null;
+
+    if (config.rag.cacheEnabled) stepBackCache.set(cacheKey, stepped);
+    console.log(`[StepBack] "${q}" → "${stepped}"`);
+    return stepped;
+  } catch (err) {
+    console.warn(`[StepBack] 生成失败: ${err.message}`);
+    return null;
+  }
+}
+
+module.exports = { shouldRewriteQuery, rewriteQuery, hashHistory, generateHydeDocument, generateStepBackQuery };

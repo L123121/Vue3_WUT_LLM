@@ -25,7 +25,7 @@ class IndexingService {
     // 延迟解析默认单例：避免模块加载时的循环依赖
     this._getVectorStore = vectorStore
       ? () => vectorStore
-      : () => require('./vector-store.service').vectorStore;
+      : () => require('./vector-store-qdrant.service').vectorStore;
     this.embeddingService = embeddingService || new EmbeddingService();
   }
 

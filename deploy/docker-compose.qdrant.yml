@@ -2,7 +2,7 @@
 # Docker Compose — 武理小精灵 生产部署（Qdrant 版）
 # 包含: nginx (SSL 反向代理) + backend (Express) + qdrant (向量库)
 # 文档存储: SQLite（挂载 volume backend-data）
-# 向量检索: Qdrant 独立服务（VECTOR_STORE_BACKEND=qdrant）
+# 向量检索: Qdrant 独立服务（唯一后端）
 # ======================================================================
 
 services:
@@ -37,7 +37,7 @@ services:
     env_file:
       - ./deploy/.env.production
     environment:
-      - VECTOR_STORE_BACKEND=qdrant
+
       - QDRANT_URL=http://qdrant:6333
       # 旧镜像不含 @qdrant/js-client-rest：通过 NODE_PATH 指向独立依赖目录，不动镜像自带 node_modules
       - NODE_PATH=/app/qdrant-deps/node_modules
@@ -50,7 +50,6 @@ services:
       - ./patches/app.js:/app/backend/src/app.js:ro
       - ./patches/rag.service.js:/app/backend/src/services/rag.service.js:ro
       - ./patches/reranker.service.js:/app/backend/src/services/reranker.service.js:ro
-      - ./patches/vector-store.service.js:/app/backend/src/services/vector-store.service.js:ro
       - ./patches/vector-store-qdrant.service.js:/app/backend/src/services/vector-store-qdrant.service.js:ro
       - ./patches/config/index.js:/app/backend/src/config/index.js:ro
       - ./patches/utils/httpClient.js:/app/backend/src/utils/httpClient.js:ro

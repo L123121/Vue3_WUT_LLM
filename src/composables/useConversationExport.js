@@ -1,7 +1,7 @@
 import { ref } from 'vue';
 import { createShareSnapshot } from '../api/share.js';
 
-export function useConversationExport(chatStore, toast) {
+export function useConversationExport(conversationStore, toast) {
   const showExportMenu = ref(false);
   const closeExportMenu = () => { showExportMenu.value = false; };
 
@@ -53,7 +53,7 @@ export function useConversationExport(chatStore, toast) {
   const dateSuffix = () => new Date().toISOString().slice(0, 10);
 
   const copyConversationAsText = async () => {
-    const conv = chatStore.currentConversation;
+    const conv = conversationStore.currentConversation;
     const messages = getExportMessages(conv);
     if (!messages) return toast.warning('当前会话没有内容可复制');
     try {
@@ -68,7 +68,7 @@ export function useConversationExport(chatStore, toast) {
   };
 
   const exportConversation = () => {
-    const conv = chatStore.currentConversation;
+    const conv = conversationStore.currentConversation;
     const messages = getExportMessages(conv);
     if (!messages) return toast.warning('当前会话没有内容可导出');
     downloadBlob(buildMarkdown(conv, messages), 'text/markdown', `${conv.title || '对话记录'}_${dateSuffix()}.md`);
@@ -77,7 +77,7 @@ export function useConversationExport(chatStore, toast) {
   };
 
   const exportConversationAsHtml = () => {
-    const conv = chatStore.currentConversation;
+    const conv = conversationStore.currentConversation;
     const messages = getExportMessages(conv);
     if (!messages) return toast.warning('当前会话没有内容可导出');
     downloadBlob(buildHtml(conv, messages), 'text/html', `${conv.title || '对话记录'}_${dateSuffix()}.html`);
@@ -86,7 +86,7 @@ export function useConversationExport(chatStore, toast) {
   };
 
   const shareConversation = async () => {
-    const conv = chatStore.currentConversation;
+    const conv = conversationStore.currentConversation;
     const messages = getExportMessages(conv);
     if (!messages) return toast.warning('当前会话没有内容可分享');
     try {

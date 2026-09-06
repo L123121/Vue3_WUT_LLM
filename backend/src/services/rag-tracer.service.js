@@ -1,6 +1,5 @@
 "use strict";
 
-const { redis: store } = require('./memory-store');
 const {
   compactPayload,
   createTraceId,
@@ -9,13 +8,6 @@ const {
   truncateText,
 } = require('./observability.service');
 const { recordStageSpan } = require('./otel-tracing.service');
-
-const TRACE_KEEP = parseInt(process.env.RAG_TRACE_KEEP || '50', 10) || 50;
-const TRACE_KEY = (userId) => `rag:trace:${userId || 'anonymous'}`;
-const PERSIST_FAIL_THRESHOLD = 3;
-const PERSIST_BREAKER_MS = 60 * 1000;
-let persistFailStreak = 0;
-let persistBreakUntil = 0;
 
 class RagTracer {
   constructor({ traceId = null, userId = null, conversationId = null, message = '', category = null } = {}) {
@@ -75,19 +67,6 @@ class RagTracer {
     const trace = this.toJSON();
 
     logEvent(this.status === 'error' ? 'error' : 'info', 'rag_trace', trace);
-
-    if (Date.now() < persistBreakUntil) return trace;
-    this._persist(trace)
-      .then(() => { persistFailStreak = 0; })
-      .catch((err) => {
-        persistFailStreak++;
-        if (persistFailStreak >= PERSIST_FAIL_THRESHOLD) {
-          persistBreakUntil = Date.now() + PERSIST_BREAKER_MS;
-          console.warn(`[RAGTracer] 落盘连续失败 ${persistFailStreak} 次，熔断 ${PERSIST_BREAKER_MS / 1000}s：${err.message}`);
-        } else {
-          console.warn('[RAGTracer] 落盘失败:', err.message);
-        }
-      });
     return trace;
   }
 
@@ -124,27 +103,7 @@ class RagTracer {
       startedAt: new Date(this.startedAt).toISOString(),
     };
   }
-
-  async _persist(trace) {
-    const key = TRACE_KEY(this.userId);
-    const line = JSON.stringify(trace);
-    await store.rpush(key, line);
-    if (typeof store.ltrim === 'function') {
-      await store.ltrim(key, -TRACE_KEEP, -1);
-    }
-  }
 }
 
-async function getRecentRagTraces(userId, limit = 20) {
-  if (!Number.isFinite(limit) || limit <= 0) return [];
-  const key = TRACE_KEY(userId);
-  const raw = await store.lrange(key, -limit, -1);
-  if (!raw || raw.length === 0) return [];
-  return raw.map((line) => {
-    try { return typeof line === 'string' ? JSON.parse(line) : line; }
-    catch { return { _parseError: true }; }
-  });
-}
-
-module.exports = { RagTracer, getRecentRagTraces };
+module.exports = { RagTracer };
 

@@ -248,4 +248,4 @@ class IntentRouter {
   }
 }
 
-module.exports = { IntentRouter, INTENT_TYPES, ROUTE_MAP, GREETING_PATTERN };
+module.exports = { IntentRouter, INTENT_TYPES, GREETING_PATTERN };

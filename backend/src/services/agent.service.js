@@ -4,6 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const { AiService } = require("./ai.service");
 const { executeToolDetailed, getToolSchemas, getToolNames } = require("./agent-tools");
+const { spillToolResult, compactHistoricalToolResults } = require("./context-compaction.service");
 const config = require("../config");
 
 /**
@@ -27,6 +28,12 @@ const config = require("../config");
  *   - chat() 统一 drain chatStream()，消除两套循环逻辑 drift 风险
  *   - 决策失败且未输出内容时 yield error 事件（AgentDecisionError），控制器据此降级 RAG
  *   - trace 持久化 data/agent-traces.jsonl（灰度分析：finishReason 分布/工具失败率）
+ *
+ * 2026-09-03 优化（上下文压缩分层，借鉴 AgentHarness 四层压缩中的两层）：
+ *   - L1 大结果落盘：单条 tool result 超阈值写盘 data/tool-spills/，上下文留摘要+引用
+ *   - L2 历史 tool result 替换：仅保留最近一轮完整 tool 消息，更早轮次换占位符
+ *   - 压缩统计随 trace 持久化（spilled/compactedGroups/savedChars），灰度分析 token 节省量
+ *   - 开关：AGENT_CONTEXT_COMPACTION=false 一键回退
  *
  * 开关：默认启用；AGENT_TOOL_ENABLED=false 可回退到 RAG 链路。
  */
@@ -276,6 +283,8 @@ class AgentService {
       toolCalls: [],
       totalMs: 0,
       finishReason: "direct_answer", // direct_answer | round_limit | no_progress | error
+      // 上下文压缩统计（L1 落盘次数 / L2 压缩组数 / 节省字符数），随 trace 持久化
+      compaction: { spilled: 0, compactedGroups: 0, savedChars: 0 },
     };
 
     let lastSignature = null;
@@ -392,15 +401,35 @@ class AgentService {
       toolSummary.push(validCalls.map((t) => t.function.name).join(","));
 
       // 工具结果回注（tool 角色消息，供下一轮决策/最终生成）
+      // L1 大结果落盘：超阈值结果写盘，上下文只留头部摘要+文件引用
+      const spilledResults = await Promise.all(
+        results.map(({ tc, result }, idx) =>
+          spillToolResult(tc.function.name, result, { traceId: trace.traceId, round: round + 1, index: idx })
+        )
+      );
+      for (const s of spilledResults) {
+        if (s.spilled) {
+          trace.compaction.spilled += 1;
+          trace.compaction.savedChars += Math.max(s.originalLength - s.content.length, 0);
+        }
+      }
       messages = [
         ...messages,
         { role: "assistant", content: null, tool_calls: toAssistantToolCalls(validCalls) },
-        ...results.map(({ tc, result }) => ({
+        ...results.map(({ tc }, idx) => ({
           role: "tool",
           tool_call_id: tc.id,
-          content: String(result).substring(0, 4000),
+          content: spilledResults[idx].content,
         })),
       ];
+
+      // L2 历史 tool result 替换：仅保留最近一轮完整结果，更早轮次替换为占位符
+      const compaction = compactHistoricalToolResults(messages);
+      if (compaction.compactedGroups > 0) {
+        messages = compaction.messages;
+        trace.compaction.compactedGroups += compaction.compactedGroups;
+        trace.compaction.savedChars += compaction.savedChars;
+      }
 
       // ---- 无进展检测：连续 2 轮相同工具调用 → 强制收尾 ----
       // 签名用 stableStringify 规范化（解析后 key 排序），避免 JSON key 顺序/空白差异绕过检测

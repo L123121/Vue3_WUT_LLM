@@ -115,6 +115,4 @@ module.exports = {
   sanitizeDocument,
   matchInjectionLine,
   garbageRatio,
-  INJECTION_PATTERNS,
-  REDACTED_LINE,
 };
