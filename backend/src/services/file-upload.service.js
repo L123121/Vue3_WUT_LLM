@@ -593,6 +593,7 @@ module.exports = {
   chatUpload,
   parseFile,
   cleanupFile,
+  isAllowedUpload,
   detectTablePages,
   isTableLikePage,
   replaceTablePages,
