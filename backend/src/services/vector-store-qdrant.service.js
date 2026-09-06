@@ -44,6 +44,12 @@ class QdrantVectorStore {
     this._readyPromise = null;
     this._readyResolve = null;
     this._readyChecked = false; // ensureReady 是否已完成空库检查/重建
+    // _ready 表示「初始化已尘埃落定(成功或降级放行)」;_connected 才表示当前真实连通。
+    // 连接失败时 _ready 仍置 true(解除 _waitConnected 阻塞,各操作按 _client 判空降级),
+    // 由 _connected + _scheduleReconnect 驱动后台自动重连
+    this._connected = false;
+    this._reconnectTimer = null;
+    this._reconnectAttempts = 0;
     this._documentProvider = documentProvider;
     this._initializing = false;
     this._pointCount = 0;
@@ -105,14 +111,40 @@ class QdrantVectorStore {
       await this._ensurePayloadIndexes();
       const count = await this._client.count(this.collectionName, { exact: true });
       this._pointCount = count.count || 0;
+      this._connected = true;
+      this._reconnectAttempts = 0;
+      if (this._reconnectTimer) { clearTimeout(this._reconnectTimer); this._reconnectTimer = null; }
+      // 重连成功(含首次连接):重置就绪检查状态,让下一次 ensureReady 重新执行
+      // 空库检查/自动重建——修复后无需重启后端即可自愈
+      this._readyPromise = null;
+      this._readyChecked = false;
       this._ready = true;
       if (this._readyResolve) this._readyResolve();
       console.log(`[QdrantStore] 就绪，当前 ${this._pointCount} 条向量`);
     } catch (err) {
-      console.warn(`[QdrantStore] 连接失败（后续 search 将返回空，可重试）: ${err.message}`);
+      // 降级放行(与原行为一致):search 等操作按 _client 判空返回空结果;
+      // 差别在于现在会安排后台重连,而不是打一条 warn 后永久吞掉故障。
+      // _client 必须置空:探测失败时客户端实例已创建,若保留,search 会带着
+      // 不可达的 client 抛 ECONNREFUSED,而不是按降级契约返回空结果
+      console.warn(`[QdrantStore] 连接失败(将自动重连，期间 search 返回空): ${err.message}`);
+      this._client = null;
+      this._connected = false;
       this._ready = true;
       if (this._readyResolve) this._readyResolve();
+      this._scheduleReconnect();
     }
+  }
+
+  /** 连接失败后的后台重连:指数退避 30s→60s→…→上限 5min;unref 不阻止进程退出 */
+  _scheduleReconnect() {
+    if (this._reconnectTimer) return;
+    const delay = Math.min(30000 * 2 ** this._reconnectAttempts, 300000);
+    this._reconnectAttempts += 1;
+    this._reconnectTimer = setTimeout(() => {
+      this._reconnectTimer = null;
+      if (!this._connected) void this._connect();
+    }, delay);
+    if (typeof this._reconnectTimer.unref === 'function') this._reconnectTimer.unref();
   }
 
   /** 标量量化配置：仅显式配置 QDRANT_QUANTIZATION=int8 时返回 */

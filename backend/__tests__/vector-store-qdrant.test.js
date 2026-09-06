@@ -304,4 +304,31 @@ describe('QdrantVectorStore', () => {
       delete process.env.QDRANT_QUANTIZATION;
     }
   });
+
+  it('连接失败降级放行(search 返回空),重连成功后恢复检索与就绪检查', async () => {
+    // 阶段一:Qdrant 不可达——_ready 仍置 true 解除 _waitConnected 阻塞,
+    // 但 _client 置空,search 按降级契约返回空而不是抛 ECONNREFUSED
+    fakeClient.collectionExists.mockRejectedValue(new Error('connect ECONNREFUSED'));
+    const broken = new QdrantVectorStore();
+    await waitReady(broken);
+
+    expect(broken._connected).toBe(false);
+    expect(broken._client).toBeNull();
+    expect(await broken.isAvailable()).toBe(false);
+    expect(await broken.search({ dense: [1, 0, 0], sparse: {} }, 10)).toEqual([]);
+    expect(fakeClient.query).not.toHaveBeenCalled();
+
+    // 阶段二:模拟后台重连定时器触发(回调即重跑 _connect)
+    fakeClient.collectionExists.mockResolvedValue({ exists: true });
+    await broken._connect();
+
+    expect(broken._connected).toBe(true);
+    expect(broken._reconnectTimer).toBeNull();
+    expect(broken._readyChecked).toBe(false); // 已重置:下一次 ensureReady 重新走空库检查/重建
+    expect(await broken.search({ dense: [1, 0, 0], sparse: {} }, 10)).toEqual([]); // 空库仍空,但已真正发起查询
+    expect(fakeClient.query).toHaveBeenCalled();
+
+    await broken.ensureReady();
+    expect(broken._readyChecked).toBe(true);
+  });
 });
