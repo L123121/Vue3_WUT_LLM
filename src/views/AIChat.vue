@@ -152,7 +152,7 @@ onBeforeUnmount(() => speechPlayer.stop());
           <h3 class="font-bold text-slate-800 dark:text-white text-sm truncate">{{ currentTitle }}</h3>
           <div class="flex items-center mt-0.5">
             <span class="w-1.5 h-1.5 rounded-full bg-wut-500 mr-1.5 animate-pulse"></span>
-            <span class="text-[10px] font-medium text-slate-500 dark:text-gray-400 uppercase tracking-wide">{{ text.model }}</span>
+            <span class="text-[10px] font-medium text-slate-500 dark:text-gray-400 uppercase tracking-wide">AI 助手</span>
             <span class="mx-1 text-slate-300 dark:text-gray-600">·</span>
             <span class="text-[10px] text-slate-500 dark:text-gray-400">{{ effectiveMessageCount }} 条消息</span>
           </div>
@@ -231,7 +231,7 @@ onBeforeUnmount(() => speechPlayer.stop());
               ? 'text-slate-400 hover:text-slate-600 dark:hover:text-gray-200 hover:bg-slate-100 dark:hover:bg-gray-800'
               : 'text-slate-300 dark:text-gray-700 cursor-not-allowed'
           ]"
-          :title="text.clear"
+          :title="'清空当前会话'"
         >
           <Eraser :size="18" />
         </button>
@@ -290,7 +290,7 @@ onBeforeUnmount(() => speechPlayer.stop());
     <ChatBox
       ref="chatBoxRef"
       :is-loading="messageStore.isLoading"
-      :placeholder="text.inputPlaceholder"
+      :placeholder="'输入您的问题...'"
       :is-connected="messageStore.isConnected"
       :is-reconnecting="messageStore.isReconnecting"
       :reconnect-attempt="messageStore.reconnectAttempt"
