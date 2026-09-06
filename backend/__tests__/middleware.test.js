@@ -43,7 +43,9 @@ describe('auth.middleware', () => {
   });
 
   it('requireAuth 有 userId 放行', () => {
-    requireAuth({ userId: 'u1' }, {}, vi.fn());
+    const next = vi.fn();
+    requireAuth({ userId: 'u1' }, {}, next);
+    expect(next).toHaveBeenCalledTimes(1);
   });
 
   it('requireAuth 无 userId 返回 401', () => {

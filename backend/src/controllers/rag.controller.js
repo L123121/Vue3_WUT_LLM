@@ -7,6 +7,7 @@ const { DocumentService } = require('../services/document.service');
 const { redis: store } = require('../services/memory-store');
 const { MemoryService } = require('../services/memory.service');
 const { successResponse, errorResponse } = require('../utils/response');
+const { writeStreamEvent } = require('../utils/sse-events');
 const { upload, parseFile, cleanupFile } = require('../services/file-upload.service');
 const { recordAudit } = require('../services/quality-governance.service');
 const { vectorStore: vectorStoreSingleton } = require('../services/vector-store-qdrant.service');
@@ -172,33 +173,15 @@ const ragChatStream = async (req, res, next) => {
     });
 
     for await (const chunk of ragService.chatStream(message, history || [], streamOptions)) {
-      if (chunk.type === 'retrieval') {
-        res.write(`data: ${JSON.stringify({ traceId: chunk.traceId || req.traceId, retrieval: chunk.retrieval, trace: chunk.trace })}\n\n`);
-      } else if (chunk.type === 'sources') {
+      // 评测审计副作用：在统一写出口之外就地采集（SSE 事件映射本身在 utils/sse-events.js）
+      if (chunk.type === 'sources') {
         audit.sources = chunk.sources || [];
-        res.write(`data: ${JSON.stringify({ traceId: req.traceId, sources: chunk.sources })}\n\n`);
-      } else if (chunk.type === 'trace') {
-        if (chunk.trace?.traceId) audit.traceId = chunk.trace.traceId;
-        res.write(`data: ${JSON.stringify({ traceId: chunk.trace?.traceId || req.traceId, trace: chunk.trace })}\n\n`);
-      } else if (chunk.type === 'process') {
-        res.write(`data: ${JSON.stringify({ traceId: req.traceId, processCard: chunk.processCard })}\n\n`);
-      } else if (chunk.type === 'grounding') {
-        // 运行时引用校验结果：随收尾下发，前端标注溯源覆盖
-        res.write(`data: ${JSON.stringify({ traceId: req.traceId, grounding: chunk.grounding })}\n\n`);
-      } else if (chunk.type === 'followups') {
-        // 追问建议：零成本从引用文档/章节标题生成，前端渲染为可点击 chips
-        res.write(`data: ${JSON.stringify({ traceId: req.traceId, followups: chunk.items })}\n\n`);
-      } else if (chunk.type === 'usage') {
-        // token 用量随收尾下发
-        res.write(`data: ${JSON.stringify({ usage: chunk.usage })}\n\n`);
-      } else if (chunk.type === 'content') {
-        if (chunk.done) {
-          res.write(`data: [DONE]\n\n`);
-        } else {
-          fullReply += chunk.content || "";
-          res.write(`data: ${JSON.stringify({ traceId: req.traceId, content: chunk.content })}\n\n`);
-        }
+      } else if (chunk.type === 'trace' && chunk.trace?.traceId) {
+        audit.traceId = chunk.trace.traceId;
       }
+      if (chunk.type === 'content' && !chunk.done) fullReply += chunk.content || '';
+
+      writeStreamEvent(res, chunk, req.traceId);
     }
 
     cleanupClientClose();
