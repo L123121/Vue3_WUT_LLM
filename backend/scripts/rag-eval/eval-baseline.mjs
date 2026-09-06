@@ -112,10 +112,12 @@ async function ragQuery(message) {
 
     try {
       const evt = JSON.parse(payload);
-      if (evt.type === 'sources' && Array.isArray(evt.sources)) {
+      // SSE 线上格式不带 type 字段（控制器按 chunk.type 路由后只写数据字段），
+      // 必须按形状匹配：此前按 evt.type 匹配永远落空，sources 恒为空、指标恒为 0
+      if (Array.isArray(evt.sources)) {
         sources.push(...evt.sources);
-      } else if (evt.type === 'error') {
-        error = evt.error || evt.content;
+      } else if (evt.error) {
+        error = typeof evt.error === 'string' ? evt.error : (evt.error.message || evt.content);
       }
     } catch {
       // skip non-JSON lines
