@@ -3,6 +3,7 @@ import { ref, onMounted, onUnmounted } from 'vue';
 import { Upload, Download, FileJson, BarChart3, Gauge, Save, History } from 'lucide-vue-next';
 import { useEvalData } from '../composables/useEvalData.js';
 import { useSystemMetrics } from '../composables/useSystemMetrics.js';
+import { useAuthStore } from '../stores/auth.store.js';
 import SystemMetricsPanel from '../components/eval/SystemMetricsPanel.vue';
 import RagasDashboard from '../components/eval/RagasDashboard.vue';
 import EvalContentViewer from '../components/eval/EvalContentViewer.vue';
@@ -22,6 +23,9 @@ const {
 } = useSystemMetrics();
 
 const showStats = ref(false);
+
+// 系统指标仅管理员可见(后端 /api/eval/metrics 已收紧为 requireAdmin)
+const authStore = useAuthStore();
 
 // 分数颜色工具
 function getScoreLabel(score) {
@@ -134,7 +138,7 @@ onUnmounted(() => {
           :class="['px-4 py-1.5 rounded-md text-sm font-medium transition-all', !metricsTab ? 'bg-wut-600 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300']">
           评测内容
         </button>
-        <button @click="switchTab(true)"
+        <button v-if="authStore.isAdmin" @click="switchTab(true)"
           :class="['px-4 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-1.5', metricsTab ? 'bg-emerald-600 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300']">
           <Gauge :size="14" />
           系统指标

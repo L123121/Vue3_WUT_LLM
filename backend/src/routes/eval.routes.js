@@ -20,9 +20,9 @@ const MAX_EVAL_CASES = 50;
 
 /**
  * GET /api/eval/metrics
- * 获取系统实时指标
+ * 获取系统实时指标(仅管理员:指标含全站请求量/延迟等运营数据)
  */
-router.get('/metrics', (req, res) => {
+router.get('/metrics', requireAdmin, (req, res) => {
   const summary = metrics.getSummary();
   res.json({ success: true, data: summary });
 });
