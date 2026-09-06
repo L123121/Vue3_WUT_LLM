@@ -313,8 +313,4 @@ class ToolRegistry {
 module.exports = {
   ToolRegistry,
   TOOL_SOURCES,
-  ToolTimeoutError,
-  ToolArgumentError,
-  DEFAULT_TOOL_TIMEOUT_MS,
-  validateToolArgs,
 };

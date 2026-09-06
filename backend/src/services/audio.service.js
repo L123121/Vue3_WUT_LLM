@@ -282,4 +282,4 @@ class AudioService {
 
 const audioService = new AudioService();
 
-module.exports = { AudioCache, AudioService, audioService, normalizeSpeechText };
+module.exports = { AudioService, audioService, normalizeSpeechText };

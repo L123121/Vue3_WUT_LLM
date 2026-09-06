@@ -1,11 +1,11 @@
 <script setup>
 import { computed, ref, onUnmounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { useChatStore } from '../../stores/chat.store';
+import { useConversationStore } from '../../stores/conversation.store.js';
 import { ChevronDown, ChevronRight, Plus, Check, X, MessageSquare, Edit3, Trash2, Search } from 'lucide-vue-next';
 import ConfirmDialog from '../common/ConfirmDialog.vue';
 
-const chatStore = useChatStore();
+const convStore = useConversationStore();
 const route = useRoute();
 const router = useRouter();
 
@@ -90,13 +90,13 @@ const getMatchMeta = (conv) => {
 // 搜索结果按会话缓存：搜索时每个会话只扫描一遍（模板里多次引用不再重复 toLowerCase）
 const matchCache = computed(() => {
   const map = new Map();
-  for (const conv of chatStore.sortedConversations) {
+  for (const conv of convStore.sortedConversations) {
     map.set(conv.id, getMatchMeta(conv));
   }
   return map;
 });
 
-const visibleConversations = computed(() => chatStore.sortedConversations.filter((conv) => matchCache.value.get(conv.id)?.matched));
+const visibleConversations = computed(() => convStore.sortedConversations.filter((conv) => matchCache.value.get(conv.id)?.matched));
 
 const formatTime = (date) => {
   const current = now.value;
@@ -119,7 +119,7 @@ const startEdit = (conv) => {
 
 const saveEdit = () => {
   if (editingId.value && editingTitle.value.trim()) {
-    chatStore.renameConversation(editingId.value, editingTitle.value);
+    convStore.renameConversation(editingId.value, editingTitle.value);
   }
   cancelEdit();
 };
@@ -130,7 +130,7 @@ const cancelEdit = () => {
 };
 
 const handleCreate = () => {
-  chatStore.createConversation();
+  convStore.createConversation();
   if (route.path !== '/chat') {
     router.push('/chat');
   }
@@ -138,7 +138,7 @@ const handleCreate = () => {
 
 const handleSwitch = (id) => {
   if (editingId.value === id) return;
-  chatStore.switchConversation(id);
+  convStore.switchConversation(id);
   if (route.path !== '/chat') {
     router.push('/chat');
   }
@@ -155,7 +155,7 @@ const openDeleteConfirm = (conv, e) => {
 // 确认删除
 const confirmDelete = () => {
   if (deletingConversationId.value) {
-    chatStore.deleteConversation(deletingConversationId.value);
+    convStore.deleteConversation(deletingConversationId.value);
   }
   closeDeleteConfirm();
 };
@@ -177,7 +177,7 @@ const getPreview = (conv) => {
     return searchPreview;
   }
 
-  const preview = chatStore.getLastMessagePreview(conv);
+  const preview = convStore.getLastMessagePreview(conv);
   if (preview === '点击开始新对话') {
     return labels.value.preview;
   }
@@ -201,7 +201,7 @@ const getPreview = (conv) => {
           {{ labels.title }}
         </span>
         <span class="text-[10px] text-slate-400 dark:text-slate-600 bg-slate-100 dark:bg-gray-800 px-1.5 py-0.5 rounded-full">
-          {{ chatStore.conversations.length }}
+          {{ convStore.conversations.length }}
         </span>
       </div>
       <button
@@ -248,7 +248,7 @@ const getPreview = (conv) => {
           @click="handleSwitch(conv.id)"
           :class="[
             'group relative flex flex-col px-3.5 py-3 rounded-xl cursor-pointer transition-all duration-200',
-            chatStore.currentConversationId === conv.id
+            convStore.currentConversationId === conv.id
               ? 'bg-wut-50 dark:bg-wut-900/20'
               : 'hover:bg-slate-50 dark:hover:bg-gray-800'
           ]"
@@ -281,7 +281,7 @@ const getPreview = (conv) => {
               <MessageSquare
                 :size="14"
                 :class="[
-                  chatStore.currentConversationId === conv.id
+                  convStore.currentConversationId === conv.id
                     ? 'text-wut-600 dark:text-wut-400'
                     : 'text-slate-400 dark:text-slate-500'
                 ]"
@@ -289,7 +289,7 @@ const getPreview = (conv) => {
               <span
                 :class="[
                   'flex-1 text-sm font-medium truncate',
-                  chatStore.currentConversationId === conv.id
+                  convStore.currentConversationId === conv.id
                     ? 'text-wut-700 dark:text-wut-300'
                     : 'text-slate-700 dark:text-slate-300'
                 ]"
@@ -328,7 +328,7 @@ const getPreview = (conv) => {
       </div>
 
       <div
-        v-if="chatStore.conversations.length === 0"
+        v-if="convStore.conversations.length === 0"
         class="text-center py-6 text-slate-400 dark:text-slate-600 text-sm"
       >
         {{ labels.empty }}

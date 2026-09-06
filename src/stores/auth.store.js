@@ -162,7 +162,7 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.removeItem(USER_KEY);
     // ⚠️ 不在这里清会话缓存：未同步的消息（唯一副本）必须保留到所属用户的
     // 命名空间（chat_cache:<userId>），等下次登录后迁移。清理由登出流程中
-    // 确认同步成功后的 chatStore.clearPersistedCache() 负责。
+    // 确认同步成功后的 conversationStore.clearPersistedCache() 负责。
     localStorage.removeItem('chat_current_conversation_id');
     localStorage.removeItem('chat_cleared_conversations');
 

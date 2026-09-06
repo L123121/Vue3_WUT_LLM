@@ -217,6 +217,35 @@ export const useConversationStore = defineStore('conversation', () => {
 
   const isLocalSession = (id) => !id || id === 'local' || id.startsWith('local_');
 
+  // 惰性获取消息 store（conversation ↔ message 存在模块循环，运行时各模块已就绪）
+  const tryMessageStore = () => {
+    try { return useMessageStore(); } catch { return null; }
+  };
+
+  // 有流式进行中时按需中止：
+  // - 切换会话：旧流若指向其他会话，中止以避免旧流继续写旧会话、currentStreamingId 错配
+  // - 删除会话：流式目标正是被删会话时中止
+  const abortStreamFor = (condition) => {
+    const messageStore = tryMessageStore();
+    if (messageStore?.isLoading && condition(messageStore)) {
+      messageStore.abortCurrentRequest();
+    }
+  };
+
+  /**
+   * 将调用方就地创建的本地会话（local_ 前缀）收入列表并置为当前会话，
+   * 同时完成持久化。供 useStreaming 等无法走 createConversation 的场景使用
+   * （后端可能可用但 store 尚未加载，必须保持本地会话）。
+   */
+  const adoptLocalConversation = (conv) => {
+    if (!conv?.id || conversations.value.some((c) => c.id === conv.id)) return;
+    conversations.value.push(conv);
+    currentConversationId.value = conv.id;
+    localStorage.setItem(CURRENT_CONVERSATION_KEY, conv.id);
+    _registerMessage(conv.id, conv.messages?.[0]);
+    flushSave(conversations.value, conv.id);
+  };
+
   const isBackendAvailable = () => {
     const auth = getAuthStore();
     return auth.isAuthenticated;
@@ -395,6 +424,10 @@ export const useConversationStore = defineStore('conversation', () => {
 
   const switchConversation = async (id) => {
     if (!conversations.value.some((c) => c.id === id)) return;
+    // 切换前若仍有指向其他会话的活跃流式，先中止，避免旧流继续往旧会话写消息
+    abortStreamFor((messageStore) =>
+      messageStore.activeStreamingConversationId && messageStore.activeStreamingConversationId !== id
+    );
     currentConversationId.value = id;
     localStorage.setItem(CURRENT_CONVERSATION_KEY, id);
 
@@ -449,6 +482,7 @@ export const useConversationStore = defineStore('conversation', () => {
       const messages = normalizeMessages(conv.messages || []);
       conversations.value.push({ ...conv, messages });
       _registerConversationMessages(conv.id, messages);
+      flushSave(conversations.value, currentConversationId.value);
     }
     return conv.id;
   };
@@ -472,6 +506,9 @@ export const useConversationStore = defineStore('conversation', () => {
   const deleteConversation = async (id) => {
     const targetIndex = conversations.value.findIndex((c) => c.id === id);
     if (targetIndex === -1) return;
+
+    // 如果正在删除的会话有流式传输，先中止
+    abortStreamFor((messageStore) => messageStore.activeStreamingConversationId === id);
 
     conversations.value.splice(targetIndex, 1);
     // 删除会话时同步清理该会话的消息索引
@@ -560,6 +597,7 @@ export const useConversationStore = defineStore('conversation', () => {
   };
 
   const flushPendingChanges = async () => {
+    abortStreamFor(() => true);
     if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
     if (backendSyncTimer) { clearTimeout(backendSyncTimer); backendSyncTimer = null; }
 
@@ -584,6 +622,7 @@ export const useConversationStore = defineStore('conversation', () => {
   };
 
   const resetConversationState = () => {
+    abortStreamFor(() => true);
     loadGeneration += 1;
     loadingPromise = null;
     if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
@@ -648,6 +687,7 @@ export const useConversationStore = defineStore('conversation', () => {
     loadConversationMessages,
     createConversation,
     switchConversation,
+    adoptLocalConversation,
     importForkedConversation,
     renameConversation,
     deleteConversation,

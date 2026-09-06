@@ -24,8 +24,8 @@
 ### 工程能力
 
 - httpOnly JWT Cookie 鉴权，支持注册、登录、退出和修改密码。
-- SQLite WAL 默认持久化；配置 `REDIS_URL` 时切换为 RedisStore。
-- Qdrant 默认向量后端，本地文件向量存储可作为离线降级方案。
+- SQLite WAL 持久化存储（唯一实现）。
+- Qdrant 唯一向量后端。
 - Helmet、CORS 白名单、接口限流、用户配额和上传文件 MIME 校验。
 - 工具参数 Schema 校验、超时取消、客户端断开传播、循环检测与失败降级。
 - 前端流式渲染用 requestAnimationFrame 合并高频增量更新，后台 Tab 暂停 RAF 时立即落盘待写内容；发版后旧页面的 chunk 加载失败可自动识别并恢复。
@@ -94,7 +94,7 @@ flowchart TD
 | Embedding | `backend/src/services/embedding.service.js` | 本地 BGE dense 与 n-gram sparse |
 | Reranker | `backend/src/services/reranker.service.js` | BGE cross-encoder 语义重排 |
 | 向量存储 | `backend/src/services/vector-store-qdrant.service.js` | Qdrant collection 与混合检索 |
-| 向量适配 | `backend/src/services/vector-store.service.js` | Qdrant / file 后端选择 |
+| 向量适配 | `backend/src/services/vector-store-qdrant.service.js` | Qdrant 独立服务（唯一后端） |
 
 ### 评测结果
 
@@ -167,10 +167,9 @@ AI_MODEL=step-3.7-flash
 JWT_SECRET=replace_with_a_long_random_secret
 ```
 
-使用 Qdrant：
+配置 Qdrant（唯一向量后端）：
 
 ```dotenv
-VECTOR_STORE_BACKEND=qdrant
 QDRANT_URL=http://localhost:6333
 ```
 
@@ -178,12 +177,6 @@ QDRANT_URL=http://localhost:6333
 
 ```bash
 docker compose -p wuli-elf up -d qdrant
-```
-
-不使用 Qdrant 时，可临时切换本地文件后端：
-
-```dotenv
-VECTOR_STORE_BACKEND=file
 ```
 
 ### 启动开发环境
@@ -257,7 +250,6 @@ RAG 与 Agent 评测脚本位于 `scripts/rag-eval/`，主要数据集位于 `sc
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `VECTOR_STORE_BACKEND` | `qdrant` | `qdrant` 或 `file` |
 | `QDRANT_URL` | `http://localhost:6333` | Qdrant REST 地址 |
 | `QDRANT_COLLECTION` | `wuli_elf_chunks` | Collection 名称 |
 | `EMBEDDING_MODEL` | `Xenova/bge-small-zh-v1.5` | Embedding 模型标识 |
@@ -268,7 +260,6 @@ RAG 与 Agent 评测脚本位于 `scripts/rag-eval/`，主要数据集位于 `sc
 | `RAG_RERANK_TOP_K` | `10` | 重排后最大候选数 |
 | `RAG_MAX_CONTEXT_LENGTH` | `6000` | 最大上下文字符数 |
 | `RAG_MIN_SOURCE_SCORE` | `0.03` | 可靠来源最低分数 |
-| `RAG_FUSION` | `weighted` | `weighted` 或 `rrf` |
 | `RAG_MMR_ENABLED` | `true` | 启用父段 MMR 去重 |
 | `RAG_SEMANTIC_CACHE_ENABLED` | `false` | 语义缓存：近义问题按向量相似度复用检索候选池 |
 
@@ -282,7 +273,6 @@ RAG 与 Agent 评测脚本位于 `scripts/rag-eval/`，主要数据集位于 `sc
 | `JUDGE_MODEL` | `step-3.5-flash` | Judge 模型 |
 | `OCR_ENABLED` | `true` | 图片与扫描 PDF OCR |
 | `OCR_MODEL` | `step-1o-turbo-vision` | OCR 视觉模型 |
-| `REDIS_URL` | 空 | 设置后使用 Redis；否则使用 SQLite |
 | `AUTH_INVITE_CODE` | 空 | 注册邀请码；为空时不要求邀请码 |
 | `ADMIN_USERNAME` | `admin` | 管理员用户名 |
 | `ADMIN_PASSWORD` | 随机生成 | 生产环境应显式设置 |
@@ -304,9 +294,9 @@ RAG 与 Agent 评测脚本位于 `scripts/rag-eval/`，主要数据集位于 `sc
 | 知识库源文件 | `ragdata/` | 只读挂载到 `/app/ragdata` |
 | Embedding / Reranker 模型 | `.model-cache/` | 只读挂载到 `/app/.model-cache` |
 
-`REDIS_URL` 存在时，RedisStore 会替代默认 SQLiteStore。首次从旧版升级时，SQLiteStore 可迁移已有 `store.json`。
+存储采用 SQLite WAL（`backend/data/store.db`），首次从旧版升级时可自动迁移旧版 `store.json` 数据。
 
-`ragdata/` 只是部署时挂载的源文件目录，不会自动导入 SQLite，也不会自动写入或刷新 Qdrant。新增或更新知识库资料时，请通过管理端上传接口写入文档库；若文档列表存在但状态不是“可检索”，需修复向量服务后调用 `POST /api/rag/documents/reindex` 重建索引。
+`ragdata/` 只是部署时挂载的源文件目录，不会自动导入 SQLite，也不会自动写入或刷新 Qdrant。新增或更新知识库资料时，请通过管理端上传接口写入文档库；若文档列表存在但状态不是“可检索”，修复向量服务后重启后端（向量库就绪流程会自动重建索引），或运行 `node scripts/maintenance/rebuild-vectors.js` 手动重建。
 
 ## 项目结构
 

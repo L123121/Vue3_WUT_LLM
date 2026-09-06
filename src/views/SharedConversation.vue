@@ -119,7 +119,7 @@ onMounted(async () => {
                 <div class="flex items-center justify-end mt-1.5 gap-2">
                   <span class="text-xs opacity-60">{{ formatTime(msg.timestamp) }}</span>
                   <a
-                    :href="`${window.location.origin}/share/${route.params.code}`"
+                    :href="`/share/${route.params.code}`"
                     target="_blank"
                     class="flex items-center gap-1 text-[10px] opacity-50 hover:opacity-100 transition-opacity"
                     :title="'打开原始分享链接'"

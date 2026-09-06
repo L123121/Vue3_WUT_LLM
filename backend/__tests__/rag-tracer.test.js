@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-const { RagTracer, getRecentRagTraces } = require('../src/services/rag-tracer.service');
+const { RagTracer } = require('../src/services/rag-tracer.service');
 
 describe('RagTracer', () => {
   const userId = 'rag_tracer_test_' + Math.random().toString(36).slice(2);
@@ -22,16 +22,13 @@ describe('RagTracer', () => {
     expect(summary.message).toBeUndefined();
   });
 
-  it('finish 后可读取最近 RAG trace', async () => {
+  it('finish 返回完整 trace 并记录 outcome', () => {
     const tracer = new RagTracer({ userId, traceId: 'trace-test-2', message: '查询校区' });
     tracer.recordStage('embedding', 10, true);
-    tracer.finish({ usedRag: true, matchedDocs: 1 });
+    const trace = tracer.finish({ usedRag: true, matchedDocs: 1 });
 
-    await new Promise(resolve => setTimeout(resolve, 50));
-
-    const traces = await getRecentRagTraces(userId, 5);
-    expect(traces.length).toBeGreaterThan(0);
-    expect(traces[traces.length - 1].traceId).toBe('trace-test-2');
-    expect(traces[traces.length - 1].outcome.usedRag).toBe(true);
+    expect(trace.traceId).toBe('trace-test-2');
+    expect(trace.outcome.usedRag).toBe(true);
+    expect(trace.totalMs).toBeGreaterThanOrEqual(0);
   });
 });

@@ -203,8 +203,7 @@ export function useStreaming() {
       // 必须用 local_ 前缀的本地会话：isLocalSession 靠前缀识别本地会话，
       // 普通 id 会被当成服务端会话反复 PUT 同步失败，且 loadConversations 合并时被静默丢弃
       conv = createLocalConversation('本地会话');
-      convStore.conversations.push(conv);
-      convStore.currentConversationId = conv.id;
+      convStore.adoptLocalConversation(conv);
     }
 
     const conversationId = conv.id;

@@ -5,7 +5,7 @@ import wutLogoImg from '../../assets/wuhan-university-logo.png';
 import ConversationList from '../chat/ConversationList.vue';
 import { Activity, Database, MessageSquare, BarChart3, LogOut, MessagesSquare, ChevronUp, Moon, Sun } from 'lucide-vue-next';
 import { useAuthStore } from '../../stores/auth.store.js';
-import { useChatStore } from '../../stores/chat.store.js';
+import { useConversationStore } from '../../stores/conversation.store.js';
 import { useToastStore } from '../../stores/toast.store.js';
 import { useThemeStore } from '../../stores/theme.store.js';
 import { prefetchRoute } from '../../utils/prefetch.js';
@@ -16,7 +16,7 @@ const wutLogo = wutLogoImg;
 const router = useRouter();
 const route = useRoute();
 const authStore = useAuthStore();
-const chatStore = useChatStore();
+const convStore = useConversationStore();
 const toast = useToastStore();
 const themeStore = useThemeStore();
 const currentPath = computed(() => route.path);
@@ -30,14 +30,14 @@ watch(() => authStore.user?.avatar, () => { avatarFailed.value = false; });
 const showProfilePanel = ref(false);
 
 const handleLogout = async () => {
-  const synced = await chatStore.flushPendingChanges();
+  const synced = await convStore.flushPendingChanges();
   if (!synced) {
     toast.error('对话记录同步失败，请稍后重试后再退出');
     return;
   }
-  chatStore.resetConversationState();
+  convStore.resetConversationState();
   // 同步已确认成功，此时才能清缓存；清的是当前用户命名空间（chat_cache:<userId>）
-  chatStore.clearPersistedCache();
+  convStore.clearPersistedCache();
   await authStore.logout();
   await router.replace('/login');
 };

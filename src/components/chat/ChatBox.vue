@@ -1,7 +1,7 @@
 <script setup>
 import { ref, watch, nextTick, computed } from 'vue';
 import { Send, Wifi, WifiOff, Command, Trash2, Download, Paperclip, X, FileText, Square } from 'lucide-vue-next';
-import { useChatStore } from '../../stores/chat.store.js';
+import { useMessageStore } from '../../stores/message.store.js';
 import { useToastStore } from '../../stores/toast.store.js';
 import { uploadChatFile } from '../../api/chat.js';
 import VoiceRecorder from './VoiceRecorder.vue';
@@ -16,7 +16,7 @@ const props = defineProps({
 });
 
 const emit = defineEmits(['send', 'error', 'command']);
-const chatStore = useChatStore();
+const msgStore = useMessageStore();
 const toast = useToastStore();
 const input = ref('');
 const textareaRef = ref(null);
@@ -58,7 +58,7 @@ const showClearConfirm = ref(false);
 
 const confirmClearMessages = () => {
   showClearConfirm.value = false;
-  Promise.resolve(chatStore.clearMessages()).catch((e) => {
+  Promise.resolve(msgStore.clearMessages()).catch((e) => {
     console.error('[ChatBox] 清空会话异常:', e);
   });
 };
@@ -308,7 +308,7 @@ defineExpose({
 
       <button
         v-if="isLoading"
-        @click="chatStore.abortCurrentRequest()"
+        @click="msgStore.abortCurrentRequest()"
         title="停止生成"
         class="p-2 rounded-lg transition-all duration-300 shrink-0 bg-red-100 text-red-500 hover:bg-red-200 dark:bg-red-900/40 dark:text-red-400 dark:hover:bg-red-900/60"
       >

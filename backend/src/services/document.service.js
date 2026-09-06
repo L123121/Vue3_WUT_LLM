@@ -27,10 +27,10 @@ class DocumentService {
     if (!this._indexing) {
       const { IndexingService } = require('./indexing.service');
       // 传入全局向量库单例，保证索引写入同一个实例
-      const { vectorStore } = require('./vector-store.service');
+      const { vectorStore } = require('./vector-store-qdrant.service');
       this._indexing = new IndexingService(vectorStore);
       if (!this._providerRegistered) {
-        const { registerDocumentProvider } = require('./vector-store.service');
+        const { registerDocumentProvider } = require('./vector-store-qdrant.service');
         registerDocumentProvider(() => this._allDocs());
         this._providerRegistered = true;
       }
@@ -267,20 +267,6 @@ class DocumentService {
         ? '文档添加成功，向量索引已完成'
         : '文档已保存，但向量索引尚未完成',
     };
-  }
-
-  async addDocuments(docs) {
-    const results = [];
-    for (const doc of docs) {
-      try {
-        const result = await this.addDocument(doc);
-        results.push(result);
-      } catch (error) {
-        console.error(`[Document] 批量添加失败: ${doc.title}`, error.message);
-        results.push({ title: doc.title, error: error.message });
-      }
-    }
-    return results;
   }
 
   /**

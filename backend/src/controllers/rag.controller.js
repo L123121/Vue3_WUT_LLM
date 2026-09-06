@@ -9,7 +9,7 @@ const { MemoryService } = require('../services/memory.service');
 const { successResponse, errorResponse } = require('../utils/response');
 const { upload, parseFile, cleanupFile } = require('../services/file-upload.service');
 const { recordAudit } = require('../services/quality-governance.service');
-const { vectorStore: vectorStoreSingleton } = require('../services/vector-store.service');
+const { vectorStore: vectorStoreSingleton } = require('../services/vector-store-qdrant.service');
 
 const ragService = new RagService(aiService);
 const memoryService = new MemoryService();
@@ -444,25 +444,6 @@ const addDocument = async (req, res, next) => {
 };
 
 /**
- * 批量添加文档
- */
-const addDocuments = async (req, res, next) => {
-  try {
-    const { documents } = req.body;
-
-    if (!Array.isArray(documents) || documents.length === 0) {
-      return errorResponse(res, '文档列表不能为空', 400);
-    }
-
-    const results = await documentService.addDocuments(documents);
-    successResponse(res, results, '批量添加完成');
-  } catch (error) {
-    console.error('[Document] 批量添加失败:', error);
-    next(error);
-  }
-};
-
-/**
  * 删除文档
  */
 const deleteDocument = async (req, res, next) => {
@@ -597,53 +578,6 @@ const uploadDocument = async (req, res, next) => {
   }
 };
 
-/**
- * 重建向量索引
- * 默认 rebuild：reset collection 后全量重切片 + 重向量化（修复/策略变更用）。
- * body.mode = 'incremental'：逐文档内容 hash diff，未变段落复用已有向量，只重算变化部分。
- */
-const reindexAll = async (req, res, next) => {
-  try {
-    const { category, mode: modeBody } = req.body || {};
-    const mode = (modeBody === 'incremental' || req.query?.mode === 'incremental') ? 'incremental' : 'rebuild';
-    const result = await documentService.listDocuments({ category, limit: 999 });
-    const docs = result.documents;
-
-    if (docs.length === 0) {
-      return successResponse(res, { reindexed: 0, message: '没有文档需要重索引' }, '完成');
-    }
-
-    // 全量获取文档完整内容
-    const fullDocs = await Promise.all(
-      docs.map(d => documentService.getDocument(d.id))
-    );
-    const validDocs = fullDocs.filter(Boolean);
-
-    console.log(`[Reindex] 开始${mode === 'incremental' ? '增量' : '全量'}重索引，共 ${validDocs.length} 个文档`);
-
-    const { IndexingService } = require('../services/indexing.service');
-    const indexingService = new IndexingService();
-    const totalChunks = await indexingService.reindexAll(validDocs, { mode });
-
-    const { reused = 0, embedded = 0 } = indexingService.lastReuseStats;
-
-    console.log(`[Reindex] ${mode === 'incremental' ? '增量' : '全量'}重索引完成，共 ${totalChunks} 个句子向量`);
-
-    successResponse(res, {
-      reindexed: validDocs.length,
-      totalChunks,
-      mode,
-      ...(mode === 'incremental' ? { reusedVectors: reused, recomputedVectors: embedded } : {}),
-      documents: validDocs.map(d => ({ id: d.id, title: d.title, category: d.category })),
-    }, mode === 'incremental'
-      ? `增量重索引完成：${validDocs.length} 个文档，${totalChunks} 个向量（复用 ${reused}，重算 ${embedded}）`
-      : `重索引完成：${validDocs.length} 个文档，${totalChunks} 个向量`);
-  } catch (error) {
-    console.error('[Reindex] 重索引失败:', error);
-    next(error);
-  }
-};
-
 const uploadMiddleware = upload.single('file');
 
 module.exports = {
@@ -655,14 +589,12 @@ module.exports = {
   getFeedbackSummary,
   retrieveParentCandidates,
   addDocument,
-  addDocuments,
   deleteDocument,
   listDocuments,
   getDocument,
   getStats,
   uploadDocument,
   uploadMiddleware,
-  reindexAll,
 };
 
 

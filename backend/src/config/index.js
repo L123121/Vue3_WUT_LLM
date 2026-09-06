@@ -87,20 +87,14 @@ module.exports = {
     secret: process.env.JWT_SECRET,
     expiresIn: '7d',
   },
-  // 向量数据库（Qdrant 独立服务；VECTOR_STORE_BACKEND=file 时切换本地文件持久化版）
+  // 向量数据库（Qdrant 独立服务）
   vectorStore: {
-    backend: process.env.VECTOR_STORE_BACKEND || 'qdrant',
     qdrantUrl: process.env.QDRANT_URL || 'http://localhost:6333',
     qdrantApiKey: process.env.QDRANT_API_KEY || '',
     collectionName: process.env.QDRANT_COLLECTION || 'wuli_elf_chunks',
-    // 混合检索权重（客户端加权融合；RAG_FUSION=rrf 时改用 RRF 排名融合）
+    // 混合检索权重（dense/sparse 通道加权融合）
     vectorWeight: Number.parseFloat(process.env.RAG_VECTOR_WEIGHT || '0.6'),
     sparseWeight: Number.parseFloat(process.env.RAG_SPARSE_WEIGHT || '0.4'),
-    // RRF 融合常数（文件后端默认融合方式，RAG_RRF_K 全局共享）
-    rrfK: parseInt(process.env.RAG_RRF_K, 10) || 60,
-    // 混合检索融合方式：weighted（默认，0.6/0.4 加权打分，官方评测优于 RRF）
-    // | rrf（倒数排名融合，RAG_FUSION=rrf 可切换，2026-08-09 实测 Recall 74.5% vs 加权 80.7%）
-    fusion: process.env.RAG_FUSION || 'weighted',
     // 融合前通道内归一化：sparse IDF 点积原始分（可达数十）量级远大于 dense 余弦（≤1），
     // 不归一化时 0.6/0.4 权重形同虚设（稠密通道被淹没）。RAG_FUSION_NORM=false 回退原始行为
     fusionNorm: process.env.RAG_FUSION_NORM !== 'false',
@@ -174,6 +168,10 @@ module.exports = {
     // 跨文档问题分解：对比/列举类问题拆实体级子查询扩大召回池（reranker 仍按原问题打分）
     queryDecomposeEnabled: process.env.RAG_QUERY_DECOMPOSE_ENABLED !== 'false',
     queryDecomposeMaxSubQueries: parseInt(process.env.RAG_DECOMPOSE_MAX_SUB_QUERIES, 10) || 3,
+    // 查询翻译（2026-09-03 新增）：HyDE 假设文档 / Step-Back 上位问题，作为额外召回变体
+    // 扩大召回池（reranker 仍按原问题打分，精度不受影响）。默认关闭，灰度开启
+    hydeEnabled: process.env.RAG_HYDE_ENABLED === 'true',
+    stepBackEnabled: process.env.RAG_STEP_BACK_ENABLED === 'true',
     // 意图识别自动路由（V2.0）：前端不再手动开关 RAG，后端自动路由
     // rag=知识库检索 / chat=纯对话 / agent=工具调度（INTENT_ROUTING_ENABLED=false 可整体关闭，退回原链路）
     intentRoutingEnabled: process.env.INTENT_ROUTING_ENABLED !== 'false',
@@ -201,6 +199,23 @@ module.exports = {
     toolTimeoutMs: parseInt(process.env.AGENT_TOOL_TIMEOUT_MS, 10) || 15000,
     // 多轮工具调度上限（L2）：最多轮次，防止无限循环；配合无进展检测强制收尾
     maxToolRounds: parseInt(process.env.AGENT_MAX_TOOL_ROUNDS, 10) || 2,
+    // 上下文压缩分层（2026-09-03 新增，借鉴 AgentHarness 四层压缩中的两层）：
+    // L1 大结果落盘：单条 tool result 超阈值时完整内容写入 toolSpillDir，上下文只留摘要+引用
+    // L2 历史 tool result 替换：仅保留最近 toolResultKeepRounds 轮完整结果，更早轮次替换为占位符
+    // AGENT_CONTEXT_COMPACTION=false 一键回退
+    contextCompactionEnabled: process.env.AGENT_CONTEXT_COMPACTION !== 'false',
+    toolResultSpillThreshold: parseInt(process.env.AGENT_TOOL_RESULT_SPILL_THRESHOLD, 10) || 2000,
+    toolResultKeepRounds: Math.max(parseInt(process.env.AGENT_TOOL_RESULT_KEEP_ROUNDS, 10) || 1, 1),
+    toolSpillDir: process.env.AGENT_TOOL_SPILL_DIR || path.join(__dirname, '..', '..', 'data', 'tool-spills'),
+    toolSpillMaxFiles: parseInt(process.env.AGENT_TOOL_SPILL_MAX_FILES, 10) || 200,
+  },
+  // 记忆系统（2026-09-03 新增）：LLM 记忆提取与分类治理
+  memory: {
+    // LLM 记忆提取：从每轮对话中抽取 偏好/错误反馈/事实/外部参考 四类记忆（fire-and-forget，
+    // 失败自动回退正则提取）。MEMORY_LLM_EXTRACTION=false 关闭（每轮省一次 LLM 调用）
+    llmExtractionEnabled: process.env.MEMORY_LLM_EXTRACTION !== 'false',
+    // 语义去重阈值：同类型记忆 cosine 相似度 ≥ 该值视为重复，执行合并（而非新增）
+    dedupSimilarity: Number.parseFloat(process.env.MEMORY_DEDUP_SIMILARITY || '0.9'),
   },
   // 受控 Agentic RAG：默认关闭，灰度开启后仅替换知识库问答链路
   agenticRag: {
@@ -219,7 +234,6 @@ module.exports = {
   quota: {
     dailyLimit: parseInt(process.env.QUOTA_DAILY_LIMIT, 10) || 100,
     anonymousLimit: parseInt(process.env.QUOTA_ANONYMOUS_LIMIT, 10) || 20,
-    adminLimit: parseInt(process.env.QUOTA_ADMIN_LIMIT, 10) || 1000,
   },
   // 管理员登录配置（密码未设置时生成随机密码，禁止空密码）
   admin: (() => {

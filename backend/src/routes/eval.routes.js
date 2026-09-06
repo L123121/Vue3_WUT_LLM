@@ -6,7 +6,7 @@ const { JudgeService } = require('../services/judge.service');
 const { metrics } = require('../services/metrics.service');
 const { operationalMetrics } = require('../services/operational-metrics.service');
 const { getFeedbackSummary } = require('../controllers/rag.controller');
-const { saveEvaluation, getEvaluations, compareEvaluations } = require('../services/quality-governance.service');
+const { saveEvaluation, getEvaluations, compareEvaluations, importEvaluation, getEvaluationPayload, updateEvaluationScores } = require('../services/quality-governance.service');
 const { doubleJudgeStepForRatio, shouldDoubleJudge, computeJudgeAgreement, averageJudgeResults } = require('../services/judge-agreement.service');
 const config = require('../config');
 
@@ -25,6 +25,61 @@ const MAX_EVAL_CASES = 50;
 router.get('/metrics', (req, res) => {
   const summary = metrics.getSummary();
   res.json({ success: true, data: summary });
+});
+
+/**
+ * POST /api/eval/import
+ * 导入离线评测报告（eval-report.json）：聚合入库（source=manual）并持久化完整报告与人工打分
+ */
+router.post('/import', requireAdmin, async (req, res, next) => {
+  try {
+    const saved = await importEvaluation(req.body || {});
+    res.json({ success: true, data: saved });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/eval/import
+ * 已导入的人工评测列表（轻量记录，payload 走 /:id）
+ */
+router.get('/import', requireAdmin, async (req, res, next) => {
+  try {
+    const list = (await getEvaluations()).filter((item) => item.source === 'manual');
+    res.json({ success: true, data: list });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/eval/import/:id
+ * 取导入报告的完整 payload（results + 人工打分），工作台免上传回放
+ */
+router.get('/import/:id', requireAdmin, async (req, res, next) => {
+  try {
+    const payload = await getEvaluationPayload(req.params.id);
+    if (!payload) {
+      return res.status(404).json({ success: false, error: '评测记录不存在' });
+    }
+    res.json({ success: true, data: payload });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * PUT /api/eval/import/:id
+ * 回写人工打分（humanScores / comments 整体替换）
+ */
+router.put('/import/:id', requireAdmin, async (req, res, next) => {
+  try {
+    const updated = await updateEvaluationScores(req.params.id, req.body || {});
+    res.json({ success: true, data: updated });
+  } catch (err) {
+    next(err);
+  }
 });
 
 /**
@@ -249,50 +304,6 @@ router.post('/run', requireAdmin, async (req, res) => {
 });
 
 /**
- * POST /api/eval/metrics
- * 批量计算评测指标（兼容旧接口）
- */
-router.post('/metrics', (req, res) => {
-  const { results } = req.body;
-
-  if (!Array.isArray(results)) {
-    return res.status(400).json({ success: false, error: 'results 必须为数组' });
-  }
-
-  const computed = results.map((r) => {
-    const gt = r.ground_truth || '';
-    const answer = r.answer || '';
-    if (!gt || !answer) {
-      return { id: r.id, faithfulness: 0, answer_relevancy: 0, context_precision: 0, context_recall: 0, overall: 0 };
-    }
-
-    // 简易关键词召回计算
-    const keywords = (gt.match(/[a-zA-Z]{2,}|[一-鿿]{1,4}|\d+/g) || []).map(k => k.toLowerCase());
-    const answerLower = answer.toLowerCase();
-    const matched = keywords.filter(k => answerLower.includes(k));
-    const recall = keywords.length > 0 ? matched.length / keywords.length : 0;
-
-    return {
-      id: r.id,
-      faithfulness: recall,
-      answer_relevancy: recall,
-      context_precision: 0.7,
-      context_recall: recall,
-      overall: recall
-    };
-  });
-
-  res.json({
-    success: true,
-    data: {
-      total: computed.length,
-      avgOverall: computed.reduce((s, m) => s + m.overall, 0) / computed.length,
-      metrics: computed,
-    },
-  });
-});
-
-/**
  * 默认评测数据集
  */
 function getDefaultTestCases() {
@@ -334,19 +345,5 @@ function getDefaultTestCases() {
     },
   ];
 }
-
-/**
- * GET /api/eval/health
- */
-router.get('/health', (req, res) => {
-  res.json({
-    success: true,
-    data: {
-      status: 'ready',
-      evaluator: 'real-ragas',
-      supportedMetrics: ['faithfulness', 'answer_relevancy', 'context_precision', 'context_recall'],
-    },
-  });
-});
 
 module.exports = router;

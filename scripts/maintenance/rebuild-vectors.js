@@ -6,7 +6,7 @@ async function main() {
 
   // 加载服务（和服务器相同的环境）
   const { redis: store } = require('./backend/src/services/memory-store');
-  const { vectorStore, registerDocumentProvider } = require('./backend/src/services/vector-store.service');
+  const { vectorStore, registerDocumentProvider } = require('./backend/src/services/vector-store-qdrant.service');
   const { IndexingService } = require('./backend/src/services/indexing.service');
   const { EmbeddingService } = require('./backend/src/services/embedding.service');
 
@@ -29,10 +29,11 @@ async function main() {
   // 触发重建
   await vectorStore.ensureReady();
 
-  console.log(`向量库就绪，共 ${vectorStore._docs.length} 条向量`);
+  const vectorCount = await vectorStore.count();
+  console.log(`向量库就绪，共 ${vectorCount} 条向量`);
 
   // 如果没有向量，强制重建
-  if (vectorStore._docs.length === 0) {
+  if (vectorCount === 0) {
     console.log('向量为空，开始重建...');
     const embeddingService = new EmbeddingService();
     await embeddingService.ensureReady();

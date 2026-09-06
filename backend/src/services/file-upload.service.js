@@ -596,7 +596,5 @@ module.exports = {
   detectTablePages,
   isTableLikePage,
   replaceTablePages,
-  uploadDir,
-  mediaDir,
   startUploadsCleanup,
 };

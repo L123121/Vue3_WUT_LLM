@@ -3,6 +3,7 @@
 const { redis: store } = require('./memory-store');
 
 const EVALUATION_KEY = 'quality_governance:evaluations';
+const EVALUATION_PAYLOAD_KEY = 'quality_governance:eval_payloads';
 const AUDIT_KEY = 'quality_governance:audits';
 const TASK_KEY = 'quality_governance:tasks';
 const MAX_AUDITS = 2000;
@@ -62,10 +63,88 @@ async function saveEvaluation(input = {}) {
     satisfactionRate: toRatio(input.satisfactionRate),
     citationCoverage: toRatio(input.citationCoverage),
     sampleCount: Math.round(safeNumber(input.sampleCount)),
+    // ragas = 在线评测管道；manual = 离线报告导入（POST /api/eval/import）
+    source: String(input.source || 'ragas'),
     createdAt: input.createdAt || new Date().toISOString(),
   };
   await store.hset(EVALUATION_KEY, item.id, item);
   return item;
+}
+
+/**
+ * 导入离线评测报告（eval-report.json / ragas-results.json，人工评测工作流）：
+ * results 聚合为一条评测记录（source='manual'，进入与在线 RAGAS 同一历史对比表），
+ * 完整报告（results + 人工打分）存入 payload，供工作台免上传回放与打分续写。
+ */
+async function importEvaluation(report = {}) {
+  const results = Array.isArray(report.results) ? report.results : [];
+  if (results.length === 0) {
+    const error = new Error('报告缺少 results 数组');
+    error.status = 400;
+    throw error;
+  }
+
+  // 聚合 RAGAS 指标：只统计带有限数值的条目，缺指标不拉低均值
+  const withMetrics = results.filter((item) => item.metrics && typeof item.metrics === 'object');
+  const metrics = {};
+  for (const key of ['faithfulness', 'answer_relevancy', 'context_precision', 'context_recall', 'overall']) {
+    const values = withMetrics
+      .map((item) => Number(item.metrics[key]))
+      .filter(Number.isFinite);
+    metrics[key] = values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+  }
+  const latencies = results.map((item) => Number(item.latency)).filter(Number.isFinite);
+
+  // 兼容打分导出格式（humanScore/comment 平铺在 results 里），还原为按 id 的映射
+  const humanScores = { ...(report.humanScores || {}) };
+  const comments = { ...(report.comments || {}) };
+  for (const item of results) {
+    if (!item.id) continue;
+    if (item.humanScore != null && humanScores[item.id] == null) humanScores[item.id] = item.humanScore;
+    if (item.comment && !comments[item.id]) comments[item.id] = item.comment;
+  }
+
+  const record = await saveEvaluation({
+    datasetVersion: String(report.datasetVersion || report.meta?.datasetVersion || 'manual-import'),
+    model: String(report.model || results.find((item) => item.model)?.model || 'manual-import'),
+    promptVersion: String(report.promptVersion || 'manual-import'),
+    metrics,
+    avgLatency: latencies.length > 0 ? latencies.reduce((sum, value) => sum + value, 0) / latencies.length : 0,
+    sampleCount: results.length,
+    source: 'manual',
+  });
+
+  await store.hset(EVALUATION_PAYLOAD_KEY, record.id, {
+    evaluationId: record.id,
+    importedAt: new Date().toISOString(),
+    results,
+    humanScores,
+    comments,
+  });
+
+  return { ...record, scoredCount: Object.keys(humanScores).length };
+}
+
+/** 取导入报告的完整 payload（results + 人工打分），不存在返回 null */
+async function getEvaluationPayload(id) {
+  return parse(await store.hget(EVALUATION_PAYLOAD_KEY, id));
+}
+
+/**
+ * 回写人工打分（整体替换语义：客户端持有完整映射，未打分即从映射中移除）
+ */
+async function updateEvaluationScores(id, { humanScores, comments } = {}) {
+  const payload = await getEvaluationPayload(id);
+  if (!payload) {
+    const error = new Error('评测记录不存在');
+    error.status = 404;
+    throw error;
+  }
+  if (humanScores !== undefined) payload.humanScores = humanScores;
+  if (comments !== undefined) payload.comments = comments;
+  payload.scoredAt = new Date().toISOString();
+  await store.hset(EVALUATION_PAYLOAD_KEY, id, payload);
+  return { id, scoredCount: Object.keys(payload.humanScores || {}).length };
 }
 
 function compareEvaluations(history) {
@@ -179,4 +258,4 @@ async function createKnowledgeTask({ auditId, title, description, createdBy } = 
   return task;
 }
 
-module.exports = { getEvaluations, saveEvaluation, compareEvaluations, recordAudit, getRiskSummary, createKnowledgeTask };
+module.exports = { getEvaluations, saveEvaluation, importEvaluation, getEvaluationPayload, updateEvaluationScores, compareEvaluations, recordAudit, getRiskSummary, createKnowledgeTask };
