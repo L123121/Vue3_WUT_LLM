@@ -214,7 +214,8 @@ jobs:
 
             docker image prune -f
 
-            # 重启 nginx（如果有配置变更）
-            docker compose -p wuli-elf exec nginx nginx -s reload 2>/dev/null || true
+            # 容器版 nginx 已停用（compose 中注释掉，由宿主机 nginx 直接服务），
+            # 此处无 nginx 服务可 reload；nginx.conf 仍随上方 scp 更新以备重新启用。
+            # 若恢复容器版 nginx，需在此加回: docker compose -p wuli-elf exec nginx nginx -s reload
 
             echo "🎉 部署完成: $(date)"
