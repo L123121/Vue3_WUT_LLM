@@ -9,7 +9,8 @@ function applyRoutes(app, chatLimiter) {
   const { router: apiRoutes } = require('./index');
   const { streamHandler } = require('../controllers/chat.controller');
   const { speechHandler } = require('../controllers/audio.controller');
-  const { chatUpload, parseFile } = require('../services/file-upload.service');
+  const fs = require('fs');
+  const { chatUpload, parseFile, isAllowedUpload } = require('../services/file-upload.service');
   const { requireAuth } = require('../middleware/auth.middleware');
   const { router: authRoutes } = require('./auth.routes');
   const { router: metricsRoutes } = require('./metrics.routes');
@@ -65,6 +66,13 @@ function applyRoutes(app, chatLimiter) {
 
     try {
       const file = req.file;
+
+      // 二次校验：防止 fileFilter 被绕过（如扩展名与 MIME 伪造）后仍进入解析流程
+      if (!isAllowedUpload(file, true)) {
+        fs.unlink(file.path, () => {});
+        return res.status(400).json({ success: false, error: '不支持的文件类型' });
+      }
+
       const originalName = fixFilenameEncoding(file.originalname);
       const isImage = file.mimetype.startsWith('image/');
       let textContent = null;
