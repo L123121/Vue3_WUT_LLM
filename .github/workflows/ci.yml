@@ -54,6 +54,9 @@ jobs:
       - name: Lint
         run: npm run lint:check
 
+      - name: Typecheck
+        run: npm run typecheck
+
       - name: Audit production dependencies
         run: |
           npm audit --omit=dev --audit-level=high

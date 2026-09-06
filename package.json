@@ -14,6 +14,7 @@
     "start": "cd backend && npm start",
     "lint": "eslint src/ backend/src/ backend/__tests__/ --fix",
     "lint:check": "eslint src/ backend/src/ backend/__tests__/",
+    "typecheck": "vue-tsc --noEmit",
     "format": "prettier --write \"src/**/*.{js,vue}\" \"backend/{src,__tests__}/**/*.js\"",
     "test": "node scripts/run-test-suites.mjs fast",
     "test:all": "node scripts/run-test-suites.mjs all",
@@ -61,7 +62,9 @@
     "postcss": "^8.5.26",
     "prettier": "^3.8.3",
     "tailwindcss": "^4.1.18",
+    "typescript": "^5.9.3",
     "vite": "^6.2.0",
-    "vitest": "^4.1.7"
+    "vitest": "^4.1.7",
+    "vue-tsc": "^3.3.11"
   }
 }
